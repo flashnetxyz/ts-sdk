@@ -1,0 +1,43 @@
+{
+  "name": "@flashnet/sdk",
+  "version": "0.1.1",
+  "module": "dist/index.js",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "default": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc --watch",
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "2.0.5",
+    "@types/bun": "latest",
+    "@types/node": "^20.0.0",
+    "typescript": "^5"
+  },
+  "peerDependencies": {
+    "typescript": "^5"
+  },
+  "dependencies": {
+    "@buildonspark/issuer-sdk": "^0.0.74",
+    "@buildonspark/spark-sdk": "0.1.43",
+    "@noble/curves": "^1.7.0",
+    "@noble/hashes": "^1.8.0",
+    "@noble/secp256k1": "^2.3.0",
+    "@scure/base": "^1.2.1"
+  },
+  "author": "",
+  "license": "MIT",
+  "description": "Flashnet SDK for Spark wallet operations and AMM interactions"
+}
