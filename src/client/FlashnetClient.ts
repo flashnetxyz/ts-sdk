@@ -59,7 +59,7 @@ import type {
   ListUserSwapsResponse,
   SettlementPingResponse,
 } from "../types";
-import { Network } from "@buildonspark/spark-sdk/proto/spark";
+import { Network } from "@buildonspark/spark-sdk";
 
 export interface TokenBalance {
   balance: bigint;
