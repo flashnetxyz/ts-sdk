@@ -18,9 +18,10 @@
     "prebuild": "rm -rf dist",
     "build": "rollup -c",
     "dev": "rollup -c -w",
-    "test": "npm run test:esm && npm run test:cjs",
-    "test:esm": "node test-esm.mjs",
-    "test:cjs": "node test-cjs.cjs"
+    "test": "npm run test:esm && npm run test:cjs && npm run test:bun",
+    "test:esm": "node tests/test-esm.mjs",
+    "test:cjs": "node tests/test-cjs.cjs",
+    "test:bun": "bun tests/test-bun.js"
   },
   "devDependencies": {
     "@biomejs/biome": "2.0.5",

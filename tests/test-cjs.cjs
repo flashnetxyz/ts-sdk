@@ -1,4 +1,4 @@
-const { ApiClient, TypedAmmApi, validatePublicKey } = require('./dist/cjs/index.js');
+const { ApiClient, TypedAmmApi, validatePublicKey } = require('../dist/cjs/index.js');
 
 console.log('Testing CJS require...');
 

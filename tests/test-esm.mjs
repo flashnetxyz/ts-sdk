@@ -1,4 +1,4 @@
-import { ApiClient, TypedAmmApi, validatePublicKey } from './dist/esm/index.js';
+import { ApiClient, TypedAmmApi, validatePublicKey } from '../dist/esm/index.js';
 
 console.log('Testing ESM import...');
 
