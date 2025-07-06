@@ -1,29 +1,35 @@
 {
   "name": "@flashnet/sdk",
   "version": "0.1.1",
-  "module": "dist/index.js",
-  "main": "dist/index.js",
-  "types": "dist/index.d.ts",
-  "type": "module",
+  "main": "./dist/cjs/index.js",
+  "module": "./dist/esm/index.js",
+  "types": "./dist/esm/index.d.ts",
   "exports": {
     ".": {
-      "types": "./dist/index.d.ts",
-      "import": "./dist/index.js",
-      "default": "./dist/index.js"
+      "types": "./dist/esm/index.d.ts",
+      "import": "./dist/esm/index.js",
+      "require": "./dist/cjs/index.js"
     }
   },
   "files": [
     "dist"
   ],
   "scripts": {
-    "build": "tsc",
-    "dev": "tsc --watch",
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "prebuild": "rm -rf dist",
+    "build": "rollup -c",
+    "dev": "rollup -c -w",
+    "test": "npm run test:esm && npm run test:cjs && npm run test:bun",
+    "test:esm": "node tests/test-esm.mjs",
+    "test:cjs": "node tests/test-cjs.cjs",
+    "test:bun": "bun tests/test-bun.js"
   },
   "devDependencies": {
     "@biomejs/biome": "2.0.5",
+    "@rollup/plugin-typescript": "^12.1.4",
     "@types/bun": "latest",
     "@types/node": "^20.0.0",
+    "rollup": "^4.44.2",
+    "tslib": "^2.8.1",
     "typescript": "^5"
   },
   "peerDependencies": {
