@@ -2,8 +2,8 @@ import type {
   AmmAddLiquiditySettlementRequest,
   AmmRemoveLiquiditySettlementRequest,
   ValidateAmmConfirmInitialDepositData,
-  ValidateAmmInitializeSingleSidedPoolData,
   ValidateAmmInitializeConstantProductPoolData,
+  ValidateAmmInitializeSingleSidedPoolData,
   ValidateAmmSwapData,
 } from "../types";
 

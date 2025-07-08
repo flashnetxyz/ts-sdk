@@ -1,13 +1,13 @@
 import type { IssuerSparkWallet } from "@buildonspark/issuer-sdk";
+import type { SparkWallet } from "@buildonspark/spark-sdk";
 import type { ApiClient } from "../api/client";
 import type {
   ChallengeRequestData,
   ChallengeResponseData,
+  Signer,
   VerifyRequestData,
   VerifyResponseData,
-  Signer,
 } from "../types";
-import type { SparkWallet } from "@buildonspark/spark-sdk";
 
 export class AuthManager {
   private apiClient: ApiClient;

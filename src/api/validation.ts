@@ -35,7 +35,7 @@ export function validateSignature(signature: string): boolean {
  */
 export function validatePositiveAmount(amount: number | string): boolean {
   const numAmount = typeof amount === "string" ? parseFloat(amount) : amount;
-  return !isNaN(numAmount) && numAmount > 0;
+  return !Number.isNaN(numAmount) && numAmount > 0;
 }
 
 /**
@@ -65,7 +65,10 @@ export function validateNamespace(namespace: string): boolean {
  * Common validation errors
  */
 export class ValidationError extends Error {
-  constructor(public field: string, public reason: string) {
+  constructor(
+    public field: string,
+    public reason: string
+  ) {
     super(`Validation failed for ${field}: ${reason}`);
     this.name = "ValidationError";
   }
@@ -74,13 +77,13 @@ export class ValidationError extends Error {
 /**
  * Validates a request object against a set of rules
  */
-export function validateRequest<T extends Record<string, any>>(
+export function validateRequest<T extends Record<string, unknown>>(
   request: T,
   rules: ValidationRules<T>
 ): void {
   for (const [field, rule] of Object.entries(rules) as [
     keyof T,
-    ValidationRule
+    ValidationRule,
   ][]) {
     const value = request[field];
 
@@ -109,7 +112,7 @@ export function validateRequest<T extends Record<string, any>>(
 
 export interface ValidationRule {
   required?: boolean;
-  validator?: (value: any) => boolean;
+  validator?: (value: unknown) => boolean;
   message?: string;
 }
 
@@ -133,7 +136,7 @@ export const commonValidationRules = {
   },
   nonce: {
     required: true,
-    validator: (v: any) => typeof v === "string" && v.length > 0,
+    validator: (v: unknown) => typeof v === "string" && v.length > 0,
     message: "nonce must be a non-empty string",
   },
   amount: {
@@ -143,7 +146,7 @@ export const commonValidationRules = {
   },
   bps: {
     required: true,
-    validator: (v: any) => validateBps(v),
+    validator: (v: unknown) => typeof v === "number" && validateBps(v),
     message: "BPS must be between 0 and 10000",
   },
 };

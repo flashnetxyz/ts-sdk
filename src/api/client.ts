@@ -1,5 +1,4 @@
 import type { NetworkConfig } from "../config";
-import type { FlashnetErrorResponse, ApiErrorResponse } from "../types";
 
 export interface RequestOptions {
   headers?: Record<string, string>;

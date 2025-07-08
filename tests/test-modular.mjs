@@ -1,10 +1,10 @@
 #!/usr/bin/env node
 
+import { ApiClient } from "@flashnet/sdk/api";
 // Test modular imports without wallet dependencies
 import { AuthManager } from "@flashnet/sdk/auth";
-import { ApiClient } from "@flashnet/sdk/api";
-import { encodeSparkAddress, generateNonce } from "@flashnet/sdk/utils";
 import { getNetworkConfig } from "@flashnet/sdk/config";
+import { encodeSparkAddress, generateNonce } from "@flashnet/sdk/utils";
 
 console.log("Testing modular imports...\n");
 
@@ -33,14 +33,14 @@ console.log(`  Encoded address: ${testAddress}`);
 // Test 4: Auth Manager with custom signer
 console.log("✓ AuthManager import works");
 class TestSigner {
-  async signMessage(message) {
+  async signMessage(_message) {
     // Mock signing
     return new Uint8Array(64);
   }
 }
 
 const signer = new TestSigner();
-const authManager = new AuthManager(apiClient, "test-pubkey", signer);
+const _authManager = new AuthManager(apiClient, "test-pubkey", signer);
 console.log(`  AuthManager created with custom signer`);
 
 console.log("\n✅ All modular imports working correctly!");

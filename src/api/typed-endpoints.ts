@@ -1,5 +1,5 @@
-import { ApiClient } from "./client";
 import type * as Types from "../types";
+import type { ApiClient } from "./client";
 
 /**
  * Typed API endpoints for the Flashnet AMM Gateway
