@@ -312,7 +312,7 @@ export class FlashnetClient {
     assetBTokenPublicKey: string;
     lpFeeRateBps: number;
     totalHostFeeRateBps: number;
-    integratorNamespace?: string;
+    hostNamespace?: string;
     initialLiquidity?: {
       assetAAmount: bigint;
       assetBAmount: bigint;
@@ -380,7 +380,7 @@ export class FlashnetClient {
       assetBTokenPublicKey: params.assetBTokenPublicKey,
       lpFeeRateBps: params.lpFeeRateBps.toString(),
       totalHostFeeRateBps: params.totalHostFeeRateBps.toString(),
-      integratorNamespace: params.integratorNamespace || "",
+      hostNamespace: params.hostNamespace || "",
       nonce,
       signature: Buffer.from(signature).toString("hex"),
     };

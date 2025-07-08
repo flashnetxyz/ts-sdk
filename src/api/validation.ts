@@ -159,7 +159,7 @@ export const constantProductPoolValidationRules = {
   assetATokenPublicKey: commonValidationRules.publicKey,
   assetBTokenPublicKey: commonValidationRules.publicKey,
   lpFeeRateBps: commonValidationRules.bps,
-  integratorNamespace: {
+  hostNamespace: {
     required: true,
     validator: validateNamespace,
     message: "invalid namespace format",
