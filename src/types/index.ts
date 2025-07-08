@@ -114,7 +114,7 @@ export interface CreateConstantProductPoolRequest {
   assetBTokenPublicKey: string;
   lpFeeRateBps: string;
   totalHostFeeRateBps: string;
-  integratorNamespace: string;
+  hostNamespace: string;
   nonce: string;
   signature: string;
 }
