@@ -21,6 +21,44 @@ npm install @flashnet/sdk
 yarn add @flashnet/sdk
 ```
 
+### Optional Dependencies
+
+The `@buildonspark/spark-sdk` and `@buildonspark/issuer-sdk` are now **optional peer dependencies**. You only need to install them if you're using the full `FlashnetClient` with wallet integration:
+
+```bash
+# For full wallet integration (frontend)
+bun i @flashnet/sdk @buildonspark/spark-sdk @buildonspark/issuer-sdk
+
+# For backend/lightweight usage (no wallet)
+bun i @flashnet/sdk
+```
+
+## 🆕 Modular Imports
+
+The SDK now supports modular imports for better tree-shaking and smaller bundle sizes:
+
+```typescript
+// Import only what you need - no wallet dependencies required
+import { AuthManager } from "@flashnet/sdk/auth";
+import { ApiClient } from "@flashnet/sdk/api";
+import { encodeSparkAddress } from "@flashnet/sdk/utils";
+import type { Signer } from "@flashnet/sdk/types";
+
+// Full SDK (requires wallet dependencies)
+import { FlashnetClient } from "@flashnet/sdk";
+```
+
+Available exports:
+
+- `@flashnet/sdk/auth` - Authentication utilities
+- `@flashnet/sdk/api` - API client and typed endpoints
+- `@flashnet/sdk/utils` - Utility functions (addresses, intents, etc.)
+- `@flashnet/sdk/types` - TypeScript types
+- `@flashnet/sdk/config` - Network configurations
+- `@flashnet/sdk/client` - FlashnetClient (requires wallet)
+
+For detailed modular usage examples, see [docs/modular-usage.md](docs/modular-usage.md).
+
 ## Usage Options
 
 The Flashnet SDK offers two approaches to suit different needs:
@@ -148,6 +186,7 @@ const swap = await client.executeSwap({
 import {
   ApiClient,
   AuthManager,
+  TypedAmmApi,
   getNetworkConfig,
   encodeSparkAddress,
   generatePoolSwapIntentMessage,
@@ -158,7 +197,7 @@ import {
 // Setup
 const config = getNetworkConfig("MAINNET");
 const apiClient = new ApiClient(config);
-const api = apiClient.amm; // Typed API endpoints
+const api = new TypedAmmApi(apiClient); // Create typed API wrapper
 
 // Authenticate with wallet
 const signer = createWalletSigner(wallet);
@@ -349,7 +388,8 @@ const pools = await client.ammGet("/v1/pools");
 const swapResult = await client.ammPost("/v1/swap", swapData);
 
 // Typed API wrapper
-const api = client.amm;
+import { TypedAmmApi } from "@flashnet/sdk";
+const api = new TypedAmmApi(client);
 const pools = await api.listPools({ limit: 10 });
 ```
 

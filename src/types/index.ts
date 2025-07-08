@@ -447,6 +447,12 @@ export interface SettlementPingResponse {
   gatewayTimestamp: string;
 }
 
+// Define Network enum locally to avoid spark-sdk dependency
+export enum Network {
+  MAINNET = 0,
+  REGTEST = 1,
+}
+
 // Error types
 export interface FlashnetErrorResponse {
   code: number;

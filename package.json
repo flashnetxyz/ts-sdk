@@ -1,6 +1,6 @@
 {
   "name": "@flashnet/sdk",
-  "version": "0.1.2",
+  "version": "0.2.0",
   "main": "./dist/cjs/index.js",
   "module": "./dist/esm/index.js",
   "types": "./dist/esm/index.d.ts",
@@ -9,6 +9,36 @@
       "types": "./dist/esm/index.d.ts",
       "import": "./dist/esm/index.js",
       "require": "./dist/cjs/index.js"
+    },
+    "./auth": {
+      "types": "./dist/esm/src/utils/auth.d.ts",
+      "import": "./dist/esm/src/utils/auth.js",
+      "require": "./dist/cjs/src/utils/auth.js"
+    },
+    "./utils": {
+      "types": "./dist/esm/src/utils/index.d.ts",
+      "import": "./dist/esm/src/utils/index.js",
+      "require": "./dist/cjs/src/utils/index.js"
+    },
+    "./api": {
+      "types": "./dist/esm/src/api/client.d.ts",
+      "import": "./dist/esm/src/api/client.js",
+      "require": "./dist/cjs/src/api/client.js"
+    },
+    "./types": {
+      "types": "./dist/esm/src/types/index.d.ts",
+      "import": "./dist/esm/src/types/index.js",
+      "require": "./dist/cjs/src/types/index.js"
+    },
+    "./config": {
+      "types": "./dist/esm/src/config/index.d.ts",
+      "import": "./dist/esm/src/config/index.js",
+      "require": "./dist/cjs/src/config/index.js"
+    },
+    "./client": {
+      "types": "./dist/esm/src/client/FlashnetClient.d.ts",
+      "import": "./dist/esm/src/client/FlashnetClient.js",
+      "require": "./dist/cjs/src/client/FlashnetClient.js"
     }
   },
   "files": [
@@ -18,10 +48,16 @@
     "prebuild": "rm -rf dist",
     "build": "rollup -c",
     "dev": "rollup -c -w",
-    "test": "npm run test:esm && npm run test:cjs && npm run test:bun",
+    "test": "npm run test:esm && npm run test:cjs && npm run test:bun && npm run test:modular",
     "test:esm": "node tests/test-esm.mjs",
     "test:cjs": "node tests/test-cjs.cjs",
-    "test:bun": "bun tests/test-bun.js"
+    "test:bun": "bun tests/test-bun.js",
+    "test:modular": "node tests/test-modular.mjs",
+    "lint": "biome check .",
+    "lint:fix": "biome check --write .",
+    "format": "biome format --write .",
+    "check": "biome check --write --unsafe .",
+    "type-check": "tsc --noEmit"
   },
   "devDependencies": {
     "@biomejs/biome": "2.0.5",
@@ -33,11 +69,19 @@
     "typescript": "^5"
   },
   "peerDependencies": {
-    "typescript": "^5"
+    "typescript": "^5",
+    "@buildonspark/spark-sdk": "^0.1.44",
+    "@buildonspark/issuer-sdk": "^0.0.75"
+  },
+  "peerDependenciesMeta": {
+    "@buildonspark/spark-sdk": {
+      "optional": true
+    },
+    "@buildonspark/issuer-sdk": {
+      "optional": true
+    }
   },
   "dependencies": {
-    "@buildonspark/issuer-sdk": "^0.0.74",
-    "@buildonspark/spark-sdk": "0.1.43",
     "@noble/curves": "^1.7.0",
     "@noble/hashes": "^1.8.0",
     "@noble/secp256k1": "^2.3.0",

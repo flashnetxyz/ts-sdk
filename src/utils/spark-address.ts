@@ -1,25 +1,19 @@
-import { secp256k1 } from '@noble/curves/secp256k1';
-import { bytesToHex, hexToBytes } from '@noble/hashes/utils';
-import { bech32m } from '@scure/base';
+import { secp256k1 } from "@noble/curves/secp256k1";
+import { bytesToHex, hexToBytes } from "@noble/hashes/utils";
+import { bech32m } from "@scure/base";
+import type { NetworkType } from "../types";
 
 // Simple interface just storing the public key bytes
 interface SparkAddress {
   identityPublicKey: Uint8Array;
 }
 
-export type NetworkType =
-  | 'MAINNET'
-  | 'TESTNET'
-  | 'SIGNET'
-  | 'REGTEST'
-  | 'LOCAL';
-
 const AddressNetworkPrefix: Record<NetworkType, string> = {
-  MAINNET: 'sp',
-  TESTNET: 'spt',
-  REGTEST: 'sprt',
-  SIGNET: 'sps',
-  LOCAL: 'spl',
+  MAINNET: "sp",
+  TESTNET: "spt",
+  REGTEST: "sprt",
+  SIGNET: "sps",
+  LOCAL: "spl",
 } as const;
 
 const PrefixToNetwork: Record<string, NetworkType> = Object.fromEntries(
@@ -87,7 +81,7 @@ function decodeProto(data: Uint8Array): SparkAddress {
   }
   // Basic validation: check if a public key was actually decoded
   if (result.identityPublicKey.length === 0) {
-    throw new Error('Failed to decode public key from proto bytes');
+    throw new Error("Failed to decode public key from proto bytes");
   }
 
   return result;
@@ -160,14 +154,14 @@ export function decodeSparkAddress(
  * @returns The NetworkType ('MAINNET', 'REGTEST', etc.) or null if the prefix is invalid.
  */
 export function getNetworkFromAddress(address: string): NetworkType | null {
-  if (!address || typeof address !== 'string') {
+  if (!address || typeof address !== "string") {
     return null;
   }
-  const parts = address.split('1');
+  const parts = address.split("1");
   if (parts.length < 2) {
     return null; // Missing separator '1'
   }
-  const prefix = parts[0] ?? '';
+  const prefix = parts[0] ?? "";
   return PrefixToNetwork[prefix] || null; // Return NetworkType or null
 }
 
@@ -183,7 +177,7 @@ export function isValidSparkAddress(
   network?: NetworkType
 ): boolean {
   try {
-    if (!address?.includes('1')) {
+    if (!address?.includes("1")) {
       return false;
     }
 
@@ -221,7 +215,7 @@ export function isValidSparkAddress(
  * @returns True if it matches the basic format, false otherwise.
  */
 export function looksLikePublicKey(key: string): boolean {
-  if (!key || typeof key !== 'string') {
+  if (!key || typeof key !== "string") {
     return false;
   }
   return key.length === 66 && /^(02|03)[0-9a-fA-F]{64}$/.test(key);
@@ -234,14 +228,14 @@ export function looksLikePublicKey(key: string): boolean {
  */
 export function isValidPublicKey(publicKey: string) {
   if (!looksLikePublicKey(publicKey)) {
-    throw new Error('Invalid public key format/length.');
+    throw new Error("Invalid public key format/length.");
   }
   try {
     const point = secp256k1.ProjectivePoint.fromHex(publicKey);
     point.assertValidity();
   } catch (error: unknown) {
     const errorMessage =
-      error instanceof Error ? error.message : 'Unknown error';
+      error instanceof Error ? error.message : "Unknown error";
     throw new Error(`Invalid public key point: ${errorMessage}`);
   }
 }
@@ -257,7 +251,7 @@ export function isValidPublicKey(publicKey: string) {
  */
 export function convertSparkAddressToNetwork(
   sparkAddress: string,
-  targetNetwork: 'mainnet' | 'regtest'
+  targetNetwork: "mainnet" | "regtest"
 ): string | null {
   try {
     // Check if the address is valid
@@ -273,7 +267,7 @@ export function convertSparkAddressToNetwork(
 
     // Map the input string to NetworkType
     const targetNetworkType: NetworkType =
-      targetNetwork === 'mainnet' ? 'MAINNET' : 'REGTEST';
+      targetNetwork === "mainnet" ? "MAINNET" : "REGTEST";
 
     // If already on the target network, return the original address
     if (currentNetworkType === targetNetworkType) {

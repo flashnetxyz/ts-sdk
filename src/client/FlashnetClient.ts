@@ -2,64 +2,62 @@ import type { IssuerSparkWallet } from "@buildonspark/issuer-sdk";
 import type { SparkWallet } from "@buildonspark/spark-sdk";
 import { ApiClient } from "../api/client";
 import { TypedAmmApi } from "../api/typed-endpoints";
-import { AuthManager } from "../utils/auth";
-import { createWalletSigner } from "../utils/signer";
+import { BTC_ASSET_PUBKEY, getNetworkConfig } from "../config";
 import {
-  getNetworkFromAddress,
-  encodeSparkAddress,
-} from "../utils/spark-address";
-import { getNetworkConfig } from "../config";
+  type AddLiquidityRequest,
+  type AddLiquidityResponse,
+  type ConfirmDepositResponse,
+  type ConfirmInitialDepositRequest,
+  type CreateConstantProductPoolRequest,
+  type CreatePoolResponse,
+  type CreateSingleSidedPoolRequest,
+  type ExecuteSwapRequest,
+  type GetHostResponse,
+  type GetPoolHostFeesResponse,
+  type ListGlobalSwapsQuery,
+  type ListGlobalSwapsResponse,
+  type ListPoolSwapsQuery,
+  type ListPoolSwapsResponse,
+  type ListPoolsQuery,
+  type ListPoolsResponse,
+  type ListUserSwapsQuery,
+  type ListUserSwapsResponse,
+  type LpPositionDetailsResponse,
+  Network,
+  type NetworkType,
+  type PoolDetailsResponse,
+  type RegisterHostRequest,
+  type RegisterHostResponse,
+  type RemoveLiquidityRequest,
+  type RemoveLiquidityResponse,
+  type SettlementPingResponse,
+  type SimulateAddLiquidityRequest,
+  type SimulateAddLiquidityResponse,
+  type SimulateRemoveLiquidityRequest,
+  type SimulateRemoveLiquidityResponse,
+  type SimulateSwapRequest,
+  type SimulateSwapResponse,
+  type SwapResponse,
+  type WithdrawHostFeesRequest,
+  type WithdrawHostFeesResponse,
+} from "../types";
 import { generateNonce } from "../utils";
+import { AuthManager } from "../utils/auth";
 import {
-  generatePoolSwapIntentMessage,
   generateAddLiquidityIntentMessage,
-  generateRemoveLiquidityIntentMessage,
   generateConstantProductPoolInitializationIntentMessage,
-  generatePoolInitializationIntentMessage,
   generatePoolConfirmInitialDepositIntentMessage,
+  generatePoolInitializationIntentMessage,
+  generatePoolSwapIntentMessage,
   generateRegisterHostIntentMessage,
+  generateRemoveLiquidityIntentMessage,
   generateWithdrawHostFeesIntentMessage,
 } from "../utils/intents";
-import { BTC_ASSET_PUBKEY } from "../config";
-import type {
-  NetworkType,
-  ListPoolsQuery,
-  ListPoolsResponse,
-  PoolDetailsResponse,
-  LpPositionDetailsResponse,
-  SimulateSwapRequest,
-  SimulateSwapResponse,
-  ExecuteSwapRequest,
-  SwapResponse,
-  SimulateAddLiquidityRequest,
-  SimulateAddLiquidityResponse,
-  AddLiquidityRequest,
-  AddLiquidityResponse,
-  SimulateRemoveLiquidityRequest,
-  SimulateRemoveLiquidityResponse,
-  RemoveLiquidityRequest,
-  RemoveLiquidityResponse,
-  CreateConstantProductPoolRequest,
-  CreateSingleSidedPoolRequest,
-  CreatePoolResponse,
-  ConfirmInitialDepositRequest,
-  ConfirmDepositResponse,
-  RegisterHostRequest,
-  RegisterHostResponse,
-  GetHostResponse,
-  WithdrawHostFeesRequest,
-  WithdrawHostFeesResponse,
-  GetPoolHostFeesRequest,
-  GetPoolHostFeesResponse,
-  ListPoolSwapsQuery,
-  ListPoolSwapsResponse,
-  ListGlobalSwapsQuery,
-  ListGlobalSwapsResponse,
-  ListUserSwapsQuery,
-  ListUserSwapsResponse,
-  SettlementPingResponse,
-} from "../types";
-import { Network } from "@buildonspark/spark-sdk";
+import { createWalletSigner } from "../utils/signer";
+import {
+  encodeSparkAddress,
+  getNetworkFromAddress,
+} from "../utils/spark-address";
 
 export interface TokenBalance {
   balance: bigint;
@@ -136,7 +134,7 @@ export class FlashnetClient {
    */
   constructor(
     wallet: IssuerSparkWallet | SparkWallet,
-    options: FlashnetClientOptions = {}
+    _options: FlashnetClientOptions = {}
   ) {
     this._wallet = wallet;
 
@@ -331,7 +329,7 @@ export class FlashnetClient {
       if (params.assetATokenPublicKey === BTC_ASSET_PUBKEY) {
         requirements.btc = params.initialLiquidity.assetAAmount;
       } else {
-        requirements.tokens!.set(
+        requirements.tokens?.set(
           params.assetATokenPublicKey,
           params.initialLiquidity.assetAAmount
         );
@@ -341,7 +339,7 @@ export class FlashnetClient {
         requirements.btc =
           (requirements.btc || 0n) + params.initialLiquidity.assetBAmount;
       } else {
-        requirements.tokens!.set(
+        requirements.tokens?.set(
           params.assetBTokenPublicKey,
           params.initialLiquidity.assetBAmount
         );
@@ -430,7 +428,7 @@ export class FlashnetClient {
     if (params.assetATokenPublicKey === BTC_ASSET_PUBKEY) {
       requirements.btc = BigInt(params.assetAInitialReserve);
     } else {
-      requirements.tokens!.set(
+      requirements.tokens?.set(
         params.assetATokenPublicKey,
         BigInt(params.assetAInitialReserve)
       );
@@ -532,9 +530,8 @@ export class FlashnetClient {
           poolOwnerPublicKey: this.publicKey,
         };
 
-        const confirmResponse = await this.typedApi.confirmInitialDeposit(
-          confirmRequest
-        );
+        const confirmResponse =
+          await this.typedApi.confirmInitialDeposit(confirmRequest);
 
         if (!confirmResponse.confirmed) {
           throw new Error(
@@ -627,7 +624,7 @@ export class FlashnetClient {
     if (params.assetInTokenPublicKey === BTC_ASSET_PUBKEY) {
       requirements.btc = params.amountIn;
     } else {
-      requirements.tokens!.set(params.assetInTokenPublicKey, params.amountIn);
+      requirements.tokens?.set(params.assetInTokenPublicKey, params.amountIn);
     }
 
     const balanceCheck = await this.checkBalance(requirements);
@@ -738,13 +735,13 @@ export class FlashnetClient {
     if (pool.assetATokenPublicKey === BTC_ASSET_PUBKEY) {
       requirements.btc = params.assetAAmount;
     } else {
-      requirements.tokens!.set(pool.assetATokenPublicKey, params.assetAAmount);
+      requirements.tokens?.set(pool.assetATokenPublicKey, params.assetAAmount);
     }
 
     if (pool.assetBTokenPublicKey === BTC_ASSET_PUBKEY) {
       requirements.btc = (requirements.btc || 0n) + params.assetBAmount;
     } else {
-      requirements.tokens!.set(pool.assetBTokenPublicKey, params.assetBAmount);
+      requirements.tokens?.set(pool.assetBTokenPublicKey, params.assetBAmount);
     }
 
     const balanceCheck = await this.checkBalance(requirements);
