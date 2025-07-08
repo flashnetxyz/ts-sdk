@@ -4,8 +4,6 @@
     "": {
       "name": "flashnet-sdk",
       "dependencies": {
-        "@buildonspark/issuer-sdk": "^0.0.74",
-        "@buildonspark/spark-sdk": "0.1.43",
         "@noble/curves": "^1.7.0",
         "@noble/hashes": "^1.8.0",
         "@noble/secp256k1": "^2.3.0",
@@ -21,8 +19,14 @@
         "typescript": "^5",
       },
       "peerDependencies": {
+        "@buildonspark/issuer-sdk": "^0.0.74",
+        "@buildonspark/spark-sdk": "^0.1.43",
         "typescript": "^5",
       },
+      "optionalPeers": [
+        "@buildonspark/issuer-sdk",
+        "@buildonspark/spark-sdk",
+      ],
     },
   },
   "packages": {

@@ -1,5 +1,4 @@
 import type { NetworkConfig } from "../config";
-import { TypedAmmApi } from "./typed-endpoints";
 import type { FlashnetErrorResponse, ApiErrorResponse } from "../types";
 
 export interface RequestOptions {
@@ -11,11 +10,9 @@ export interface RequestOptions {
 export class ApiClient {
   private config: NetworkConfig;
   private authToken?: string;
-  public readonly amm: TypedAmmApi;
 
   constructor(config: NetworkConfig) {
     this.config = config;
-    this.amm = new TypedAmmApi(this);
   }
 
   setAuthToken(token: string) {
