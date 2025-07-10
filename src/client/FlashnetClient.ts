@@ -554,9 +554,8 @@ export class FlashnetClient {
           poolOwnerPublicKey: this.publicKey,
         };
 
-        const confirmResponse = await this.typedApi.confirmInitialDeposit(
-          confirmRequest
-        );
+        const confirmResponse =
+          await this.typedApi.confirmInitialDeposit(confirmRequest);
 
         if (!confirmResponse.confirmed) {
           throw new Error(
@@ -814,7 +813,9 @@ export class FlashnetClient {
       lpIdentityPublicKey: hop.poolId,
       inputAssetPublicKey: hop.assetInAddress,
       outputAssetPublicKey: hop.assetOutAddress,
-      hopIntegratorFeeRateBps: hop.hopIntegratorFeeRateBps !== undefined && hop.hopIntegratorFeeRateBps !== null
+      hopIntegratorFeeRateBps:
+        hop.hopIntegratorFeeRateBps !== undefined &&
+        hop.hopIntegratorFeeRateBps !== null
           ? hop.hopIntegratorFeeRateBps.toString()
           : "0",
     }));
@@ -825,7 +826,8 @@ export class FlashnetClient {
       assetInAddress: hop.assetInAddress,
       assetOutAddress: hop.assetOutAddress,
       hopIntegratorFeeRateBps:
-        hop.hopIntegratorFeeRateBps !== undefined && hop.hopIntegratorFeeRateBps !== null
+        hop.hopIntegratorFeeRateBps !== undefined &&
+        hop.hopIntegratorFeeRateBps !== null
           ? hop.hopIntegratorFeeRateBps.toString()
           : "0",
     }));
