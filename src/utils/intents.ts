@@ -1,10 +1,13 @@
 import type {
   AmmAddLiquiditySettlementRequest,
   AmmRemoveLiquiditySettlementRequest,
+  RouteHopValidation,
   ValidateAmmConfirmInitialDepositData,
   ValidateAmmInitializeConstantProductPoolData,
   ValidateAmmInitializeSingleSidedPoolData,
   ValidateAmmSwapData,
+  ValidateAmmWithdrawIntegratorFeesData,
+  ValidateRouteSwapData,
 } from "../types";
 
 /**
@@ -14,25 +17,22 @@ import type {
  */
 export function generatePoolInitializationIntentMessage(params: {
   poolOwnerPublicKey: string;
-  assetATokenPublicKey: string;
-  assetBTokenPublicKey: string;
+  assetAAddress: string;
+  assetBAddress: string;
   assetAInitialReserve: string;
-  assetAInitialVirtualReserve: string;
-  assetBInitialVirtualReserve: string;
-  threshold: string;
+  graduationThresholdPct: string;
+  targetBRaisedAtGraduation: string;
   lpFeeRateBps: string;
   totalHostFeeRateBps: string;
   nonce: string;
 }): Uint8Array {
   const intentMessage: ValidateAmmInitializeSingleSidedPoolData = {
     poolOwnerPublicKey: params.poolOwnerPublicKey,
-    assetATokenPublicKey: params.assetATokenPublicKey,
-    assetBTokenPublicKey: params.assetBTokenPublicKey,
+    assetATokenPublicKey: params.assetAAddress,
+    assetBTokenPublicKey: params.assetBAddress,
     assetAInitialReserve: params.assetAInitialReserve,
-    assetAInitialVirtualReserve: params.assetAInitialVirtualReserve,
-    assetBInitialVirtualReserve: params.assetBInitialVirtualReserve,
-    threshold: params.threshold,
-    hostFeeShares: [],
+    graduationThresholdPct: params.graduationThresholdPct,
+    targetBRaisedAtGraduation: params.targetBRaisedAtGraduation,
     totalHostFeeRateBps: params.totalHostFeeRateBps,
     lpFeeRateBps: params.lpFeeRateBps,
     nonce: params.nonce,
@@ -48,17 +48,16 @@ export function generatePoolInitializationIntentMessage(params: {
  */
 export function generateConstantProductPoolInitializationIntentMessage(params: {
   poolOwnerPublicKey: string;
-  assetATokenPublicKey: string;
-  assetBTokenPublicKey: string;
+  assetAAddress: string;
+  assetBAddress: string;
   lpFeeRateBps: string;
   totalHostFeeRateBps: string;
   nonce: string;
 }): Uint8Array {
   const intentMessage: ValidateAmmInitializeConstantProductPoolData = {
     poolOwnerPublicKey: params.poolOwnerPublicKey,
-    assetATokenPublicKey: params.assetATokenPublicKey,
-    assetBTokenPublicKey: params.assetBTokenPublicKey,
-    hostFeeShares: [],
+    assetATokenPublicKey: params.assetAAddress,
+    assetBTokenPublicKey: params.assetBAddress,
     totalHostFeeRateBps: params.totalHostFeeRateBps,
     lpFeeRateBps: params.lpFeeRateBps,
     nonce: params.nonce,
@@ -95,24 +94,24 @@ export function generatePoolConfirmInitialDepositIntentMessage(params: {
 export function generatePoolSwapIntentMessage(params: {
   userPublicKey: string;
   lpIdentityPublicKey: string;
-  assetASparkTransferId: string;
+  assetInSparkTransferId: string;
   assetInTokenPublicKey: string;
   assetOutTokenPublicKey: string;
   amountIn: string;
-  minAmountOut: string;
   maxSlippageBps: string;
+  totalIntegratorFeeRateBps: string;
   nonce: string;
 }): Uint8Array {
   const intentMessage: ValidateAmmSwapData = {
     userPublicKey: params.userPublicKey,
     lpIdentityPublicKey: params.lpIdentityPublicKey,
-    assetASparkTransferId: params.assetASparkTransferId,
+    assetInSparkTransferId: params.assetInSparkTransferId,
     assetInTokenPublicKey: params.assetInTokenPublicKey,
     assetOutTokenPublicKey: params.assetOutTokenPublicKey,
     amountIn: params.amountIn,
-    minAmountOut: params.minAmountOut,
     maxSlippageBps: params.maxSlippageBps,
     nonce: params.nonce,
+    totalIntegratorFeeRateBps: params.totalIntegratorFeeRateBps,
   };
 
   return new TextEncoder().encode(JSON.stringify(intentMessage));
@@ -199,5 +198,53 @@ export function generateWithdrawHostFeesIntentMessage(params: {
   };
 
   // Return as Uint8Array for consistent handling
+  return new TextEncoder().encode(JSON.stringify(signingPayload));
+}
+
+/**
+ * Generate the intent message for withdrawing integrator fees
+ */
+export function generateWithdrawIntegratorFeesIntentMessage(params: {
+  integratorPublicKey: string;
+  lpIdentityPublicKey: string;
+  assetAAmount?: string;
+  assetBAmount?: string;
+  nonce: string;
+}): Uint8Array {
+  const signingPayload: ValidateAmmWithdrawIntegratorFeesData = {
+    integratorPublicKey: params.integratorPublicKey,
+    lpIdentityPublicKey: params.lpIdentityPublicKey,
+    assetAAmount: params.assetAAmount,
+    assetBAmount: params.assetBAmount,
+    nonce: params.nonce,
+  };
+
+  return new TextEncoder().encode(JSON.stringify(signingPayload));
+}
+
+/**
+ * Generate the intent message for route swap
+ */
+export function generateRouteSwapIntentMessage(params: {
+  userPublicKey: string;
+  hops: RouteHopValidation[];
+  initialSparkTransferId: string;
+  inputAmount: string;
+  maxRouteSlippageBps: string;
+  nonce: string;
+  defaultIntegratorFeeRateBps?: string;
+}): Uint8Array {
+  const signingPayload: ValidateRouteSwapData = {
+    userPublicKey: params.userPublicKey,
+    hops: params.hops,
+    initialSparkTransferId: params.initialSparkTransferId,
+    inputAmount: params.inputAmount,
+    minFinalOutputAmount: "0",
+    maxRouteSlippageBps: params.maxRouteSlippageBps,
+    nonce: params.nonce,
+    defaultIntegratorFeeRateBps: params.defaultIntegratorFeeRateBps,
+  };
+
+  console.log(signingPayload);
   return new TextEncoder().encode(JSON.stringify(signingPayload));
 }

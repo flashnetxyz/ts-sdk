@@ -11,8 +11,13 @@ import {
   type CreateConstantProductPoolRequest,
   type CreatePoolResponse,
   type CreateSingleSidedPoolRequest,
+  type ExecuteRouteSwapRequest,
+  type ExecuteRouteSwapResponse,
   type ExecuteSwapRequest,
+  type GetHostFeesRequest,
+  type GetHostFeesResponse,
   type GetHostResponse,
+  type GetIntegratorFeesResponse,
   type GetPoolHostFeesResponse,
   type ListGlobalSwapsQuery,
   type ListGlobalSwapsResponse,
@@ -30,16 +35,22 @@ import {
   type RegisterHostResponse,
   type RemoveLiquidityRequest,
   type RemoveLiquidityResponse,
+  type RouteHopRequest,
+  type RouteHopValidation,
   type SettlementPingResponse,
   type SimulateAddLiquidityRequest,
   type SimulateAddLiquidityResponse,
   type SimulateRemoveLiquidityRequest,
   type SimulateRemoveLiquidityResponse,
+  type SimulateRouteSwapRequest,
+  type SimulateRouteSwapResponse,
   type SimulateSwapRequest,
   type SimulateSwapResponse,
   type SwapResponse,
   type WithdrawHostFeesRequest,
   type WithdrawHostFeesResponse,
+  type WithdrawIntegratorFeesRequest,
+  type WithdrawIntegratorFeesResponse,
 } from "../types";
 import { generateNonce } from "../utils";
 import { AuthManager } from "../utils/auth";
@@ -51,7 +62,9 @@ import {
   generatePoolSwapIntentMessage,
   generateRegisterHostIntentMessage,
   generateRemoveLiquidityIntentMessage,
+  generateRouteSwapIntentMessage,
   generateWithdrawHostFeesIntentMessage,
+  generateWithdrawIntegratorFeesIntentMessage,
 } from "../utils/intents";
 import { createWalletSigner } from "../utils/signer";
 import {
@@ -308,8 +321,8 @@ export class FlashnetClient {
    * Create a constant product pool
    */
   async createConstantProductPool(params: {
-    assetATokenPublicKey: string;
-    assetBTokenPublicKey: string;
+    assetAAddress: string;
+    assetBAddress: string;
     lpFeeRateBps: number;
     totalHostFeeRateBps: number;
     hostNamespace?: string;
@@ -326,21 +339,21 @@ export class FlashnetClient {
         tokens: new Map(),
       };
 
-      if (params.assetATokenPublicKey === BTC_ASSET_PUBKEY) {
+      if (params.assetAAddress === BTC_ASSET_PUBKEY) {
         requirements.btc = params.initialLiquidity.assetAAmount;
       } else {
         requirements.tokens?.set(
-          params.assetATokenPublicKey,
+          params.assetAAddress,
           params.initialLiquidity.assetAAmount
         );
       }
 
-      if (params.assetBTokenPublicKey === BTC_ASSET_PUBKEY) {
+      if (params.assetBAddress === BTC_ASSET_PUBKEY) {
         requirements.btc =
           (requirements.btc || 0n) + params.initialLiquidity.assetBAmount;
       } else {
         requirements.tokens?.set(
-          params.assetBTokenPublicKey,
+          params.assetBAddress,
           params.initialLiquidity.assetBAmount
         );
       }
@@ -358,8 +371,8 @@ export class FlashnetClient {
     const intentMessage =
       generateConstantProductPoolInitializationIntentMessage({
         poolOwnerPublicKey: this.publicKey,
-        assetATokenPublicKey: params.assetATokenPublicKey,
-        assetBTokenPublicKey: params.assetBTokenPublicKey,
+        assetAAddress: params.assetAAddress,
+        assetBAddress: params.assetBAddress,
         lpFeeRateBps: params.lpFeeRateBps.toString(),
         totalHostFeeRateBps: params.totalHostFeeRateBps.toString(),
         nonce,
@@ -376,8 +389,8 @@ export class FlashnetClient {
     // Create pool
     const request: CreateConstantProductPoolRequest = {
       poolOwnerPublicKey: this.publicKey,
-      assetATokenPublicKey: params.assetATokenPublicKey,
-      assetBTokenPublicKey: params.assetBTokenPublicKey,
+      assetAAddress: params.assetAAddress,
+      assetBAddress: params.assetBAddress,
       lpFeeRateBps: params.lpFeeRateBps.toString(),
       totalHostFeeRateBps: params.totalHostFeeRateBps.toString(),
       hostNamespace: params.hostNamespace || "",
@@ -391,8 +404,8 @@ export class FlashnetClient {
     if (params.initialLiquidity && response.poolId) {
       await this.addInitialLiquidity(
         response.poolId,
-        params.assetATokenPublicKey,
-        params.assetBTokenPublicKey,
+        params.assetAAddress,
+        params.assetBAddress,
         params.initialLiquidity.assetAAmount,
         params.initialLiquidity.assetBAmount
       );
@@ -408,28 +421,41 @@ export class FlashnetClient {
    * The initial reserve amount will be transferred to the pool and confirmed.
    */
   async createSingleSidedPool(params: {
-    assetATokenPublicKey: string;
-    assetBTokenPublicKey: string;
+    assetAAddress: string;
+    assetBAddress: string;
     assetAInitialReserve: string;
-    assetAInitialVirtualReserve: string;
-    assetBInitialVirtualReserve: string;
-    threshold: string;
+    assetAPctSoldAtGraduation: number;
+    targetBRaisedAtGraduation: string;
     lpFeeRateBps: number;
     totalHostFeeRateBps: number;
     hostNamespace?: string;
   }): Promise<CreatePoolResponse> {
     await this.ensureInitialized();
 
+    // check that assetAPctSoldAtGraduation is between 0 and 100 - no decimals
+    if (
+      params.assetAPctSoldAtGraduation < 0 ||
+      params.assetAPctSoldAtGraduation > 100
+    ) {
+      throw new Error(`assetAPctSoldAtGraduation must be between 0 and 100`);
+    }
+
+    if (!params.hostNamespace && params.totalHostFeeRateBps < 10) {
+      throw new Error(
+        `Host fee must be greater than 10 bps when no host namespace is provided`
+      );
+    }
+
     // Check balance for initial reserve
     const requirements: { btc?: bigint; tokens?: Map<string, bigint> } = {
       tokens: new Map(),
     };
 
-    if (params.assetATokenPublicKey === BTC_ASSET_PUBKEY) {
+    if (params.assetAAddress === BTC_ASSET_PUBKEY) {
       requirements.btc = BigInt(params.assetAInitialReserve);
     } else {
       requirements.tokens?.set(
-        params.assetATokenPublicKey,
+        params.assetAAddress,
         BigInt(params.assetAInitialReserve)
       );
     }
@@ -445,12 +471,11 @@ export class FlashnetClient {
     const nonce = generateNonce();
     const intentMessage = generatePoolInitializationIntentMessage({
       poolOwnerPublicKey: this.publicKey,
-      assetATokenPublicKey: params.assetATokenPublicKey,
-      assetBTokenPublicKey: params.assetBTokenPublicKey,
+      assetAAddress: params.assetAAddress,
+      assetBAddress: params.assetBAddress,
       assetAInitialReserve: params.assetAInitialReserve,
-      assetAInitialVirtualReserve: params.assetAInitialVirtualReserve,
-      assetBInitialVirtualReserve: params.assetBInitialVirtualReserve,
-      threshold: params.threshold,
+      graduationThresholdPct: params.assetAPctSoldAtGraduation.toString(),
+      targetBRaisedAtGraduation: params.targetBRaisedAtGraduation,
       lpFeeRateBps: params.lpFeeRateBps.toString(),
       totalHostFeeRateBps: params.totalHostFeeRateBps.toString(),
       nonce,
@@ -466,12 +491,11 @@ export class FlashnetClient {
     // Create pool
     const request: CreateSingleSidedPoolRequest = {
       poolOwnerPublicKey: this.publicKey,
-      assetATokenPublicKey: params.assetATokenPublicKey,
-      assetBTokenPublicKey: params.assetBTokenPublicKey,
+      assetAAddress: params.assetAAddress,
+      assetBAddress: params.assetBAddress,
       assetAInitialReserve: params.assetAInitialReserve,
-      assetAInitialVirtualReserve: params.assetAInitialVirtualReserve,
-      assetBInitialVirtualReserve: params.assetBInitialVirtualReserve,
-      threshold: params.threshold,
+      graduationThresholdPct: params.assetAPctSoldAtGraduation,
+      targetBRaisedAtGraduation: params.targetBRaisedAtGraduation,
       lpFeeRateBps: params.lpFeeRateBps.toString(),
       totalHostFeeRateBps: params.totalHostFeeRateBps.toString(),
       hostNamespace: params.hostNamespace,
@@ -491,7 +515,7 @@ export class FlashnetClient {
         });
 
         let assetATransferId: string;
-        if (params.assetATokenPublicKey === BTC_ASSET_PUBKEY) {
+        if (params.assetAAddress === BTC_ASSET_PUBKEY) {
           const transfer = await this._wallet.transfer({
             amountSats: Number(params.assetAInitialReserve),
             receiverSparkAddress: lpSparkAddress,
@@ -499,7 +523,7 @@ export class FlashnetClient {
           assetATransferId = transfer.id;
         } else {
           assetATransferId = await this._wallet.transferTokens({
-            tokenPublicKey: params.assetATokenPublicKey,
+            tokenPublicKey: params.assetAAddress,
             tokenAmount: BigInt(params.assetAInitialReserve),
             receiverSparkAddress: lpSparkAddress,
           });
@@ -530,8 +554,9 @@ export class FlashnetClient {
           poolOwnerPublicKey: this.publicKey,
         };
 
-        const confirmResponse =
-          await this.typedApi.confirmInitialDeposit(confirmRequest);
+        const confirmResponse = await this.typedApi.confirmInitialDeposit(
+          confirmRequest
+        );
 
         if (!confirmResponse.confirmed) {
           throw new Error(
@@ -608,11 +633,12 @@ export class FlashnetClient {
    */
   async executeSwap(params: {
     poolId: string;
-    assetInTokenPublicKey: string;
-    assetOutTokenPublicKey: string;
-    amountIn: bigint;
-    minAmountOut: bigint;
+    assetInAddress: string;
+    assetOutAddress: string;
+    amountIn: string;
     maxSlippageBps: number;
+    integratorFeeRateBps?: number;
+    integratorPublicKey?: string;
   }): Promise<SwapResponse> {
     await this.ensureInitialized();
 
@@ -621,10 +647,10 @@ export class FlashnetClient {
       tokens: new Map(),
     };
 
-    if (params.assetInTokenPublicKey === BTC_ASSET_PUBKEY) {
-      requirements.btc = params.amountIn;
+    if (params.assetInAddress === BTC_ASSET_PUBKEY) {
+      requirements.btc = BigInt(params.amountIn);
     } else {
-      requirements.tokens?.set(params.assetInTokenPublicKey, params.amountIn);
+      requirements.tokens?.set(params.assetInAddress, BigInt(params.amountIn));
     }
 
     const balanceCheck = await this.checkBalance(requirements);
@@ -639,7 +665,7 @@ export class FlashnetClient {
     });
 
     let transferId: string;
-    if (params.assetInTokenPublicKey === BTC_ASSET_PUBKEY) {
+    if (params.assetInAddress === BTC_ASSET_PUBKEY) {
       const transfer = await this._wallet.transfer({
         amountSats: Number(params.amountIn),
         receiverSparkAddress: lpSparkAddress,
@@ -647,8 +673,8 @@ export class FlashnetClient {
       transferId = transfer.id;
     } else {
       transferId = await this._wallet.transferTokens({
-        tokenPublicKey: params.assetInTokenPublicKey,
-        tokenAmount: params.amountIn,
+        tokenPublicKey: params.assetInAddress,
+        tokenAmount: BigInt(params.amountIn),
         receiverSparkAddress: lpSparkAddress,
       });
     }
@@ -658,12 +684,12 @@ export class FlashnetClient {
     const intentMessage = generatePoolSwapIntentMessage({
       userPublicKey: this.publicKey,
       lpIdentityPublicKey: params.poolId,
-      assetASparkTransferId: transferId,
-      assetInTokenPublicKey: params.assetInTokenPublicKey,
-      assetOutTokenPublicKey: params.assetOutTokenPublicKey,
+      assetInSparkTransferId: transferId,
+      assetInTokenPublicKey: params.assetInAddress,
+      assetOutTokenPublicKey: params.assetOutAddress,
       amountIn: params.amountIn.toString(),
-      minAmountOut: params.minAmountOut.toString(),
       maxSlippageBps: params.maxSlippageBps.toString(),
+      totalIntegratorFeeRateBps: params.integratorFeeRateBps?.toString() || "0",
       nonce,
     });
 
@@ -678,12 +704,13 @@ export class FlashnetClient {
     const request: ExecuteSwapRequest = {
       userPublicKey: this.publicKey,
       poolId: params.poolId,
-      assetInTokenPublicKey: params.assetInTokenPublicKey,
-      assetOutTokenPublicKey: params.assetOutTokenPublicKey,
+      assetInAddress: params.assetInAddress,
+      assetOutAddress: params.assetOutAddress,
       amountIn: params.amountIn.toString(),
-      minAmountOut: params.minAmountOut.toString(),
       maxSlippageBps: params.maxSlippageBps?.toString(),
       assetInSparkTransferId: transferId,
+      totalIntegratorFeeRateBps: params.integratorFeeRateBps?.toString() || "0",
+      integratorPublicKey: params.integratorPublicKey || "",
       nonce,
       signature: Buffer.from(signature).toString("hex"),
     };
@@ -693,6 +720,158 @@ export class FlashnetClient {
     // Check if the swap was accepted
     if (!response.accepted) {
       const errorMessage = response.error || "Swap rejected by the AMM";
+      const refundInfo = response.refundedAmount
+        ? ` Refunded ${response.refundedAmount} of ${response.refundedAssetAddress} via transfer ${response.refundTransferId}`
+        : "";
+      throw new Error(`${errorMessage}.${refundInfo}`);
+    }
+
+    return response;
+  }
+
+  /**
+   * Simulate a route swap (multi-hop swap)
+   */
+  async simulateRouteSwap(
+    params: SimulateRouteSwapRequest
+  ): Promise<SimulateRouteSwapResponse> {
+    await this.ensureInitialized();
+    return this.typedApi.simulateRouteSwap(params);
+  }
+
+  /**
+   * Execute a route swap (multi-hop swap)
+   */
+  async executeRouteSwap(params: {
+    hops: Array<{
+      poolId: string;
+      assetInAddress: string;
+      assetOutAddress: string;
+      hopIntegratorFeeRateBps?: number;
+    }>;
+    initialAssetAddress: string;
+    inputAmount: string;
+    maxRouteSlippageBps: string;
+    integratorFeeRateBps?: number;
+    integratorPublicKey?: string;
+  }): Promise<ExecuteRouteSwapResponse> {
+    await this.ensureInitialized();
+
+    // Check balance for initial asset
+    const requirements: { btc?: bigint; tokens?: Map<string, bigint> } = {
+      tokens: new Map(),
+    };
+
+    if (params.initialAssetAddress === BTC_ASSET_PUBKEY) {
+      requirements.btc = BigInt(params.inputAmount);
+    } else {
+      requirements.tokens?.set(
+        params.initialAssetAddress,
+        BigInt(params.inputAmount)
+      );
+    }
+
+    const balanceCheck = await this.checkBalance(requirements);
+    if (!balanceCheck.sufficient) {
+      throw new Error(
+        `Insufficient balance for route swap: ${balanceCheck.message}`
+      );
+    }
+
+    // Validate hops array
+    if (!params.hops.length) {
+      throw new Error("Route swap requires at least one hop");
+    }
+
+    // Transfer initial asset to first pool
+    const firstPoolId = params.hops[0]?.poolId;
+    if (!firstPoolId) {
+      throw new Error("First pool ID is required");
+    }
+
+    const lpSparkAddress = encodeSparkAddress({
+      identityPublicKey: firstPoolId,
+      network: this.network,
+    });
+
+    let initialTransferId: string;
+    if (params.initialAssetAddress === BTC_ASSET_PUBKEY) {
+      const transfer = await this._wallet.transfer({
+        amountSats: Number(params.inputAmount),
+        receiverSparkAddress: lpSparkAddress,
+      });
+      initialTransferId = transfer.id;
+    } else {
+      initialTransferId = await this._wallet.transferTokens({
+        tokenPublicKey: params.initialAssetAddress,
+        tokenAmount: BigInt(params.inputAmount),
+        receiverSparkAddress: lpSparkAddress,
+      });
+    }
+
+    // Prepare hops for validation
+    const hops: RouteHopValidation[] = params.hops.map((hop) => ({
+      lpIdentityPublicKey: hop.poolId,
+      inputAssetPublicKey: hop.assetInAddress,
+      outputAssetPublicKey: hop.assetOutAddress,
+      hopIntegratorFeeRateBps: hop.hopIntegratorFeeRateBps !== undefined && hop.hopIntegratorFeeRateBps !== null
+          ? hop.hopIntegratorFeeRateBps.toString()
+          : "0",
+    }));
+
+    // Convert hops and ensure integrator fee is always present
+    const requestHops: RouteHopRequest[] = params.hops.map((hop) => ({
+      poolId: hop.poolId,
+      assetInAddress: hop.assetInAddress,
+      assetOutAddress: hop.assetOutAddress,
+      hopIntegratorFeeRateBps:
+        hop.hopIntegratorFeeRateBps !== undefined && hop.hopIntegratorFeeRateBps !== null
+          ? hop.hopIntegratorFeeRateBps.toString()
+          : "0",
+    }));
+
+    // Generate route swap intent
+    const nonce = generateNonce();
+    const intentMessage = generateRouteSwapIntentMessage({
+      userPublicKey: this.publicKey,
+      hops: hops.map((hop) => ({
+        lpIdentityPublicKey: hop.lpIdentityPublicKey,
+        inputAssetPublicKey: hop.inputAssetPublicKey,
+        outputAssetPublicKey: hop.outputAssetPublicKey,
+        hopIntegratorFeeRateBps: hop.hopIntegratorFeeRateBps,
+      })),
+      initialSparkTransferId: initialTransferId,
+      inputAmount: params.inputAmount.toString(),
+      maxRouteSlippageBps: params.maxRouteSlippageBps.toString(),
+      nonce,
+      defaultIntegratorFeeRateBps: params.integratorFeeRateBps?.toString(),
+    });
+
+    // Sign intent
+    const messageHash = new Uint8Array(
+      await crypto.subtle.digest("SHA-256", intentMessage)
+    );
+    const signature = await (
+      this._wallet as any
+    ).config.signer.signMessageWithIdentityKey(messageHash, true);
+
+    const request: ExecuteRouteSwapRequest = {
+      userPublicKey: this.publicKey,
+      hops: requestHops,
+      initialSparkTransferId: initialTransferId,
+      inputAmount: params.inputAmount.toString(),
+      maxRouteSlippageBps: params.maxRouteSlippageBps.toString(),
+      nonce,
+      signature: Buffer.from(signature).toString("hex"),
+      integratorFeeRateBps: params.integratorFeeRateBps?.toString(),
+      integratorPublicKey: params.integratorPublicKey,
+    };
+
+    const response = await this.typedApi.executeRouteSwap(request);
+
+    // Check if the route swap was accepted
+    if (!response.accepted) {
+      const errorMessage = response.error || "Route swap rejected by the AMM";
       const refundInfo = response.refundedAmount
         ? ` Refunded ${response.refundedAmount} of ${response.refundedAssetPublicKey} via transfer ${response.refundTransferId}`
         : "";
@@ -732,16 +911,16 @@ export class FlashnetClient {
       tokens: new Map(),
     };
 
-    if (pool.assetATokenPublicKey === BTC_ASSET_PUBKEY) {
+    if (pool.assetAAddress === BTC_ASSET_PUBKEY) {
       requirements.btc = params.assetAAmount;
     } else {
-      requirements.tokens?.set(pool.assetATokenPublicKey, params.assetAAmount);
+      requirements.tokens?.set(pool.assetAAddress, params.assetAAmount);
     }
 
-    if (pool.assetBTokenPublicKey === BTC_ASSET_PUBKEY) {
+    if (pool.assetBAddress === BTC_ASSET_PUBKEY) {
       requirements.btc = (requirements.btc || 0n) + params.assetBAmount;
     } else {
-      requirements.tokens?.set(pool.assetBTokenPublicKey, params.assetBAmount);
+      requirements.tokens?.set(pool.assetBAddress, params.assetBAmount);
     }
 
     const balanceCheck = await this.checkBalance(requirements);
@@ -759,7 +938,7 @@ export class FlashnetClient {
 
     // Transfer asset A
     let assetATransferId: string;
-    if (pool.assetATokenPublicKey === BTC_ASSET_PUBKEY) {
+    if (pool.assetAAddress === BTC_ASSET_PUBKEY) {
       const transfer = await this._wallet.transfer({
         amountSats: Number(params.assetAAmount),
         receiverSparkAddress: lpSparkAddress,
@@ -767,7 +946,7 @@ export class FlashnetClient {
       assetATransferId = transfer.id;
     } else {
       assetATransferId = await this._wallet.transferTokens({
-        tokenPublicKey: pool.assetATokenPublicKey,
+        tokenPublicKey: pool.assetAAddress,
         tokenAmount: params.assetAAmount,
         receiverSparkAddress: lpSparkAddress,
       });
@@ -775,7 +954,7 @@ export class FlashnetClient {
 
     // Transfer asset B
     let assetBTransferId: string;
-    if (pool.assetBTokenPublicKey === BTC_ASSET_PUBKEY) {
+    if (pool.assetBAddress === BTC_ASSET_PUBKEY) {
       const transfer = await this._wallet.transfer({
         amountSats: Number(params.assetBAmount),
         receiverSparkAddress: lpSparkAddress,
@@ -783,7 +962,7 @@ export class FlashnetClient {
       assetBTransferId = transfer.id;
     } else {
       assetBTransferId = await this._wallet.transferTokens({
-        tokenPublicKey: pool.assetBTokenPublicKey,
+        tokenPublicKey: pool.assetBAddress,
         tokenAmount: params.assetBAmount,
         receiverSparkAddress: lpSparkAddress,
       });
@@ -1010,6 +1189,75 @@ export class FlashnetClient {
     }
 
     return response;
+  }
+
+  /**
+   * Get host fees across all pools
+   */
+  async getHostFees(hostNamespace: string): Promise<GetHostFeesResponse> {
+    await this.ensureInitialized();
+
+    const request: GetHostFeesRequest = {
+      hostNamespace,
+    };
+
+    return this.typedApi.getHostFees(request);
+  }
+
+  /**
+   * Withdraw integrator fees
+   */
+  async withdrawIntegratorFees(params: {
+    lpIdentityPublicKey: string;
+    assetAAmount?: string;
+    assetBAmount?: string;
+  }): Promise<WithdrawIntegratorFeesResponse> {
+    await this.ensureInitialized();
+
+    const nonce = generateNonce();
+    const intentMessage = generateWithdrawIntegratorFeesIntentMessage({
+      integratorPublicKey: this.publicKey,
+      lpIdentityPublicKey: params.lpIdentityPublicKey,
+      assetAAmount: params.assetAAmount,
+      assetBAmount: params.assetBAmount,
+      nonce,
+    });
+
+    // Sign intent
+    const messageHash = new Uint8Array(
+      await crypto.subtle.digest("SHA-256", intentMessage)
+    );
+    const signature = await (
+      this._wallet as any
+    ).config.signer.signMessageWithIdentityKey(messageHash, true);
+
+    const request: WithdrawIntegratorFeesRequest = {
+      integratorPublicKey: this.publicKey,
+      lpIdentityPublicKey: params.lpIdentityPublicKey,
+      assetAAmount: params.assetAAmount,
+      assetBAmount: params.assetBAmount,
+      nonce,
+      signature: Buffer.from(signature).toString("hex"),
+    };
+
+    const response = await this.typedApi.withdrawIntegratorFees(request);
+
+    // Check if the withdrawal was accepted
+    if (!response.accepted) {
+      const errorMessage =
+        response.error || "Withdraw integrator fees rejected by the AMM";
+      throw new Error(errorMessage);
+    }
+
+    return response;
+  }
+
+  /**
+   * Get integrator fees across all pools
+   */
+  async getIntegratorFees(): Promise<GetIntegratorFeesResponse> {
+    await this.ensureInitialized();
+    return this.typedApi.getIntegratorFees();
   }
 
   // ===== Swap History =====

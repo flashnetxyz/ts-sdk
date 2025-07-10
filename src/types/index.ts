@@ -49,6 +49,21 @@ export interface VerifyResponse {
   accessToken: string;
 }
 
+// Error types
+export type ErrorSeverity = "Info" | "Warning" | "Error" | "Critical";
+
+export interface FlashnetGatewayErrorSchema {
+  errorCode: string;
+  errorCategory: string;
+  message: string;
+  details?: any;
+  requestId: string;
+  timestamp: string;
+  service: string;
+  severity: string;
+  remediation?: string;
+}
+
 // Host types
 export interface RegisterHostRequest {
   namespace: string;
@@ -64,11 +79,11 @@ export interface RegisterHostResponse {
 }
 
 export interface GetHostResponse {
-  createdAt: string;
-  feeRecipientPublicKey: string;
-  flashnetSplitPercentage: number;
-  minFeeBps: number;
   namespace: string;
+  feeRecipientPublicKey: string;
+  minFeeBps: number;
+  flashnetSplitPercentage: number;
+  createdAt: string;
 }
 
 export interface WithdrawHostFeesRequest {
@@ -107,26 +122,44 @@ export interface GetPoolHostFeesResponse {
   assetBFees: string;
 }
 
+// Integrator types
+export interface WithdrawIntegratorFeesRequest {
+  integratorPublicKey: string;
+  lpIdentityPublicKey: string;
+  assetAAmount?: string;
+  assetBAmount?: string;
+  nonce: string;
+  signature: string;
+}
+
+export interface WithdrawIntegratorFeesResponse {
+  requestId: string;
+  accepted: boolean;
+  assetAWithdrawn?: number;
+  assetBWithdrawn?: number;
+  transferIds?: WithdrawalTransferIds;
+  error?: string;
+}
+
 // Pool types
 export interface CreateConstantProductPoolRequest {
   poolOwnerPublicKey: string;
-  assetATokenPublicKey: string;
-  assetBTokenPublicKey: string;
+  assetAAddress: string;
+  assetBAddress: string;
   lpFeeRateBps: string;
   totalHostFeeRateBps: string;
-  hostNamespace: string;
+  hostNamespace?: string;
   nonce: string;
   signature: string;
 }
 
 export interface CreateSingleSidedPoolRequest {
   poolOwnerPublicKey: string;
-  assetATokenPublicKey: string;
-  assetBTokenPublicKey: string;
+  assetAAddress: string;
+  assetBAddress: string;
   assetAInitialReserve: string;
-  assetAInitialVirtualReserve: string;
-  assetBInitialVirtualReserve: string;
-  threshold: string;
+  graduationThresholdPct: number;
+  targetBRaisedAtGraduation: string;
   lpFeeRateBps: string;
   totalHostFeeRateBps: string;
   hostNamespace?: string;
@@ -234,13 +267,14 @@ export interface SimulateRemoveLiquidityResponse {
 export interface ExecuteSwapRequest {
   userPublicKey: string;
   poolId: string;
-  assetInTokenPublicKey: string;
-  assetOutTokenPublicKey: string;
+  assetInAddress: string;
+  assetOutAddress: string;
   amountIn: string;
-  minAmountOut: string;
   maxSlippageBps?: string;
   assetInSparkTransferId: string;
   nonce: string;
+  totalIntegratorFeeRateBps: string;
+  integratorPublicKey: string;
   signature: string;
 }
 
@@ -250,19 +284,19 @@ export interface SwapResponse {
   amountOut?: number;
   feeAmount?: number;
   executionPrice?: string;
-  assetOutPublicKey?: string;
-  assetInPublicKey?: string;
+  assetOutAddress?: string;
+  assetInAddress?: string;
   outboundTransferId?: string;
   error?: string;
-  refundedAssetPublicKey?: string;
+  refundedAssetAddress?: string;
   refundedAmount?: number;
   refundTransferId?: string;
 }
 
 export interface SimulateSwapRequest {
   poolId: string;
-  assetInTokenPublicKey: string;
-  assetOutTokenPublicKey: string;
+  assetInAddress: string;
+  assetOutAddress: string;
   amountIn: string;
 }
 
@@ -274,14 +308,84 @@ export interface SimulateSwapResponse {
   warningMessage?: string;
 }
 
+// Route swap types
+export interface RouteHopRequest {
+  poolId: string;
+  assetInAddress: string;
+  assetOutAddress: string;
+  /**
+   * Integrator fee rate for this hop in basis points (as a string). The property must be present in the request
+   * payload and can be explicitly set to null when no hop-level integrator fee is specified.
+   */
+  hopIntegratorFeeRateBps?: string | null;
+}
+
+export interface RouteHop {
+  poolId: string;
+  assetInAddress: string;
+  assetOutAddress: string;
+}
+
+export interface ExecuteRouteSwapRequest {
+  userPublicKey: string;
+  hops: RouteHopRequest[];
+  initialSparkTransferId: string;
+  inputAmount: string;
+  maxRouteSlippageBps: string;
+  nonce: string;
+  signature: string;
+  integratorFeeRateBps?: string;
+  integratorPublicKey?: string;
+}
+
+export interface ExecuteRouteSwapResponse {
+  requestId: string;
+  accepted: boolean;
+  outputAmount: number;
+  executionPrice: string;
+  finalOutboundTransferId: string;
+  error?: string;
+  refundedAssetPublicKey?: string;
+  refundedAmount?: number;
+  refundTransferId?: string;
+}
+
+export interface SimulateRouteSwapRequest {
+  hops: RouteHop[];
+  amountIn: string;
+  maxRouteSlippageBps: string;
+}
+
+export interface SimulateRouteSwapResponse {
+  outputAmount: number;
+  executionPrice: string;
+  totalLpFees: number;
+  totalHostFees: number;
+  totalIntegratorFees: number;
+  totalPriceImpactPct: string;
+  hopBreakdown: HopResult[];
+  warningMessage?: string;
+}
+
+// Legacy alias for backward compatibility
+export interface RouteSwapSimulationResponse
+  extends SimulateRouteSwapResponse {}
+
+export interface HopResult {
+  poolId: string;
+  amountIn: number;
+  amountOut: number;
+  priceImpactPct: string;
+}
+
 // Pool listing types
 export interface AmmPool {
-  lpPubkey: string;
+  lpPublicKey: string;
   hostName?: string;
   hostFeeBps: number;
   lpFeeBps: number;
-  assetAPubkey: string;
-  assetBPubkey: string;
+  assetAAddress: string;
+  assetBAddress: string;
   assetAReserve?: number;
   assetBReserve?: number;
   currentPriceAInB?: string;
@@ -289,14 +393,14 @@ export interface AmmPool {
   volume24hAssetB?: number;
   priceChangePercent24h?: string;
   curveType?: string;
-  threshold?: number;
-  assetBVirtualReserve?: number;
+  initialReserveA?: number;
+  bondingProgressPercent?: string;
   createdAt: string;
 }
 
 export interface ListPoolsQuery {
-  assetATokenPublicKey?: string;
-  assetBTokenPublicKey?: string;
+  assetAAddress?: string;
+  assetBAddress?: string;
   hostNames?: string[];
   minVolume24h?: number;
   minTvl?: number;
@@ -307,12 +411,12 @@ export interface ListPoolsQuery {
 }
 
 export type PoolSortOrder =
-  | "createdAtDesc"
-  | "createdAtAsc"
-  | "volume24hDesc"
-  | "volume24hAsc"
-  | "tvlDesc"
-  | "tvlAsc";
+  | "CREATED_AT_DESC"
+  | "CREATED_AT_ASC"
+  | "VOLUME24H_DESC"
+  | "VOLUME24H_ASC"
+  | "TVL_DESC"
+  | "TVL_ASC";
 
 export interface ListPoolsResponse {
   pools: AmmPool[];
@@ -324,8 +428,8 @@ export interface PoolDetailsResponse {
   hostName?: string;
   hostFeeBps: number;
   lpFeeBps: number;
-  assetATokenPublicKey: string;
-  assetBTokenPublicKey: string;
+  assetAAddress: string;
+  assetBAddress: string;
   actualAssetAReserve: number;
   actualAssetBReserve: number;
   currentPriceAInB?: string;
@@ -333,8 +437,8 @@ export interface PoolDetailsResponse {
   volume24hAssetB: number;
   priceChangePercent24h?: string;
   curveType: string;
-  threshold?: number;
-  assetBVirtualReserve?: number;
+  initialReserveA?: number;
+  bondingProgressPercent?: string;
   createdAt: string;
   status: string;
 }
@@ -356,7 +460,7 @@ export interface LpPositionDetailsResponse {
 // Swap event types
 export interface PoolSwapEvent {
   id: string;
-  swapperPubkey: string;
+  swapperPublicKey: string;
   amountIn: number;
   amountOut: number;
   assetInAddress: string;
@@ -369,15 +473,15 @@ export interface PoolSwapEvent {
 }
 
 export interface GlobalSwapEvent extends PoolSwapEvent {
-  poolLpPubkey: string;
+  poolLpPublicKey: string;
   poolType: string;
-  poolAssetA?: string;
-  poolAssetB?: string;
+  poolAssetAAddress?: string;
+  poolAssetBAddress?: string;
 }
 
 export interface UserSwapEvent {
   id: string;
-  poolLpPubkey: string;
+  poolLpPublicKey: string;
   amountIn: number;
   amountOut: number;
   assetInAddress: string;
@@ -385,8 +489,8 @@ export interface UserSwapEvent {
   price?: string;
   timestamp: string;
   feePaid: number;
-  poolAssetA?: string;
-  poolAssetB?: string;
+  poolAssetAAddress?: string;
+  poolAssetBAddress?: string;
   inboundTransferId: string;
   outboundTransferId: string;
 }
@@ -415,8 +519,8 @@ export interface ListGlobalSwapsResponse {
 
 export interface ListUserSwapsQuery {
   poolLpPubkey?: string;
-  assetInTokenPublicKey?: string;
-  assetOutTokenPublicKey?: string;
+  assetInAddress?: string;
+  assetOutAddress?: string;
   minAmountIn?: number;
   maxAmountIn?: number;
   startTime?: string;
@@ -521,10 +625,8 @@ export interface ValidateAmmInitializeSingleSidedPoolData {
   assetATokenPublicKey: string;
   assetBTokenPublicKey: string;
   assetAInitialReserve: string;
-  assetAInitialVirtualReserve: string;
-  assetBInitialVirtualReserve: string;
-  threshold: string;
-  hostFeeShares: any[];
+  graduationThresholdPct: string;
+  targetBRaisedAtGraduation: string;
   totalHostFeeRateBps: string;
   lpFeeRateBps: string;
   nonce: string;
@@ -534,7 +636,6 @@ export interface ValidateAmmInitializeConstantProductPoolData {
   poolOwnerPublicKey: string;
   assetATokenPublicKey: string;
   assetBTokenPublicKey: string;
-  hostFeeShares: any[];
   totalHostFeeRateBps: string;
   lpFeeRateBps: string;
   nonce: string;
@@ -550,13 +651,13 @@ export interface ValidateAmmConfirmInitialDepositData {
 export interface ValidateAmmSwapData {
   userPublicKey: string;
   lpIdentityPublicKey: string;
-  assetASparkTransferId: string;
+  assetInSparkTransferId: string;
   assetInTokenPublicKey: string;
   assetOutTokenPublicKey: string;
   amountIn: string;
-  minAmountOut: string;
   maxSlippageBps: string;
   nonce: string;
+  totalIntegratorFeeRateBps: string;
 }
 
 export interface AmmAddLiquiditySettlementRequest {
@@ -613,4 +714,70 @@ export interface ValidateAmmWithdrawHostFeesData {
   assetAAmount?: string;
   assetBAmount?: string;
   nonce: string;
+}
+
+// Route swap validation types
+export interface RouteHopValidation {
+  lpIdentityPublicKey: string;
+  inputAssetPublicKey: string;
+  outputAssetPublicKey: string;
+  hopIntegratorFeeRateBps?: string | null;
+}
+
+export interface ValidateRouteSwapData {
+  userPublicKey: string;
+  hops: RouteHopValidation[];
+  initialSparkTransferId: string;
+  inputAmount: string;
+  minFinalOutputAmount: string;
+  maxRouteSlippageBps: string;
+  nonce: string;
+  defaultIntegratorFeeRateBps?: string;
+}
+
+// Integrator fees validation types
+export interface ValidateAmmWithdrawIntegratorFeesData {
+  integratorPublicKey: string;
+  lpIdentityPublicKey: string;
+  assetAAmount?: string;
+  assetBAmount?: string;
+  nonce: string;
+}
+
+// Host fees for all pools types
+export interface GetHostFeesRequest {
+  hostNamespace: string;
+}
+
+export interface HostPoolFees {
+  poolId: string;
+  assetAPubkey: string;
+  assetBPubkey: string;
+  assetAFees: string;
+  assetBFees: string;
+}
+
+export interface GetHostFeesResponse {
+  hostNamespace: string;
+  feeRecipientType: string;
+  pools: HostPoolFees[];
+  totalAssetAFees?: string;
+  totalAssetBFees?: string;
+}
+
+// Integrator fees types
+export interface IntegratorPoolFees {
+  poolId: string;
+  hostNamespace?: string;
+  assetAPubkey: string;
+  assetBPubkey: string;
+  assetAFees: string;
+  assetBFees: string;
+}
+
+export interface GetIntegratorFeesResponse {
+  integratorPublicKey: string;
+  pools: IntegratorPoolFees[];
+  totalAssetAFees?: string;
+  totalAssetBFees?: string;
 }
