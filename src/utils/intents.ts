@@ -245,6 +245,5 @@ export function generateRouteSwapIntentMessage(params: {
     defaultIntegratorFeeRateBps: params.defaultIntegratorFeeRateBps,
   };
 
-  console.log(signingPayload);
   return new TextEncoder().encode(JSON.stringify(signingPayload));
 }

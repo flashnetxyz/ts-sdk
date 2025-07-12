@@ -865,8 +865,8 @@ export class FlashnetClient {
       maxRouteSlippageBps: params.maxRouteSlippageBps.toString(),
       nonce,
       signature: Buffer.from(signature).toString("hex"),
-      integratorFeeRateBps: params.integratorFeeRateBps?.toString(),
-      integratorPublicKey: params.integratorPublicKey,
+      integratorFeeRateBps: params.integratorFeeRateBps?.toString() || "0",
+      integratorPublicKey: params.integratorPublicKey || "",
     };
 
     const response = await this.typedApi.executeRouteSwap(request);
