@@ -85,6 +85,20 @@ export class TypedAmmApi {
     );
   }
 
+  /**
+   * Get host fees across all pools
+   * @POST /v1/hosts/host-fees
+   * @requires Bearer token
+   */
+  async getHostFees(
+    request: Types.GetHostFeesRequest
+  ): Promise<Types.GetHostFeesResponse> {
+    return this.client.ammPost<Types.GetHostFeesResponse>(
+      "/v1/hosts/host-fees",
+      request
+    );
+  }
+
   // ===== Pool Endpoints =====
 
   /**
@@ -282,6 +296,62 @@ export class TypedAmmApi {
     return this.client.ammGet<Types.ListUserSwapsResponse>(
       `/v1/swaps/user/${userPublicKey}`,
       { params: query as any }
+    );
+  }
+
+  // ===== Route Swap Endpoints =====
+
+  /**
+   * Execute route swap
+   * @POST /v1/route-swap
+   * @requires Bearer token
+   */
+  async executeRouteSwap(
+    request: Types.ExecuteRouteSwapRequest
+  ): Promise<Types.ExecuteRouteSwapResponse> {
+    return this.client.ammPost<Types.ExecuteRouteSwapResponse>(
+      "/v1/route-swap",
+      request
+    );
+  }
+
+  /**
+   * Simulate route swap
+   * @POST /v1/route-swap/simulate
+   */
+  async simulateRouteSwap(
+    request: Types.SimulateRouteSwapRequest
+  ): Promise<Types.SimulateRouteSwapResponse> {
+    return this.client.ammPost<Types.SimulateRouteSwapResponse>(
+      "/v1/route-swap/simulate",
+      request
+    );
+  }
+
+  // ===== Integrator Endpoints =====
+
+  /**
+   * Get integrator fees across all pools
+   * @GET /v1/hosts/integrator-fees
+   * @requires Bearer token
+   */
+  async getIntegratorFees(): Promise<Types.GetIntegratorFeesResponse> {
+    return this.client.ammGet<Types.GetIntegratorFeesResponse>(
+      "/v1/hosts/integrator-fees"
+    );
+  }
+
+  /**
+   * Withdraw integrator fees
+   * @POST /v1/integrators/withdraw-fees
+   * @requires Bearer token
+   */
+  async withdrawIntegratorFees(
+    request: Types.WithdrawIntegratorFeesRequest
+  ): Promise<Types.WithdrawIntegratorFeesResponse> {
+    return this.client.ammPost<Types.WithdrawIntegratorFeesResponse>(
+      "/v1/integrators/withdraw-fees",
+      request
     );
   }
 
