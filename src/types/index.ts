@@ -271,6 +271,7 @@ export interface ExecuteSwapRequest {
   assetOutAddress: string;
   amountIn: string;
   maxSlippageBps?: string;
+  minAmountOut: string;
   assetInSparkTransferId: string;
   nonce: string;
   totalIntegratorFeeRateBps: string;
@@ -332,6 +333,7 @@ export interface ExecuteRouteSwapRequest {
   initialSparkTransferId: string;
   inputAmount: string;
   maxRouteSlippageBps: string;
+  minAmountOut: string;
   nonce: string;
   signature: string;
   integratorFeeRateBps?: string;
@@ -656,6 +658,7 @@ export interface ValidateAmmSwapData {
   assetOutTokenPublicKey: string;
   amountIn: string;
   maxSlippageBps: string;
+  minAmountOut: string;
   nonce: string;
   totalIntegratorFeeRateBps: string;
 }

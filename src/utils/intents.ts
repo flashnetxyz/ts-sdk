@@ -99,6 +99,7 @@ export function generatePoolSwapIntentMessage(params: {
   assetOutTokenPublicKey: string;
   amountIn: string;
   maxSlippageBps: string;
+  minAmountOut: string;
   totalIntegratorFeeRateBps: string;
   nonce: string;
 }): Uint8Array {
@@ -110,6 +111,7 @@ export function generatePoolSwapIntentMessage(params: {
     assetOutTokenPublicKey: params.assetOutTokenPublicKey,
     amountIn: params.amountIn,
     maxSlippageBps: params.maxSlippageBps,
+    minAmountOut: params.minAmountOut,
     nonce: params.nonce,
     totalIntegratorFeeRateBps: params.totalIntegratorFeeRateBps,
   };
@@ -231,6 +233,7 @@ export function generateRouteSwapIntentMessage(params: {
   initialSparkTransferId: string;
   inputAmount: string;
   maxRouteSlippageBps: string;
+  minAmountOut: string;
   nonce: string;
   defaultIntegratorFeeRateBps?: string;
 }): Uint8Array {
@@ -239,10 +242,11 @@ export function generateRouteSwapIntentMessage(params: {
     hops: params.hops,
     initialSparkTransferId: params.initialSparkTransferId,
     inputAmount: params.inputAmount,
-    minFinalOutputAmount: "0",
+    minFinalOutputAmount: params.minAmountOut,
     maxRouteSlippageBps: params.maxRouteSlippageBps,
     nonce: params.nonce,
-    defaultIntegratorFeeRateBps: params.defaultIntegratorFeeRateBps,
+    defaultIntegratorFeeRateBps:
+      params.defaultIntegratorFeeRateBps ?? "0",
   };
 
   return new TextEncoder().encode(JSON.stringify(signingPayload));
