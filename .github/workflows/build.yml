@@ -1,4 +1,3 @@
-# .github/workflows/ts-sdk-build.yml
 name: ts-sdk Build
 
 on:
