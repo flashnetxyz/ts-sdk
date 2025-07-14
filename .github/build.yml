@@ -3,7 +3,7 @@ name: ts-sdk Build
 on:
   push:
     branches:
-      - main
+      - "**"
   pull_request:
 
 jobs:
