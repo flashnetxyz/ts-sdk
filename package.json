@@ -46,7 +46,7 @@
   ],
   "scripts": {
     "prebuild": "rm -rf dist",
-    "build": "rollup -c",
+    "build": "npm run type-check && rollup -c",
     "dev": "rollup -c -w",
     "test": "npm run test:esm && npm run test:cjs && npm run test:bun && npm run test:modular",
     "test:esm": "node tests/test-esm.mjs",
