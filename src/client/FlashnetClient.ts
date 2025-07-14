@@ -230,14 +230,19 @@ export class FlashnetClient {
 
     if (balance.tokenBalances) {
       for (const [tokenPubkey, tokenData] of balance.tokenBalances.entries()) {
+        const info =
+          "tokenInfo" in tokenData
+            ? tokenData.tokenInfo
+            : (tokenData as any).tokenMetadata;
+
         tokenBalances.set(tokenPubkey, {
           balance: BigInt(tokenData.balance),
           tokenInfo: {
-            tokenPublicKey: tokenData.tokenInfo.tokenPublicKey,
-            tokenName: tokenData.tokenInfo.tokenName,
-            tokenSymbol: tokenData.tokenInfo.tokenSymbol,
-            tokenDecimals: tokenData.tokenInfo.tokenDecimals,
-            maxSupply: tokenData.tokenInfo.maxSupply,
+            tokenPublicKey: info.tokenPublicKey,
+            tokenName: info.tokenName,
+            tokenSymbol: info.tokenSymbol,
+            tokenDecimals: info.tokenDecimals,
+            maxSupply: info.maxSupply,
           },
         });
       }
@@ -554,8 +559,9 @@ export class FlashnetClient {
           poolOwnerPublicKey: this.publicKey,
         };
 
-        const confirmResponse =
-          await this.typedApi.confirmInitialDeposit(confirmRequest);
+        const confirmResponse = await this.typedApi.confirmInitialDeposit(
+          confirmRequest
+        );
 
         if (!confirmResponse.confirmed) {
           throw new Error(
