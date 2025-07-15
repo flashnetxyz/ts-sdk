@@ -657,8 +657,8 @@ export interface ValidateAmmSwapData {
   assetInTokenPublicKey: string;
   assetOutTokenPublicKey: string;
   amountIn: string;
-  maxSlippageBps: string;
   minAmountOut: string;
+  maxSlippageBps: string;
   nonce: string;
   totalIntegratorFeeRateBps: string;
 }

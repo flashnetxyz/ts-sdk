@@ -110,8 +110,8 @@ export function generatePoolSwapIntentMessage(params: {
     assetInTokenPublicKey: params.assetInTokenPublicKey,
     assetOutTokenPublicKey: params.assetOutTokenPublicKey,
     amountIn: params.amountIn,
-    maxSlippageBps: params.maxSlippageBps,
     minAmountOut: params.minAmountOut,
+    maxSlippageBps: params.maxSlippageBps,
     nonce: params.nonce,
     totalIntegratorFeeRateBps: params.totalIntegratorFeeRateBps,
   };
