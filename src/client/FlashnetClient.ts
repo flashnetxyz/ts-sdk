@@ -642,6 +642,7 @@ export class FlashnetClient {
     assetOutAddress: string;
     amountIn: string;
     maxSlippageBps: number;
+    minAmountOut: string;
     integratorFeeRateBps?: number;
     integratorPublicKey?: string;
   }): Promise<SwapResponse> {
@@ -694,6 +695,7 @@ export class FlashnetClient {
       assetOutTokenPublicKey: params.assetOutAddress,
       amountIn: params.amountIn.toString(),
       maxSlippageBps: params.maxSlippageBps.toString(),
+      minAmountOut: params.minAmountOut,
       totalIntegratorFeeRateBps: params.integratorFeeRateBps?.toString() || "0",
       nonce,
     });
@@ -713,6 +715,7 @@ export class FlashnetClient {
       assetOutAddress: params.assetOutAddress,
       amountIn: params.amountIn.toString(),
       maxSlippageBps: params.maxSlippageBps?.toString(),
+      minAmountOut: params.minAmountOut,
       assetInSparkTransferId: transferId,
       totalIntegratorFeeRateBps: params.integratorFeeRateBps?.toString() || "0",
       integratorPublicKey: params.integratorPublicKey || "",
@@ -757,6 +760,7 @@ export class FlashnetClient {
     initialAssetAddress: string;
     inputAmount: string;
     maxRouteSlippageBps: string;
+    minAmountOut: string;
     integratorFeeRateBps?: number;
     integratorPublicKey?: string;
   }): Promise<ExecuteRouteSwapResponse> {
@@ -851,6 +855,7 @@ export class FlashnetClient {
       initialSparkTransferId: initialTransferId,
       inputAmount: params.inputAmount.toString(),
       maxRouteSlippageBps: params.maxRouteSlippageBps.toString(),
+      minAmountOut: params.minAmountOut,
       nonce,
       defaultIntegratorFeeRateBps: params.integratorFeeRateBps?.toString(),
     });
@@ -869,6 +874,7 @@ export class FlashnetClient {
       initialSparkTransferId: initialTransferId,
       inputAmount: params.inputAmount.toString(),
       maxRouteSlippageBps: params.maxRouteSlippageBps.toString(),
+      minAmountOut: params.minAmountOut,
       nonce,
       signature: Buffer.from(signature).toString("hex"),
       integratorFeeRateBps: params.integratorFeeRateBps?.toString() || "0",
