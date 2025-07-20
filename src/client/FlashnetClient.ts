@@ -71,6 +71,11 @@ import {
   encodeSparkAddress,
   getNetworkFromAddress,
 } from "../utils/spark-address";
+import {
+  encodeHumanReadableTokenIdentifier,
+  decodeHumanReadableTokenIdentifier,
+  type HumanReadableTokenIdentifier,
+} from "../utils/tokenAddress";
 
 export interface TokenBalance {
   balance: bigint;
@@ -1307,6 +1312,26 @@ export class FlashnetClient {
     await this.ensureInitialized();
     const user = userPublicKey || this.publicKey;
     return this.typedApi.getUserSwaps(user, query);
+  }
+
+  // ===== Token Address Operations =====
+
+  /**
+   * Encode a token identifier into a human-readable token address using the client's network
+   * @param tokenIdentifier - Token identifier as hex string or Uint8Array
+   * @returns Human-readable token address
+   */
+  encodeTokenAddress(tokenIdentifier: string | Uint8Array): HumanReadableTokenIdentifier {
+    return encodeHumanReadableTokenIdentifier(tokenIdentifier, this.network);
+  }
+
+  /**
+   * Decode a human-readable token address back to its identifier
+   * @param address - Human-readable token address
+   * @returns Object containing the token identifier (as hex string) and network
+   */
+  decodeTokenAddress(address: HumanReadableTokenIdentifier): { tokenIdentifier: string; network: NetworkType } {
+    return decodeHumanReadableTokenIdentifier(address, this.network);
   }
 
   // ===== Status =====
