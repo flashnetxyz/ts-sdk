@@ -401,8 +401,8 @@ export interface AmmPool {
 }
 
 export interface ListPoolsQuery {
-  assetAAddress?: string;
-  assetBAddress?: string;
+  assetATokenAddress?: string;
+  assetBTokenAddress?: string;
   hostNames?: string[];
   minVolume24h?: number;
   minTvl?: number;
