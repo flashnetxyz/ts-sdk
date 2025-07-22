@@ -225,6 +225,39 @@ export class FlashnetClient {
   }
 
   /**
+   * Ensure a token identifier is in human-readable (Bech32m) form expected by the Spark SDK.
+   * If the identifier is already human-readable or it is the BTC constant, it is returned unchanged.
+   * Otherwise, it is encoded from the raw hex form using the client network.
+   */
+  private toHumanReadableTokenIdentifier(tokenIdentifier: string): string {
+    if (tokenIdentifier === BTC_ASSET_PUBKEY) {
+      return tokenIdentifier;
+    }
+    if (tokenIdentifier.startsWith("btk")) {
+      return tokenIdentifier;
+    }
+    return encodeHumanReadableTokenIdentifier(tokenIdentifier, this.network);
+  }
+
+  /**
+   * Convert a token identifier into the raw hex string form expected by the Flashnet backend.
+   * If the identifier is the BTC constant or already a hex string, it is returned unchanged.
+   * If it is in Bech32m human-readable form, it is decoded to hex.
+   */
+  private toHexTokenIdentifier(tokenIdentifier: string): string {
+    if (tokenIdentifier === BTC_ASSET_PUBKEY) {
+      return tokenIdentifier;
+    }
+    if (tokenIdentifier.startsWith("btk")) {
+      return decodeHumanReadableTokenIdentifier(
+        tokenIdentifier as HumanReadableTokenIdentifier,
+        this.network
+      ).tokenIdentifier;
+    }
+    return tokenIdentifier;
+  }
+
+  /**
    * Get wallet balance including BTC and token balances
    */
   async getBalance(): Promise<WalletBalance> {
@@ -245,8 +278,8 @@ export class FlashnetClient {
           tokenInfo: {
             tokenPublicKey: info.tokenPublicKey,
             tokenName: info.tokenName,
-            tokenSymbol: info.tokenSymbol,
-            tokenDecimals: info.tokenDecimals,
+            tokenSymbol: (info.tokenSymbol || info.tokenTicker) as string,
+            tokenDecimals: (info.tokenDecimals ?? info.decimals) as number,
             maxSupply: info.maxSupply,
           },
         });
@@ -282,8 +315,11 @@ export class FlashnetClient {
         tokenPubkey,
         requiredAmount,
       ] of requirements.tokens.entries()) {
-        const tokenBalance = balance.tokenBalances.get(tokenPubkey);
-        const available = tokenBalance?.balance ?? 0n;
+        // If direct lookup fails (possible representation mismatch), try the human-readable form
+        const hrKey = this.toHumanReadableTokenIdentifier(tokenPubkey);
+        const effectiveTokenBalance =
+          balance.tokenBalances.get(tokenPubkey) ?? balance.tokenBalances.get(hrKey);
+        const available = effectiveTokenBalance?.balance ?? 0n;
 
         if (available < requiredAmount) {
           return {
@@ -381,8 +417,8 @@ export class FlashnetClient {
     const intentMessage =
       generateConstantProductPoolInitializationIntentMessage({
         poolOwnerPublicKey: this.publicKey,
-        assetAAddress: params.assetAAddress,
-        assetBAddress: params.assetBAddress,
+        assetAAddress: this.toHexTokenIdentifier(params.assetAAddress),
+        assetBAddress: this.toHexTokenIdentifier(params.assetBAddress),
         lpFeeRateBps: params.lpFeeRateBps.toString(),
         totalHostFeeRateBps: params.totalHostFeeRateBps.toString(),
         nonce,
@@ -399,8 +435,8 @@ export class FlashnetClient {
     // Create pool
     const request: CreateConstantProductPoolRequest = {
       poolOwnerPublicKey: this.publicKey,
-      assetAAddress: params.assetAAddress,
-      assetBAddress: params.assetBAddress,
+      assetAAddress: this.toHexTokenIdentifier(params.assetAAddress),
+      assetBAddress: this.toHexTokenIdentifier(params.assetBAddress),
       lpFeeRateBps: params.lpFeeRateBps.toString(),
       totalHostFeeRateBps: params.totalHostFeeRateBps.toString(),
       hostNamespace: params.hostNamespace || "",
@@ -481,8 +517,8 @@ export class FlashnetClient {
     const nonce = generateNonce();
     const intentMessage = generatePoolInitializationIntentMessage({
       poolOwnerPublicKey: this.publicKey,
-      assetAAddress: params.assetAAddress,
-      assetBAddress: params.assetBAddress,
+      assetAAddress: this.toHexTokenIdentifier(params.assetAAddress),
+      assetBAddress: this.toHexTokenIdentifier(params.assetBAddress),
       assetAInitialReserve: params.assetAInitialReserve,
       graduationThresholdPct: params.assetAPctSoldAtGraduation.toString(),
       targetBRaisedAtGraduation: params.targetBRaisedAtGraduation,
@@ -501,8 +537,8 @@ export class FlashnetClient {
     // Create pool
     const request: CreateSingleSidedPoolRequest = {
       poolOwnerPublicKey: this.publicKey,
-      assetAAddress: params.assetAAddress,
-      assetBAddress: params.assetBAddress,
+      assetAAddress: this.toHexTokenIdentifier(params.assetAAddress),
+      assetBAddress: this.toHexTokenIdentifier(params.assetBAddress),
       assetAInitialReserve: params.assetAInitialReserve,
       graduationThresholdPct: params.assetAPctSoldAtGraduation,
       targetBRaisedAtGraduation: params.targetBRaisedAtGraduation,
@@ -533,7 +569,7 @@ export class FlashnetClient {
           assetATransferId = transfer.id;
         } else {
           assetATransferId = await this._wallet.transferTokens({
-            tokenPublicKey: params.assetAAddress,
+            tokenIdentifier: this.toHumanReadableTokenIdentifier(params.assetAAddress) as any,
             tokenAmount: BigInt(params.assetAInitialReserve),
             receiverSparkAddress: lpSparkAddress,
           });
@@ -684,7 +720,7 @@ export class FlashnetClient {
       transferId = transfer.id;
     } else {
       transferId = await this._wallet.transferTokens({
-        tokenPublicKey: params.assetInAddress,
+        tokenIdentifier: this.toHumanReadableTokenIdentifier(params.assetInAddress) as any,
         tokenAmount: BigInt(params.amountIn),
         receiverSparkAddress: lpSparkAddress,
       });
@@ -696,8 +732,8 @@ export class FlashnetClient {
       userPublicKey: this.publicKey,
       lpIdentityPublicKey: params.poolId,
       assetInSparkTransferId: transferId,
-      assetInTokenPublicKey: params.assetInAddress,
-      assetOutTokenPublicKey: params.assetOutAddress,
+      assetInTokenPublicKey: this.toHexTokenIdentifier(params.assetInAddress),
+      assetOutTokenPublicKey: this.toHexTokenIdentifier(params.assetOutAddress),
       amountIn: params.amountIn.toString(),
       maxSlippageBps: params.maxSlippageBps.toString(),
       minAmountOut: params.minAmountOut,
@@ -716,8 +752,8 @@ export class FlashnetClient {
     const request: ExecuteSwapRequest = {
       userPublicKey: this.publicKey,
       poolId: params.poolId,
-      assetInAddress: params.assetInAddress,
-      assetOutAddress: params.assetOutAddress,
+      assetInAddress: this.toHexTokenIdentifier(params.assetInAddress),
+      assetOutAddress: this.toHexTokenIdentifier(params.assetOutAddress),
       amountIn: params.amountIn.toString(),
       maxSlippageBps: params.maxSlippageBps?.toString(),
       minAmountOut: params.minAmountOut,
@@ -817,7 +853,7 @@ export class FlashnetClient {
       initialTransferId = transfer.id;
     } else {
       initialTransferId = await this._wallet.transferTokens({
-        tokenPublicKey: params.initialAssetAddress,
+        tokenIdentifier: this.toHumanReadableTokenIdentifier(params.initialAssetAddress) as any,
         tokenAmount: BigInt(params.inputAmount),
         receiverSparkAddress: lpSparkAddress,
       });
@@ -826,8 +862,8 @@ export class FlashnetClient {
     // Prepare hops for validation
     const hops: RouteHopValidation[] = params.hops.map((hop) => ({
       lpIdentityPublicKey: hop.poolId,
-      inputAssetPublicKey: hop.assetInAddress,
-      outputAssetPublicKey: hop.assetOutAddress,
+      inputAssetPublicKey: this.toHexTokenIdentifier(hop.assetInAddress),
+      outputAssetPublicKey: this.toHexTokenIdentifier(hop.assetOutAddress),
       hopIntegratorFeeRateBps:
         hop.hopIntegratorFeeRateBps !== undefined &&
         hop.hopIntegratorFeeRateBps !== null
@@ -838,8 +874,8 @@ export class FlashnetClient {
     // Convert hops and ensure integrator fee is always present
     const requestHops: RouteHopRequest[] = params.hops.map((hop) => ({
       poolId: hop.poolId,
-      assetInAddress: hop.assetInAddress,
-      assetOutAddress: hop.assetOutAddress,
+      assetInAddress: this.toHexTokenIdentifier(hop.assetInAddress),
+      assetOutAddress: this.toHexTokenIdentifier(hop.assetOutAddress),
       hopIntegratorFeeRateBps:
         hop.hopIntegratorFeeRateBps !== undefined &&
         hop.hopIntegratorFeeRateBps !== null
@@ -965,7 +1001,7 @@ export class FlashnetClient {
       assetATransferId = transfer.id;
     } else {
       assetATransferId = await this._wallet.transferTokens({
-        tokenPublicKey: pool.assetAAddress,
+        tokenIdentifier: this.toHumanReadableTokenIdentifier(pool.assetAAddress) as any,
         tokenAmount: params.assetAAmount,
         receiverSparkAddress: lpSparkAddress,
       });
@@ -981,7 +1017,7 @@ export class FlashnetClient {
       assetBTransferId = transfer.id;
     } else {
       assetBTransferId = await this._wallet.transferTokens({
-        tokenPublicKey: pool.assetBAddress,
+        tokenIdentifier: this.toHumanReadableTokenIdentifier(pool.assetBAddress) as any,
         tokenAmount: params.assetBAmount,
         receiverSparkAddress: lpSparkAddress,
       });
@@ -1371,7 +1407,7 @@ export class FlashnetClient {
       assetATransferId = transfer.id;
     } else {
       assetATransferId = await this._wallet.transferTokens({
-        tokenPublicKey: assetATokenPublicKey,
+        tokenIdentifier: this.toHumanReadableTokenIdentifier(assetATokenPublicKey) as any,
         tokenAmount: assetAAmount,
         receiverSparkAddress: lpSparkAddress,
       });
@@ -1387,7 +1423,7 @@ export class FlashnetClient {
       assetBTransferId = transfer.id;
     } else {
       assetBTransferId = await this._wallet.transferTokens({
-        tokenPublicKey: assetBTokenPublicKey,
+        tokenIdentifier: this.toHumanReadableTokenIdentifier(assetBTokenPublicKey) as any,
         tokenAmount: assetBAmount,
         receiverSparkAddress: lpSparkAddress,
       });
