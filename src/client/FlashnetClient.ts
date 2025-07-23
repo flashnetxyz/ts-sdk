@@ -233,7 +233,7 @@ export class FlashnetClient {
     if (tokenIdentifier === BTC_ASSET_PUBKEY) {
       return tokenIdentifier;
     }
-    if (tokenIdentifier.startsWith("btk")) {
+    if (tokenIdentifier.startsWith("btkn")) {
       return tokenIdentifier;
     }
     return encodeHumanReadableTokenIdentifier(tokenIdentifier, this.network);
@@ -248,7 +248,7 @@ export class FlashnetClient {
     if (tokenIdentifier === BTC_ASSET_PUBKEY) {
       return tokenIdentifier;
     }
-    if (tokenIdentifier.startsWith("btk")) {
+    if (tokenIdentifier.startsWith("btkn")) {
       return decodeHumanReadableTokenIdentifier(
         tokenIdentifier as HumanReadableTokenIdentifier,
         this.network

@@ -3,19 +3,19 @@ import { bytesToHex, hexToBytes } from "@noble/hashes/utils";
 import type { NetworkType } from "../types";
 
 const HumanReadableTokenIdentifierNetworkPrefix: Record<NetworkType, string> = {
-  MAINNET: "btk",
-  REGTEST: "btkrt",
-  TESTNET: "btkt",
-  SIGNET: "btks",
-  LOCAL: "btkl",
+  MAINNET: "btkn",
+  REGTEST: "btknrt",
+  TESTNET: "btknt",
+  SIGNET: "btkns",
+  LOCAL: "btknl",
 };
 
 export type HumanReadableTokenIdentifier =
-  | `btk1${string}`
-  | `btkrt1${string}`
-  | `btkt1${string}`
-  | `btks1${string}`
-  | `btkl1${string}`;
+  | `btkn1${string}`
+  | `btknrt1${string}`
+  | `btknt1${string}`
+  | `btkns1${string}`
+  | `btknl1${string}`;
 
 export function encodeHumanReadableTokenIdentifier(
   tokenIdentifier: string | Uint8Array,
