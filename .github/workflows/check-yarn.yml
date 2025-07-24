@@ -15,5 +15,8 @@ jobs:
         with:
           node-version: 20
 
+      - name: Install dependencies
+        run: yarn install --frozen-lockfile --check-files
+
       - name: Check yarn.lock integrity
-        run: yarn check --integrity
+        run: yarn check --integrity --verify-tree
