@@ -1,14 +1,9 @@
 name: ts-sdk Lint
 
 on:
-  push:
-    paths:
-      - "src/**"
-      - "tests/**"
-      - "index.ts"
-      - "biome.json"
-      - ".github/workflows/lint.yml"
   pull_request:
+    branches:
+      - main
     paths:
       - "src/**"
       - "tests/**"
@@ -32,7 +27,7 @@ jobs:
           cache: npm
 
       - name: Install dependencies
-        run: npm ci
+        run: npm install
 
       - name: Setup Biome
         uses: biomejs/setup-biome@v2
