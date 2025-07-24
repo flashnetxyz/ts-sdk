@@ -1,11 +1,12 @@
-name: ts-sdk Build
+name: Check Yarn Lock
 
 on:
   push:
   workflow_dispatch:
 
 jobs:
-  build:
+  check:
+    name: Check yarn.lock
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -13,10 +14,6 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 20
-          cache: yarn
 
-      - name: Install dependencies
-        run: yarn install
-
-      - name: Build
-        run: yarn build
+      - name: Check yarn.lock integrity
+        run: yarn check --integrity
