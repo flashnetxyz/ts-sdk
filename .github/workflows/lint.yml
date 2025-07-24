@@ -24,10 +24,9 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 20
-          cache: npm
 
-      - name: Install dependencies
-        run: npm install
+      - name: Clean install dependencies
+        run: npm ci
 
       - name: Setup Biome
         uses: biomejs/setup-biome@v2
