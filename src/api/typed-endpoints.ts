@@ -177,6 +177,15 @@ export class TypedAmmApi {
     );
   }
 
+  /**
+   * Get all LP positions
+   * @GET /v1/pools/lp
+   * @requires Bearer token
+   */
+  async getAllLpPositions(): Promise<Types.AllLpPositionsResponse> {
+    return this.client.ammGet<Types.AllLpPositionsResponse>("/v1/liquidity/positions");
+  }
+
   // ===== Liquidity Endpoints =====
 
   /**
@@ -339,6 +348,17 @@ export class TypedAmmApi {
     return this.client.ammGet<Types.GetIntegratorFeesResponse>(
       "/v1/hosts/integrator-fees"
     );
+  }
+
+  /**
+   * Get pool integrator fees
+  /**
+   * Get pool integrator fees
+   * @GET /v1/integrators/pool-fees/{poolId}
+   * @requires Bearer token
+   */
+  async getPoolIntegratorFees(poolId: string): Promise<Types.GetPoolIntegratorFeesResponse> {
+    return this.client.ammGet<Types.GetPoolIntegratorFeesResponse>(`/v1/integrators/pool-fees/${poolId}`);
   }
 
   /**

@@ -97,8 +97,8 @@ export interface WithdrawHostFeesRequest {
 export interface WithdrawHostFeesResponse {
   requestId: string;
   accepted: boolean;
-  assetAWithdrawn?: number;
-  assetBWithdrawn?: number;
+  assetAWithdrawn?: string;
+  assetBWithdrawn?: string;
   transferIds?: WithdrawalTransferIds;
   error?: string;
 }
@@ -135,8 +135,8 @@ export interface WithdrawIntegratorFeesRequest {
 export interface WithdrawIntegratorFeesResponse {
   requestId: string;
   accepted: boolean;
-  assetAWithdrawn?: number;
-  assetBWithdrawn?: number;
+  assetAWithdrawn?: string;
+  assetBWithdrawn?: string;
   transferIds?: WithdrawalTransferIds;
   error?: string;
 }
@@ -202,15 +202,15 @@ export interface AddLiquidityResponse {
   requestId: string;
   accepted: boolean;
   lpTokensMinted?: string;
-  assetAAmountUsed?: number;
-  assetBAmountUsed?: number;
+  assetAAmountUsed?: string;
+  assetBAmountUsed?: string;
   error?: string;
   refund?: RefundDetails;
 }
 
 export interface RefundDetails {
-  assetAAmount?: number;
-  assetBAmount?: number;
+  assetAAmount?: string;
+  assetBAmount?: string;
   assetATransferId?: string;
   assetBTransferId?: string;
 }
@@ -226,8 +226,8 @@ export interface RemoveLiquidityRequest {
 export interface RemoveLiquidityResponse {
   requestId: string;
   accepted: boolean;
-  assetAWithdrawn?: number;
-  assetBWithdrawn?: number;
+  assetAWithdrawn?: string;
+  assetBWithdrawn?: string;
   assetATransferId?: string;
   assetBTransferId?: string;
   error?: string;
@@ -235,16 +235,16 @@ export interface RemoveLiquidityResponse {
 
 export interface SimulateAddLiquidityRequest {
   poolId: string;
-  assetAAmount: number;
-  assetBAmount: number;
+  assetAAmount: string;
+  assetBAmount: string;
 }
 
 export interface SimulateAddLiquidityResponse {
   lpTokensToMint: string;
-  assetAAmountToAdd: number;
-  assetBAmountToAdd: number;
-  assetARefundAmount: number;
-  assetBRefundAmount: number;
+  assetAAmountToAdd: string;
+  assetBAmountToAdd: string;
+  assetARefundAmount: string;
+  assetBRefundAmount: string;
   poolSharePercentage: string;
   warningMessage?: string;
 }
@@ -256,8 +256,8 @@ export interface SimulateRemoveLiquidityRequest {
 }
 
 export interface SimulateRemoveLiquidityResponse {
-  assetAAmount: number;
-  assetBAmount: number;
+  assetAAmount: string;
+  assetBAmount: string;
   currentLpBalance: string;
   poolShareRemovedPercentage: string;
   warningMessage?: string;
@@ -282,15 +282,15 @@ export interface ExecuteSwapRequest {
 export interface SwapResponse {
   requestId: string;
   accepted: boolean;
-  amountOut?: number;
-  feeAmount?: number;
+  amountOut?: string;
+  feeAmount?: string;
   executionPrice?: string;
   assetOutAddress?: string;
   assetInAddress?: string;
   outboundTransferId?: string;
   error?: string;
   refundedAssetAddress?: string;
-  refundedAmount?: number;
+  refundedAmount?: string;
   refundTransferId?: string;
 }
 
@@ -302,9 +302,9 @@ export interface SimulateSwapRequest {
 }
 
 export interface SimulateSwapResponse {
-  amountOut: number;
+  amountOut: string;
   executionPrice?: string;
-  feePaidAssetIn?: number;
+  feePaidAssetIn?: string;
   priceImpactPct?: string;
   warningMessage?: string;
 }
@@ -343,12 +343,12 @@ export interface ExecuteRouteSwapRequest {
 export interface ExecuteRouteSwapResponse {
   requestId: string;
   accepted: boolean;
-  outputAmount: number;
+  outputAmount: string;
   executionPrice: string;
   finalOutboundTransferId: string;
   error?: string;
   refundedAssetPublicKey?: string;
-  refundedAmount?: number;
+  refundedAmount?: string;
   refundTransferId?: string;
 }
 
@@ -359,11 +359,10 @@ export interface SimulateRouteSwapRequest {
 }
 
 export interface SimulateRouteSwapResponse {
-  outputAmount: number;
+  outputAmount: string;
   executionPrice: string;
-  totalLpFees: number;
-  totalHostFees: number;
-  totalIntegratorFees: number;
+  totalLpFees: string;
+  totalHostFees: string;
   totalPriceImpactPct: string;
   hopBreakdown: HopResult[];
   warningMessage?: string;
@@ -375,8 +374,8 @@ export interface RouteSwapSimulationResponse
 
 export interface HopResult {
   poolId: string;
-  amountIn: number;
-  amountOut: number;
+  amountIn: string;
+  amountOut: string;
   priceImpactPct: string;
 }
 
@@ -388,21 +387,21 @@ export interface AmmPool {
   lpFeeBps: number;
   assetAAddress: string;
   assetBAddress: string;
-  assetAReserve?: number;
-  assetBReserve?: number;
+  assetAReserve?: string;
+  assetBReserve?: string;
   currentPriceAInB?: string;
-  tvlAssetB?: number;
-  volume24hAssetB?: number;
+  tvlAssetB?: string;
+  volume24hAssetB?: string;
   priceChangePercent24h?: string;
   curveType?: string;
-  initialReserveA?: number;
+  initialReserveA?: string;
   bondingProgressPercent?: string;
   createdAt: string;
 }
 
 export interface ListPoolsQuery {
-  assetAAddress?: string;
-  assetBAddress?: string;
+  assetATokenAddress?: string;
+  assetBTokenAddress?: string;
   hostNames?: string[];
   minVolume24h?: number;
   minTvl?: number;
@@ -410,6 +409,8 @@ export interface ListPoolsQuery {
   sort?: PoolSortOrder;
   limit?: number;
   offset?: number;
+  /** ISO8601 timestamp to filter pools updated after the given date */
+  afterUpdatedAt?: string;
 }
 
 export type PoolSortOrder =
@@ -426,20 +427,20 @@ export interface ListPoolsResponse {
 }
 
 export interface PoolDetailsResponse {
-  lpPubkey: string;
+  lpPublicKey: string;
   hostName?: string;
   hostFeeBps: number;
   lpFeeBps: number;
   assetAAddress: string;
   assetBAddress: string;
-  actualAssetAReserve: number;
-  actualAssetBReserve: number;
+  assetAReserve: string;
+  assetBReserve: string;
   currentPriceAInB?: string;
-  tvlAssetB: number;
-  volume24hAssetB: number;
+  tvlAssetB: string;
+  volume24hAssetB: string;
   priceChangePercent24h?: string;
   curveType: string;
-  initialReserveA?: number;
+  initialReserveA?: string;
   bondingProgressPercent?: string;
   createdAt: string;
   status: string;
@@ -451,25 +452,43 @@ export interface LpPositionDetailsResponse {
   poolId: string;
   lpTokensOwned: string;
   sharePercentage: string;
-  valueAssetA: number;
-  valueAssetB: number;
-  principalAssetA?: number;
-  principalAssetB?: number;
+  valueAssetA: string;
+  valueAssetB: string;
+  principalAssetA?: string;
+  principalAssetB?: string;
   unrealizedProfitLossAssetA?: string;
   unrealizedProfitLossAssetB?: string;
+}
+
+// Multiple LP positions response
+export interface LpPositionInfo {
+  poolId: string;
+  lpFeeRateBps: number;
+  assetAAddress: string;
+  assetBAddress: string;
+  lpTokenSupply: string;
+  userLpTokens: string;
+  userShareOfPoolPercent: string;
+  assetAAmount: string;
+  assetBAmount: string;
+}
+
+export interface AllLpPositionsResponse {
+  lpPublicKey: string;
+  positions: LpPositionInfo[];
 }
 
 // Swap event types
 export interface PoolSwapEvent {
   id: string;
   swapperPublicKey: string;
-  amountIn: number;
-  amountOut: number;
+  amountIn: string;
+  amountOut: string;
   assetInAddress: string;
   assetOutAddress: string;
   price?: string;
   createdAt: string;
-  feePaid: number;
+  feePaid: string;
   inboundTransferId: string;
   outboundTransferId: string;
 }
@@ -484,13 +503,13 @@ export interface GlobalSwapEvent extends PoolSwapEvent {
 export interface UserSwapEvent {
   id: string;
   poolLpPublicKey: string;
-  amountIn: number;
-  amountOut: number;
+  amountIn: string;
+  amountOut: string;
   assetInAddress: string;
   assetOutAddress: string;
   price?: string;
   timestamp: string;
-  feePaid: number;
+  feePaid: string;
   poolAssetAAddress?: string;
   poolAssetBAddress?: string;
   inboundTransferId: string;
@@ -498,6 +517,10 @@ export interface UserSwapEvent {
 }
 
 export interface ListPoolSwapsQuery {
+  /** ISO8601 start time to filter swaps */
+  startTime?: string;
+  /** ISO8601 end time to filter swaps */
+  endTime?: string;
   limit?: number;
   offset?: number;
 }
@@ -512,6 +535,10 @@ export interface ListGlobalSwapsQuery {
   offset?: number;
   pool_type?: string;
   asset_address?: string;
+  /** ISO8601 start time to filter swaps */
+  start_time?: string;
+  /** ISO8601 end time to filter swaps */
+  end_time?: string;
 }
 
 export interface ListGlobalSwapsResponse {
@@ -695,13 +722,13 @@ export interface Pool {
 }
 
 export interface LpPosition {
-  lpTokensOwned: number;
-  valueAssetA: number;
-  valueAssetB: number;
-  principalAssetA: number | null;
-  principalAssetB: number | null;
-  unrealizedProfitLossAssetA: number;
-  unrealizedProfitLossAssetB: number;
+  lpTokensOwned: string;
+  valueAssetA: string;
+  valueAssetB: string;
+  principalAssetA: string | null;
+  principalAssetB: string | null;
+  unrealizedProfitLossAssetA: string;
+  unrealizedProfitLossAssetB: string;
 }
 
 export interface RegisterHostIntentData {
@@ -783,4 +810,15 @@ export interface GetIntegratorFeesResponse {
   pools: IntegratorPoolFees[];
   totalAssetAFees?: string;
   totalAssetBFees?: string;
+}
+
+export interface GetPoolIntegratorFeesRequest {
+  poolId: string;
+}
+
+export interface GetPoolIntegratorFeesResponse {
+  poolId: string;
+  integratorPublicKey: string;
+  assetAFees: string;
+  assetBFees: string;
 }
