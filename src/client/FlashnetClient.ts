@@ -6,6 +6,7 @@ import { BTC_ASSET_PUBKEY, getNetworkConfig } from "../config";
 import {
   type AddLiquidityRequest,
   type AddLiquidityResponse,
+  type AllLpPositionsResponse,
   type ConfirmDepositResponse,
   type ConfirmInitialDepositRequest,
   type CreateConstantProductPoolRequest,
@@ -363,6 +364,15 @@ export class FlashnetClient {
     return this.typedApi.getLpPosition(poolId, provider);
   }
 
+   /**
+   * Get LP position details for a provider in a pool
+   */
+  async getAllLpPositions(
+  ): Promise<AllLpPositionsResponse> {
+    await this.ensureInitialized();
+    return this.typedApi.getAllLpPositions();
+  }
+
   /**
    * Create a constant product pool
    */
@@ -452,8 +462,8 @@ export class FlashnetClient {
         response.poolId,
         params.assetAAddress,
         params.assetBAddress,
-        params.initialLiquidity.assetAAmount,
-        params.initialLiquidity.assetBAmount
+        params.initialLiquidity.assetAAmount.toString(),
+        params.initialLiquidity.assetBAmount.toString()
       );
     }
 
@@ -953,8 +963,8 @@ export class FlashnetClient {
    */
   async addLiquidity(params: {
     poolId: string;
-    assetAAmount: bigint;
-    assetBAmount: bigint;
+    assetAAmount: string;
+    assetBAmount: string;
   }): Promise<AddLiquidityResponse> {
     await this.ensureInitialized();
 
@@ -967,15 +977,15 @@ export class FlashnetClient {
     };
 
     if (pool.assetAAddress === BTC_ASSET_PUBKEY) {
-      requirements.btc = params.assetAAmount;
+      requirements.btc = BigInt(params.assetAAmount);
     } else {
-      requirements.tokens?.set(pool.assetAAddress, params.assetAAmount);
+      requirements.tokens?.set(pool.assetAAddress, BigInt(params.assetAAmount));
     }
 
     if (pool.assetBAddress === BTC_ASSET_PUBKEY) {
-      requirements.btc = (requirements.btc || 0n) + params.assetBAmount;
+      requirements.btc = (requirements.btc || 0n) + BigInt(params.assetBAmount);
     } else {
-      requirements.tokens?.set(pool.assetBAddress, params.assetBAmount);
+      requirements.tokens?.set(pool.assetBAddress, BigInt(params.assetBAmount));
     }
 
     const balanceCheck = await this.checkBalance(requirements);
@@ -1002,7 +1012,7 @@ export class FlashnetClient {
     } else {
       assetATransferId = await this._wallet.transferTokens({
         tokenIdentifier: this.toHumanReadableTokenIdentifier(pool.assetAAddress) as any,
-        tokenAmount: params.assetAAmount,
+        tokenAmount: BigInt(params.assetAAmount),
         receiverSparkAddress: lpSparkAddress,
       });
     }
@@ -1018,7 +1028,7 @@ export class FlashnetClient {
     } else {
       assetBTransferId = await this._wallet.transferTokens({
         tokenIdentifier: this.toHumanReadableTokenIdentifier(pool.assetBAddress) as any,
-        tokenAmount: params.assetBAmount,
+        tokenAmount: BigInt(params.assetBAmount),
         receiverSparkAddress: lpSparkAddress,
       });
     }
@@ -1389,8 +1399,8 @@ export class FlashnetClient {
     poolId: string,
     assetATokenPublicKey: string,
     assetBTokenPublicKey: string,
-    assetAAmount: bigint,
-    assetBAmount: bigint
+    assetAAmount: string,
+    assetBAmount: string
   ): Promise<void> {
     const lpSparkAddress = encodeSparkAddress({
       identityPublicKey: poolId,
@@ -1408,7 +1418,7 @@ export class FlashnetClient {
     } else {
       assetATransferId = await this._wallet.transferTokens({
         tokenIdentifier: this.toHumanReadableTokenIdentifier(assetATokenPublicKey) as any,
-        tokenAmount: assetAAmount,
+        tokenAmount: BigInt(assetAAmount),
         receiverSparkAddress: lpSparkAddress,
       });
     }
@@ -1424,7 +1434,7 @@ export class FlashnetClient {
     } else {
       assetBTransferId = await this._wallet.transferTokens({
         tokenIdentifier: this.toHumanReadableTokenIdentifier(assetBTokenPublicKey) as any,
-        tokenAmount: assetBAmount,
+        tokenAmount: BigInt(assetBAmount),
         receiverSparkAddress: lpSparkAddress,
       });
     }

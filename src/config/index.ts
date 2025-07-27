@@ -15,7 +15,7 @@ export const NETWORK_CONFIGS: Record<NetworkType, NetworkConfig> = {
     sparkScanUrl: "https://api.sparkscan.io",
   },
   REGTEST: {
-    ammGatewayUrl: "http://localhost:8090",
+    ammGatewayUrl: "https://api.amm.makebitcoingreatagain.dev",
     mempoolApiUrl: "https://mempool.regtest.flashnet.xyz",
     explorerUrl: "https://mempool.regtest.flashnet.xyz",
     sparkScanUrl: "https://api.sparkscan.io",
