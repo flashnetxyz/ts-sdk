@@ -1,3 +1,5 @@
+import type { FlashnetClientCustomConfig } from "../../src/types/index"
+
 // Default pool parameters matching the Rust tests
 export const DEFAULT_PARAMS = {
   user_pool: {
@@ -17,3 +19,12 @@ export const DEFAULT_PARAMS = {
 };
 
 export const NETWORK = 'REGTEST';
+
+export const CLIENT_CONFIG: FlashnetClientCustomConfig = {
+  sparkNetworkType: "REGTEST",
+  clientNetworkConfig: {
+    ammGatewayUrl: "http://localhost:8090",
+    mempoolApiUrl: "https://mempool.regtest.flashnet.xyz",
+    explorerUrl: "https://mempool.regtest.flashnet.xyz",
+  },
+};

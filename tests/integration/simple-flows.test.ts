@@ -3,7 +3,7 @@ import { FlashnetClient } from '../../src/client/FlashnetClient';
 import { BTC_ASSET_PUBKEY } from '../../src/config';
 import { IssuerSparkWallet } from '@buildonspark/issuer-sdk';
 import { getFundedWalletInfo } from './wallet-server-handlers';
-import { DEFAULT_PARAMS, NETWORK } from './config';
+import { DEFAULT_PARAMS, NETWORK, CLIENT_CONFIG } from './config';
 
 describe('Pool Creation Tests', () => {
   describe('User Pool Creation', () => {
@@ -18,7 +18,7 @@ describe('Pool Creation Tests', () => {
       });
 
       // Create SDK client
-      const client = new FlashnetClient(wallet);
+      const client = new FlashnetClient(wallet, CLIENT_CONFIG);
 
       // Create pool using user pool parameters
       const poolResponse = await client.createSingleSidedPool({
@@ -49,7 +49,7 @@ describe('Pool Creation Tests', () => {
       });
 
       // Create SDK client
-      const client = new FlashnetClient(wallet);
+      const client = new FlashnetClient(wallet, CLIENT_CONFIG);
 
       // Get host namespace (assuming the wallet has been registered as a host)
       const hostNamespace = 'test-host-namespace'; // You might need to register this first
@@ -84,7 +84,7 @@ describe('Pool Creation Tests', () => {
       });
 
       // Create SDK client
-      const client = new FlashnetClient(wallet);
+      const client = new FlashnetClient(wallet, CLIENT_CONFIG);
 
       // Create pool using user pool parameters
       const poolResponse = await client.createSingleSidedPool({
@@ -132,7 +132,7 @@ describe('Pool Creation Tests', () => {
       });
 
       // Create SDK client
-      const client = new FlashnetClient(wallet);
+      const client = new FlashnetClient(wallet, CLIENT_CONFIG);
 
       // Create pool using user pool parameters
       const poolResponse = await client.createSingleSidedPool({
@@ -193,7 +193,7 @@ describe('Pool Creation Tests', () => {
       });
 
       // Create SDK client
-      const client = new FlashnetClient(wallet);
+      const client = new FlashnetClient(wallet, CLIENT_CONFIG);
 
       // Create pool using user pool parameters
       const poolResponse = await client.createSingleSidedPool({
