@@ -17,8 +17,20 @@ jobs:
       - name: Install dependencies
         run: bun install --frozen-lockfile
 
-      - name: Install peer dependencies for type checking
-        run: bun add --dev @buildonspark/issuer-sdk@latest @buildonspark/spark-sdk@latest
+      - name: Install peer dependencies (CI only)
+        run: |
+          echo "Installing peer dependencies for type checking..."
+          bun add @buildonspark/issuer-sdk@latest @buildonspark/spark-sdk@latest --exact
+
+      - name: Type check
+        run: bun run type-check
 
       - name: Build
         run: bun run build
+
+      - name: Test build outputs
+        run: |
+          echo "Checking build outputs..."
+          ls -la dist/
+          echo "ESM index exists:" && ls -la dist/esm/index.js
+          echo "CJS index exists:" && ls -la dist/cjs/index.js
