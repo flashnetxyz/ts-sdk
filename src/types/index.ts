@@ -2,13 +2,23 @@
  * Spark network types - represents the actual Spark blockchain network
  * Used for address encoding, token identifiers, and wallet operations
  */
-export type SparkNetworkType = "MAINNET" | "REGTEST" | "TESTNET" | "SIGNET" | "LOCAL";
+export type SparkNetworkType =
+  | "MAINNET"
+  | "REGTEST"
+  | "TESTNET"
+  | "SIGNET"
+  | "LOCAL";
 
 /**
  * Client environment types - represents the client configuration environment
  * Used for API endpoints, settlement services, and client behavior
  */
-export type ClientEnvironment = "mainnet" | "regtest" | "testnet" | "signet" | "local";
+export type ClientEnvironment =
+  | "mainnet"
+  | "regtest"
+  | "testnet"
+  | "signet"
+  | "local";
 
 /**
  * Client network configuration interface
@@ -28,7 +38,7 @@ export interface ClientNetworkConfig {
 export interface FlashnetClientConfig {
   /** Spark blockchain network for addresses and tokens */
   sparkNetworkType: SparkNetworkType;
-  /** 
+  /**
    * Client configuration - can be either:
    * 1. A predefined environment name (e.g., 'mainnet', 'local')
    * 2. A custom configuration object with specific URLs
@@ -94,16 +104,22 @@ export type NetworkType =
  * Maps legacy NetworkType to SparkNetworkType
  * @deprecated For migration purposes only
  */
-export function getSparkNetworkFromLegacy(networkType: NetworkType): SparkNetworkType {
+export function getSparkNetworkFromLegacy(
+  networkType: NetworkType
+): SparkNetworkType {
   // LOCAL maps to REGTEST for Spark operations
-  return networkType === "LOCAL" ? "REGTEST" : networkType as SparkNetworkType;
+  return networkType === "LOCAL"
+    ? "REGTEST"
+    : (networkType as SparkNetworkType);
 }
 
 /**
  * Maps legacy NetworkType to ClientEnvironment
  * @deprecated For migration purposes only
  */
-export function getClientEnvironmentFromLegacy(networkType: NetworkType): ClientEnvironment {
+export function getClientEnvironmentFromLegacy(
+  networkType: NetworkType
+): ClientEnvironment {
   return networkType.toLowerCase() as ClientEnvironment;
 }
 
@@ -111,16 +127,22 @@ export function getClientEnvironmentFromLegacy(networkType: NetworkType): Client
  * Type guard to check if a value is a valid SparkNetworkType
  */
 export function isSparkNetworkType(value: unknown): value is SparkNetworkType {
-  return typeof value === "string" && 
-    ["MAINNET", "REGTEST", "TESTNET", "SIGNET"].includes(value);
+  return (
+    typeof value === "string" &&
+    ["MAINNET", "REGTEST", "TESTNET", "SIGNET"].includes(value)
+  );
 }
 
 /**
  * Type guard to check if a value is a valid ClientEnvironment
  */
-export function isClientEnvironment(value: unknown): value is ClientEnvironment {
-  return typeof value === "string" && 
-    ["mainnet", "regtest", "testnet", "signet", "local"].includes(value);
+export function isClientEnvironment(
+  value: unknown
+): value is ClientEnvironment {
+  return (
+    typeof value === "string" &&
+    ["mainnet", "regtest", "testnet", "signet", "local"].includes(value)
+  );
 }
 
 // Wallet types (preserved custom type)
@@ -527,8 +549,8 @@ export interface AmmPool {
 }
 
 export interface ListPoolsQuery {
-  assetATokenAddress?: string;
-  assetBTokenAddress?: string;
+  assetAAddress?: string;
+  assetBAddress?: string;
   hostNames?: string[];
   minVolume24h?: number;
   minTvl?: number;
@@ -768,10 +790,12 @@ export interface ApiResponse<T> {
 
 // Additional custom types preserved from original
 export interface Token {
-  tokenPublicKey: string;
+  tokenIdentifier: string;
+  tokenAddress: string;
   name: string;
   ticker: string;
   decimals: number;
+  maxSupply: string;
   iconUrl?: string;
 }
 

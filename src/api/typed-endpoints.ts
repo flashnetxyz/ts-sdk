@@ -183,7 +183,9 @@ export class TypedAmmApi {
    * @requires Bearer token
    */
   async getAllLpPositions(): Promise<Types.AllLpPositionsResponse> {
-    return this.client.ammGet<Types.AllLpPositionsResponse>("/v1/liquidity/positions");
+    return this.client.ammGet<Types.AllLpPositionsResponse>(
+      "/v1/liquidity/positions"
+    );
   }
 
   // ===== Liquidity Endpoints =====
@@ -357,8 +359,12 @@ export class TypedAmmApi {
    * @GET /v1/integrators/pool-fees/{poolId}
    * @requires Bearer token
    */
-  async getPoolIntegratorFees(poolId: string): Promise<Types.GetPoolIntegratorFeesResponse> {
-    return this.client.ammGet<Types.GetPoolIntegratorFeesResponse>(`/v1/integrators/pool-fees/${poolId}`);
+  async getPoolIntegratorFees(
+    poolId: string
+  ): Promise<Types.GetPoolIntegratorFeesResponse> {
+    return this.client.ammGet<Types.GetPoolIntegratorFeesResponse>(
+      `/v1/integrators/pool-fees/${poolId}`
+    );
   }
 
   /**

@@ -16,12 +16,13 @@ const SparkAddressNetworkPrefix: Record<SparkNetworkType, string> = {
   LOCAL: "spl",
 } as const;
 
-const SparkPrefixToNetwork: Record<string, SparkNetworkType> = Object.fromEntries(
-  Object.entries(SparkAddressNetworkPrefix).map(([network, prefix]) => [
-    prefix,
-    network as SparkNetworkType,
-  ])
-);
+const SparkPrefixToNetwork: Record<string, SparkNetworkType> =
+  Object.fromEntries(
+    Object.entries(SparkAddressNetworkPrefix).map(([network, prefix]) => [
+      prefix,
+      network as SparkNetworkType,
+    ])
+  );
 
 export type SparkAddressFormat =
   `${(typeof SparkAddressNetworkPrefix)[keyof typeof SparkAddressNetworkPrefix]}1${string}`;
@@ -116,7 +117,6 @@ function decodeProto(data: Uint8Array): SparkAddress {
   return result;
 }
 
-
 /**
  * Encodes a public key and Spark network into a Spark address
  * @param payload Object containing hex public key and Spark network type
@@ -183,7 +183,9 @@ export function decodeSparkAddressNew(
  * @param address The potential Spark address.
  * @returns The SparkNetworkType or null if the prefix is invalid.
  */
-export function getSparkNetworkFromAddress(address: string): SparkNetworkType | null {
+export function getSparkNetworkFromAddress(
+  address: string
+): SparkNetworkType | null {
   if (!address || typeof address !== "string") {
     return null;
   }

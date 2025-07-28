@@ -1,9 +1,11 @@
-import { bech32m } from "@scure/base";
 import { bytesToHex, hexToBytes } from "@noble/hashes/utils";
+import { bech32m } from "@scure/base";
 import type { NetworkType, SparkNetworkType } from "../types";
 
-
-const SparkHumanReadableTokenIdentifierNetworkPrefix: Record<SparkNetworkType, string> = {
+const SparkHumanReadableTokenIdentifierNetworkPrefix: Record<
+  SparkNetworkType,
+  string
+> = {
   MAINNET: "btkn",
   REGTEST: "btknrt",
   TESTNET: "btknt",
@@ -62,7 +64,9 @@ export function decodeSparkHumanReadableTokenIdentifier(
       500
     );
 
-    if (decoded.prefix !== SparkHumanReadableTokenIdentifierNetworkPrefix[network]) {
+    if (
+      decoded.prefix !== SparkHumanReadableTokenIdentifierNetworkPrefix[network]
+    ) {
       throw new Error(
         `Invalid Spark human readable token identifier prefix, expected '${SparkHumanReadableTokenIdentifierNetworkPrefix[network]}' but got '${decoded.prefix}'`
       );
