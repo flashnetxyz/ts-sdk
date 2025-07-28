@@ -14,8 +14,10 @@ A comprehensive SDK for interacting with Flashnet's Spark AMM functionality.
 ## Installation
 
 ```bash
+# Recommended (Bun)
 bun add @flashnet/sdk
-# or
+
+# Alternative package managers
 npm install @flashnet/sdk
 # or
 yarn add @flashnet/sdk

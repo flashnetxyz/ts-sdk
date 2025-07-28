@@ -2,7 +2,7 @@
 node_modules/
 .pnp
 .pnp.js
-
+# Note: bun.lockb should be committed (similar to package-lock.json)
 # Build outputs
 dist/
 build/
@@ -60,6 +60,3 @@ tsconfig.tsbuildinfo
 .yarn/build-state.yml
 .yarn/install-state.gz
 .pnp.*
-
-# Bun
-bun.lockb

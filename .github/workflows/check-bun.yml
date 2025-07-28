@@ -1,0 +1,22 @@
+name: Check Bun Lock
+
+on:
+  push:
+  workflow_dispatch:
+
+jobs:
+  check:
+    name: Check bun.lockb
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Verify lockfile integrity
+        run: bun install --frozen-lockfile --dry-run
+
+      - name: Check for dependency vulnerabilities
+        run: bun audit

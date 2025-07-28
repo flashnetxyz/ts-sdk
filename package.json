@@ -1,6 +1,6 @@
 {
   "name": "@flashnet/sdk",
-  "version": "0.3.8",
+  "version": "0.3.6",
   "main": "./dist/cjs/index.js",
   "module": "./dist/esm/index.js",
   "types": "./dist/esm/index.d.ts",
@@ -46,9 +46,9 @@
   ],
   "scripts": {
     "prebuild": "rm -rf dist",
-    "build": "npm run type-check && rollup -c",
+    "build": "bun run type-check && rollup -c",
     "dev": "rollup -c -w",
-    "test": "npm run test:esm && npm run test:cjs && npm run test:bun && npm run test:modular",
+    "test": "bun run test:esm && bun run test:cjs && bun run test:bun && bun run test:modular",
     "test:esm": "node tests/test-esm.mjs",
     "test:cjs": "node tests/test-cjs.cjs",
     "test:bun": "bun tests/test-bun.js",
