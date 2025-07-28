@@ -1,4 +1,5 @@
 import type { NetworkConfig } from "../config";
+import type { ClientNetworkConfig } from "../types";
 
 export interface RequestOptions {
   headers?: Record<string, string>;
@@ -7,11 +8,24 @@ export interface RequestOptions {
 }
 
 export class ApiClient {
-  private config: NetworkConfig;
+  private config: ClientNetworkConfig;
   private authToken?: string;
 
-  constructor(config: NetworkConfig) {
-    this.config = config;
+  /**
+   * Create an ApiClient with new ClientNetworkConfig
+   * @param config Client network configuration
+   */
+  constructor(config: ClientNetworkConfig);
+  
+  /**
+   * @deprecated Use ClientNetworkConfig instead of NetworkConfig
+   * Create an ApiClient with legacy NetworkConfig for backward compatibility
+   * @param config Legacy network configuration
+   */
+  constructor(config: NetworkConfig);
+  
+  constructor(config: ClientNetworkConfig | NetworkConfig) {
+    this.config = config as ClientNetworkConfig;
   }
 
   setAuthToken(token: string) {
