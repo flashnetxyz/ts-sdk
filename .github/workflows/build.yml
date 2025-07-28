@@ -17,5 +17,8 @@ jobs:
       - name: Install dependencies
         run: bun install --frozen-lockfile
 
+      - name: Install peer dependencies for type checking
+        run: bun add --dev @buildonspark/issuer-sdk @buildonspark/spark-sdk
+
       - name: Build
         run: bun run build
