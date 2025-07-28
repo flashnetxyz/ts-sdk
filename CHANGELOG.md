@@ -27,8 +27,9 @@
 If you're using the full `FlashnetClient`:
 
 ```bash
-# Install peer dependencies explicitly
-npm install @flashnet/sdk @buildonspark/spark-sdk @buildonspark/issuer-sdk
+# Install peer dependencies explicitly (Bun recommended)
+bun add @flashnet/sdk @buildonspark/spark-sdk @buildonspark/issuer-sdk
+# or with npm: npm install @flashnet/sdk @buildonspark/spark-sdk @buildonspark/issuer-sdk
 ```
 
 For backend usage without wallet:

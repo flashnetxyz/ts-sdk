@@ -1,4 +1,4 @@
-name: Check Yarn Lock
+name: Check Bun Lock
 
 on:
   push:
@@ -6,17 +6,17 @@ on:
 
 jobs:
   check:
-    name: Check yarn.lock
+    name: Check bun.lockb
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
 
-      - uses: actions/setup-node@v4
+      - uses: oven-sh/setup-bun@v2
         with:
-          node-version: 20
+          bun-version: latest
 
-      - name: Install dependencies
-        run: yarn install --frozen-lockfile --check-files
+      - name: Verify lockfile integrity
+        run: bun install --frozen-lockfile --dry-run
 
-      - name: Check yarn.lock integrity
-        run: yarn check --integrity --verify-tree
+      - name: Check for dependency vulnerabilities
+        run: bun audit
