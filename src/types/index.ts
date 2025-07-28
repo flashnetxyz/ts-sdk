@@ -1,4 +1,86 @@
-// Network types (preserved custom type)
+/**
+ * Spark network types - represents the actual Spark blockchain network
+ * Used for address encoding, token identifiers, and wallet operations
+ */
+export type SparkNetworkType = "MAINNET" | "REGTEST" | "TESTNET" | "SIGNET" | "LOCAL";
+
+/**
+ * Client environment types - represents the client configuration environment
+ * Used for API endpoints, settlement services, and client behavior
+ */
+export type ClientEnvironment = "mainnet" | "regtest" | "testnet" | "signet" | "local";
+
+/**
+ * Client network configuration interface
+ * Contains all client-specific configuration (URLs, endpoints, etc.)
+ */
+export interface ClientNetworkConfig {
+  ammGatewayUrl: string;
+  mempoolApiUrl: string;
+  explorerUrl: string;
+  sparkScanUrl?: string;
+}
+
+/**
+ * Configuration for FlashnetClient constructor
+ * Supports both predefined environments and custom endpoint configurations
+ */
+export interface FlashnetClientConfig {
+  /** Spark blockchain network for addresses and tokens */
+  sparkNetworkType: SparkNetworkType;
+  /** 
+   * Client configuration - can be either:
+   * 1. A predefined environment name (e.g., 'mainnet', 'local')
+   * 2. A custom configuration object with specific URLs
+   */
+  clientConfig: ClientEnvironment | ClientNetworkConfig;
+  /** Optional: automatically authenticate on initialization */
+  autoAuthenticate?: boolean;
+}
+
+/**
+ * Enhanced configuration that allows full customization
+ * This is the most flexible option for advanced users
+ */
+export interface FlashnetClientCustomConfig {
+  /** Spark blockchain network for addresses and tokens */
+  sparkNetworkType: SparkNetworkType;
+  /** Custom client network configuration with specific URLs */
+  clientNetworkConfig: ClientNetworkConfig;
+  /** Optional: automatically authenticate on initialization */
+  autoAuthenticate?: boolean;
+}
+
+/**
+ * Configuration using predefined environments
+ * This is the recommended option for most users
+ */
+export interface FlashnetClientEnvironmentConfig {
+  /** Spark blockchain network for addresses and tokens */
+  sparkNetworkType: SparkNetworkType;
+  /** Predefined client environment */
+  clientEnvironment: ClientEnvironment;
+  /** Optional: automatically authenticate on initialization */
+  autoAuthenticate?: boolean;
+}
+
+/**
+ * Legacy configuration for backward compatibility
+ * @deprecated Use FlashnetClientConfig with sparkNetworkType and clientEnvironment instead
+ */
+export interface FlashnetClientLegacyConfig {
+  /** @deprecated Use sparkNetworkType and clientEnvironment instead */
+  network?: NetworkType;
+  /** Optional: automatically authenticate on initialization */
+  autoAuthenticate?: boolean;
+}
+
+// ===== BACKWARD COMPATIBILITY TYPES =====
+
+/**
+ * @deprecated Use SparkNetworkType for Spark networks and ClientEnvironment for client configuration
+ * This type will be removed in v3.0.0
+ */
 export type NetworkType =
   | "MAINNET"
   | "REGTEST"
@@ -6,16 +88,61 @@ export type NetworkType =
   | "SIGNET"
   | "LOCAL";
 
+// ===== TYPE CONVERSION UTILITIES =====
+
+/**
+ * Maps legacy NetworkType to SparkNetworkType
+ * @deprecated For migration purposes only
+ */
+export function getSparkNetworkFromLegacy(networkType: NetworkType): SparkNetworkType {
+  // LOCAL maps to REGTEST for Spark operations
+  return networkType === "LOCAL" ? "REGTEST" : networkType as SparkNetworkType;
+}
+
+/**
+ * Maps legacy NetworkType to ClientEnvironment
+ * @deprecated For migration purposes only
+ */
+export function getClientEnvironmentFromLegacy(networkType: NetworkType): ClientEnvironment {
+  return networkType.toLowerCase() as ClientEnvironment;
+}
+
+/**
+ * Type guard to check if a value is a valid SparkNetworkType
+ */
+export function isSparkNetworkType(value: unknown): value is SparkNetworkType {
+  return typeof value === "string" && 
+    ["MAINNET", "REGTEST", "TESTNET", "SIGNET"].includes(value);
+}
+
+/**
+ * Type guard to check if a value is a valid ClientEnvironment
+ */
+export function isClientEnvironment(value: unknown): value is ClientEnvironment {
+  return typeof value === "string" && 
+    ["mainnet", "regtest", "testnet", "signet", "local"].includes(value);
+}
+
 // Wallet types (preserved custom type)
 export interface WalletConfig {
   mnemonic: string;
+  /** @deprecated Use SparkNetworkType instead */
   network: NetworkType;
 }
 
 // Spark address types (preserved custom type)
 export interface SparkAddressData {
   identityPublicKey: string;
+  /** @deprecated Use SparkNetworkType instead */
   network: NetworkType;
+}
+
+/**
+ * New Spark address data interface using SparkNetworkType
+ */
+export interface SparkAddressDataNew {
+  identityPublicKey: string;
+  network: SparkNetworkType;
 }
 
 // Generic signer interface (preserved custom type)

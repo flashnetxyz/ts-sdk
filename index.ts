@@ -29,7 +29,7 @@ export {
   type WalletBalance,
 } from "./src/client/FlashnetClient";
 
-// Export configuration
+// Export configuration (new and legacy)
 export * from "./src/config";
 export type * from "./src/types";
 export { fromSmallestUnit, generateNonce, toSmallestUnit } from "./src/utils";
@@ -45,14 +45,35 @@ export {
   generateWithdrawHostFeesIntentMessage,
 } from "./src/utils/intents";
 export { createWalletSigner } from "./src/utils/signer";
-// Export utilities
+
+// Export Spark address utilities (new and legacy)
 export {
+  // New Spark network functions
+  convertSparkAddressToSparkNetwork,
+  decodeSparkAddressNew,
+  encodeSparkAddressNew,
+  getSparkNetworkFromAddress,
+  isValidSparkAddressNew,
+  // Legacy functions (deprecated)
   convertSparkAddressToNetwork,
   decodeSparkAddress,
   encodeSparkAddress,
   getNetworkFromAddress,
-  isValidPublicKey,
   isValidSparkAddress,
+  // Common utilities
+  isValidPublicKey,
   looksLikePublicKey,
   type SparkAddressFormat,
 } from "./src/utils/spark-address";
+
+// Export token address utilities (new and legacy)
+export {
+  // New Spark network functions
+  encodeSparkHumanReadableTokenIdentifier,
+  decodeSparkHumanReadableTokenIdentifier,
+  type SparkHumanReadableTokenIdentifier,
+  // Legacy functions (deprecated)
+  encodeHumanReadableTokenIdentifier,
+  decodeHumanReadableTokenIdentifier,
+  type HumanReadableTokenIdentifier,
+} from "./src/utils/tokenAddress";
