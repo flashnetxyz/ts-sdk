@@ -21,7 +21,7 @@ export const NETWORK = 'REGTEST';
 export const CLIENT_CONFIG: FlashnetClientCustomConfig = {
   sparkNetworkType: NETWORK,
   clientNetworkConfig: {
-    ammGatewayUrl: "http://localhost:8090",
+    ammGatewayUrl: "api.amm.makebitcoingreatagain.dev",
     mempoolApiUrl: "https://mempool.regtest.flashnet.xyz",
     explorerUrl: "https://mempool.regtest.flashnet.xyz",
   },
