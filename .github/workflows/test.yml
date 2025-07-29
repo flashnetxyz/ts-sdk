@@ -31,9 +31,9 @@ permissions:
   actions: read
 
 jobs:
-  test:
-    name: TypeScript SDK Integration Tests
-    runs-on: blacksmith-2vcpu-ubuntu-2404
+  integration-test:
+    name: Integration Test with TypeScript SDK
+    runs-on: ubuntu-latest
     timeout-minutes: 30
     permissions:
       contents: read
@@ -45,7 +45,9 @@ jobs:
         uses: actions/create-github-app-token@v2
         id: generate-token
         with:
+          # GitHub App ID secret name
           app-id: ${{ secrets.APP_ID }}
+          # GitHub App private key secret name
           private-key: ${{ secrets.APP_PRIVATE_KEY }}
           owner: ${{ github.repository_owner }}
           repositories: |
@@ -80,83 +82,97 @@ jobs:
         with:
           bun-version: latest
 
-      - name: Install Dependencies and Build
-        run: |
-          echo "Installing wallet server dependencies..."
-          cd wallet-server && npm ci
-          
-          echo "Installing TypeScript SDK dependencies..."
-          cd ../ts-sdk && bun install
-          
-          echo "Building TypeScript SDK..."
-          bun run build
+      - name: Install Wallet Server Dependencies
+        working-directory: wallet-server
+        run: npm ci
 
-      - name: Setup Wallet Server and Run Tests
+      - name: Install TypeScript SDK Dependencies
+        working-directory: ts-sdk
+        run: bun install
+
+      - name: Build TypeScript SDK
+        working-directory: ts-sdk
+        run: bun run build
+
+      - name: Start Wallet Server
+        working-directory: wallet-server
         run: |
-          echo "=== Setting up wallet manager ==="
-          cd wallet-server
-          mkdir -p outputs logs
-          npx tsx src/wallet-manager-setup.ts --env prod_regtest --num-wallets 15
+          echo "Setting up wallet manager..."
+          mkdir -p outputs
+          npx tsx src/wallet-manager-setup.ts --env prod_regtest --num-wallets 3
           
-          echo "=== Starting wallet server with logging ==="
-          nohup npx tsx src/server.ts --env prod_regtest > logs/wallet-server.log 2>&1 &
+          echo "Starting wallet server..."
+          npx tsx src/server.ts --env prod_regtest &
           WALLET_PID=$!
-          echo "Wallet server started with PID: $WALLET_PID"
+          echo "WALLET_PID=$WALLET_PID" >> $GITHUB_ENV
           
-          echo "=== Waiting for wallet server to be ready ==="
-          max_attempts=30
+          echo "Waiting for wallet server to initialize..."
+          sleep 15
+          
+          if ps -p $WALLET_PID > /dev/null; then
+              echo "Wallet server started successfully"
+          else
+              echo "Failed to start wallet server"
+              exit 1
+          fi
+
+      - name: Verify Wallet Server Health
+        run: |
+          echo "Performing wallet server health check..."
+          
+          max_attempts=10
           attempt=1
           
           while [ $attempt -le $max_attempts ]; do
             if curl -f http://localhost:3456/health > /dev/null 2>&1; then
-                echo "✓ Wallet server is ready (attempt $attempt)"
+                echo "Wallet server is ready"
                 break
             else
-                echo "Attempt $attempt/$max_attempts: Wallet server not ready, retrying in 3 seconds..."
-                if [[ -f logs/wallet-server.log ]]; then
-                    echo "Recent logs:"
-                    tail -3 logs/wallet-server.log
-                fi
-                sleep 3
+                echo "Attempt $attempt: Wallet server not ready yet, retrying in 5 seconds..."
+                sleep 5
                 attempt=$((attempt + 1))
             fi
           done
           
           if [ $attempt -gt $max_attempts ]; then
-              echo "❌ Wallet server failed to start"
-              echo "=== Complete wallet server logs ==="
-              cat logs/wallet-server.log 2>/dev/null || echo "No logs found"
+              echo "Wallet server failed to become ready after $max_attempts attempts"
               exit 1
           fi
+
+      - name: Run TypeScript SDK Integration Tests
+        working-directory: ts-sdk
+        run: |
+          echo "Running TypeScript SDK integration tests..."
           
-          echo "=== Running TypeScript SDK Tests ==="
-          cd ../ts-sdk
           export WALLET_SERVER_URL="http://localhost:3456"
           export NODE_ENV="test"
           
-          echo "Running simple flow tests..."
-          bun test tests/integration/simple-flow.test.ts || TEST_EXIT_CODE=$?
-          
-          echo "Running complex flow tests..."
-          bun test tests/integration/complex-flow.test.ts || TEST_EXIT_CODE=$?
-          
+          # Run the integration tests
+          bun test
+        timeout-minutes: 15
+
+      - name: Run Compatibility Tests
+        working-directory: ts-sdk
+        run: |
           echo "Running compatibility tests..."
-          bun run test:compatibility || TEST_EXIT_CODE=$?
+          bun run test:compatibility
+        timeout-minutes: 5
+
+      - name: Cleanup Services
+        if: always()
+        run: |
+          echo "Cleaning up services..."
           
-          echo "=== Final wallet server status ==="
-          if ps -p $WALLET_PID > /dev/null; then
-              echo "Wallet server still running"
-              tail -5 ../wallet-server/logs/wallet-server.log
-          else
-              echo "Wallet server stopped"
+          if [[ -n "${WALLET_PID:-}" ]]; then
+              echo "Stopping wallet server (PID: $WALLET_PID)..."
+              kill $WALLET_PID 2>/dev/null || true
           fi
           
-          # Stop wallet server
-          kill $WALLET_PID 2>/dev/null || true
+          # Kill any remaining wallet server processes
+          pkill -f "tsx src/server.ts" || true
           
-          # Exit with test result
-          exit ${TEST_EXIT_CODE:-0}
-        timeout-minutes: 25
+          sleep 5
+          echo "Cleanup completed"
 
       - name: Collect Logs
         if: always()
