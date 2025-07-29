@@ -67,6 +67,10 @@ jobs:
           path: wallet-server
           fetch-depth: 1
 
+      - name: Install tools
+        run: |
+          sudo apt install -y nohup
+
       - name: Set up Node.js for Wallet Server
         uses: actions/setup-node@v4
         with:
@@ -99,7 +103,7 @@ jobs:
           npx tsx src/wallet-manager-setup.ts --env prod_regtest --num-wallets 3
           
           echo "Starting wallet server..."
-          npx tsx src/server.ts --env prod_regtest &
+          nohup npx tsx src/server.ts --env prod_regtest > ./logs/wallet-server.log &
           WALLET_PID=$!
           echo "WALLET_PID=$WALLET_PID" >> $GITHUB_ENV
           
@@ -132,6 +136,13 @@ jobs:
           # Run the integration tests
           bun test
         timeout-minutes: 15
+
+      - name: Breakpoint if tests failed
+        if: failure()
+        uses: namespacelabs/breakpoint-action@v0
+        with:
+          duration: 15m
+          authorized-users: Quantumlyy,Rizek000
 
       - name: Cleanup Services
         if: always()
