@@ -33,7 +33,7 @@ permissions:
 jobs:
   integration-test:
     name: Integration Test with TypeScript SDK
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-2vcpu-ubuntu-2404
     timeout-minutes: 30
     permissions:
       contents: read
@@ -99,7 +99,7 @@ jobs:
         run: |
           echo "Setting up wallet manager..."
           mkdir -p outputs
-          npx tsx src/wallet-manager-setup.ts --env prod_regtest --num-wallets 5
+          npx tsx src/wallet-manager-setup.ts --env prod_regtest --num-wallets 1
           
           echo "Starting wallet server..."
           npx tsx src/server.ts --env prod_regtest &
