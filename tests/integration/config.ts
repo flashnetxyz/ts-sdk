@@ -1,3 +1,4 @@
+import type { FlashnetClientConfig } from "../../dist/esm";
 import type { FlashnetClientCustomConfig } from "../../src/types/index"
 
 // Default pool parameters matching the Rust tests
@@ -18,13 +19,14 @@ export const DEFAULT_PARAMS = {
 
 export const NETWORK = 'REGTEST';
 
-export const CLIENT_CONFIG: FlashnetClientCustomConfig = {
-  sparkNetworkType: NETWORK,
-  clientNetworkConfig: {
+export const CLIENT_CONFIG: FlashnetClientConfig = {
+  sparkNetworkType: 'REGTEST',
+  clientConfig: {
     ammGatewayUrl: "https://api.amm.makebitcoingreatagain.dev",
     mempoolApiUrl: "https://mempool.regtest.flashnet.xyz",
     explorerUrl: "https://mempool.regtest.flashnet.xyz",
   },
+  autoAuthenticate: false,
 };
 
 export const INFINITE_TIMEOUT = 10000000;
