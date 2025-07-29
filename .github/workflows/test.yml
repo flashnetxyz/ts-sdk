@@ -67,10 +67,6 @@ jobs:
           path: wallet-server
           fetch-depth: 1
 
-      - name: Install tools
-        run: |
-          sudo apt install -y nohup
-
       - name: Set up Node.js for Wallet Server
         uses: actions/setup-node@v4
         with:
