@@ -120,22 +120,10 @@ jobs:
         run: |
           echo "Performing wallet server health check..."
           
-          max_attempts=10
-          attempt=1
-          
-          while [ $attempt -le $max_attempts ]; do
-            if curl -f http://localhost:3456/health > /dev/null 2>&1; then
-                echo "Wallet server is ready"
-                break
-            else
-                echo "Attempt $attempt: Wallet server not ready yet, retrying in 5 seconds..."
-                sleep 5
-                attempt=$((attempt + 1))
-            fi
-          done
-          
-          if [ $attempt -gt $max_attempts ]; then
-              echo "Wallet server failed to become ready after $max_attempts attempts"
+          if curl -f http://localhost:3456/health > /dev/null 2>&1; then
+              echo "Wallet server is ready"
+          else
+              echo "Wallet server is not ready"
               exit 1
           fi
 
