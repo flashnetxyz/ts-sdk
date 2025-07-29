@@ -99,7 +99,7 @@ jobs:
         run: |
           echo "Setting up wallet manager..."
           mkdir -p outputs
-          npx tsx src/wallet-manager-setup.ts --env prod_regtest --num-wallets 1
+          npx tsx src/wallet-manager-setup.ts --env prod_regtest --num-wallets 3
           
           echo "Starting wallet server..."
           npx tsx src/server.ts --env prod_regtest &
