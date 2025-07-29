@@ -49,6 +49,10 @@ jobs:
           app-id: ${{ secrets.APP_ID }}
           # GitHub App private key secret name
           private-key: ${{ secrets.APP_PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }}
+          repositories: |
+            ts-sdk
+            spark-prefunding-client
 
       - name: Checkout TypeScript SDK Repository
         uses: actions/checkout@v4
