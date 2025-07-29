@@ -25,9 +25,10 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: read
-  packages: read
+  contents: write
+  packages: write
   id-token: write
+  checks: write
   actions: read
 
 jobs:
@@ -35,10 +36,6 @@ jobs:
     name: Integration Test with TypeScript SDK
     runs-on: blacksmith-8vcpu-ubuntu-2204
     timeout-minutes: 30
-    permissions:
-      contents: read
-      packages: read
-      actions: read
 
     steps:
       - name: Generate GitHub token
