@@ -145,7 +145,6 @@ jobs:
           echo "Running TypeScript SDK integration tests..."
           
           export WALLET_SERVER_URL="http://localhost:3456"
-          export NODE_ENV="test"
           
           # Run the integration tests
           bun test
