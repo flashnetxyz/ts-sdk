@@ -1,5 +1,4 @@
-import type { FlashnetClientConfig } from "../../dist/esm";
-import type { FlashnetClientCustomConfig } from "../../src/types/index"
+import type { FlashnetClientConfig } from "../../src/types/index"
 
 // Default pool parameters matching the Rust tests
 export const DEFAULT_PARAMS = {
