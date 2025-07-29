@@ -41,18 +41,27 @@ jobs:
       actions: read
 
     steps:
+      - name: Generate GitHub token
+        uses: actions/create-github-app-token@v2
+        id: generate-token
+        with:
+          # GitHub App ID secret name
+          app-id: ${{ secrets.APP_ID }}
+          # GitHub App private key secret name
+          private-key: ${{ secrets.APP_PRIVATE_KEY }}
+
       - name: Checkout TypeScript SDK Repository
         uses: actions/checkout@v4
         with:
           fetch-depth: 1
           path: ts-sdk
-          token: ${{ secrets.GITHUB_TOKEN }}
+          token: ${{ steps.generate-token.outputs.token }}
 
       - name: Checkout Wallet Server Repository
         uses: actions/checkout@v4
         with:
           repository: flashnetxyz/spark-prefunding-client
-          token: ${{ secrets.GITHUB_TOKEN }}
+          token: ${{ steps.generate-token.outputs.token }}
           ref: main
           path: wallet-server
           fetch-depth: 1
