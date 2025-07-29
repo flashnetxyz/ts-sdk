@@ -93,6 +93,8 @@ jobs:
 
       - name: Start Wallet Server
         working-directory: wallet-server
+        env:
+          DEBUG: "*"
         run: |
           echo "Setting up wallet manager..."
           mkdir -p outputs
@@ -100,7 +102,7 @@ jobs:
           
           echo "Starting wallet server..."
           mkdir -p logs
-          nohup npx tsx src/server.ts --env prod_regtest > ./logs/wallet-server.log &
+          nohup npx tsx src/server.ts --env prod_regtest > ./logs/wallet-server.log & disown -h
           WALLET_PID=$!
           echo "WALLET_PID=$WALLET_PID" >> $GITHUB_ENV
           
@@ -127,6 +129,9 @@ jobs:
 
       - name: Run TypeScript SDK Integration Tests
         working-directory: ts-sdk
+        env:
+          DEBUG: "*"
+          BUN_CONFIG_VERBOSE_FETCH: "curl"
         run: |
           echo "Running TypeScript SDK integration tests..."
           
