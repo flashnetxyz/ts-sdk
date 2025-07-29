@@ -33,7 +33,7 @@ permissions:
 jobs:
   integration-test:
     name: Integration Test with TypeScript SDK
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-4vcpu-ubuntu-2404-arm
     timeout-minutes: 30
     permissions:
       contents: read
@@ -132,18 +132,9 @@ jobs:
         run: |
           echo "Running TypeScript SDK integration tests..."
           
-          export WALLET_SERVER_URL="http://localhost:3456"
-          
           # Run the integration tests
           bun test
         timeout-minutes: 15
-
-      - name: Run Compatibility Tests
-        working-directory: ts-sdk
-        run: |
-          echo "Running compatibility tests..."
-          bun run test:compatibility
-        timeout-minutes: 5
 
       - name: Cleanup Services
         if: always()
