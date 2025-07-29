@@ -6,9 +6,16 @@ import { getFundedWalletInfo } from './wallet-server-handlers';
 import { DEFAULT_PARAMS, NETWORK, CLIENT_CONFIG, TEST_TIMEOUT } from './config';
 import { generateRandomHostNamespace } from './utils';
 
-describe('Simple Flows', () => {
-  describe('User Pool Creation', () => {
-    test('should create a user pool successfully', async () => {
+const flowName = "Simple Flows";
+const userPoolCreationTestName = "User Pool Creation";
+const hostPoolCreationTestName = "Host Pool Creation";
+const swapOnPoolTestName = "Swap on Pool";
+const addLiquidityTestName = "Add Liquidity";
+const removeLiquidityTestName = "Remove Liquidity";
+
+describe(flowName, () => {
+  describe(userPoolCreationTestName, () => {
+    test(userPoolCreationTestName, async () => {
       // Generate funded wallet
       const { mnemonic, tokenIdentifier } = await getFundedWalletInfo(10, 10000);
       
@@ -38,8 +45,8 @@ describe('Simple Flows', () => {
     }, TEST_TIMEOUT);
   });
 
-  describe('Host Pool Creation', () => {
-    test('should create a host pool successfully', async () => {
+  describe(hostPoolCreationTestName, () => {
+    test(hostPoolCreationTestName, async () => {
       // Generate funded wallet
       const { mnemonic, tokenIdentifier } = await getFundedWalletInfo(10, 10000);
       
@@ -78,8 +85,8 @@ describe('Simple Flows', () => {
     }, TEST_TIMEOUT);
   });
 
-  describe('Swap on Pool', () => {
-    test('should execute a swap on a pool successfully', async () => {
+  describe(swapOnPoolTestName, () => {
+    test(swapOnPoolTestName, async () => {
       // Generate funded wallet
       const { mnemonic, tokenIdentifier } = await getFundedWalletInfo(250, 10000);
       
@@ -134,8 +141,8 @@ describe('Simple Flows', () => {
     }, TEST_TIMEOUT);
   });
 
-  describe('Add Liquidity', () => {
-    test('should add liquidity to a pool successfully', async () => {
+  describe(addLiquidityTestName, () => {
+    test(addLiquidityTestName, async () => {
       // Generate funded wallet
       const { mnemonic, tokenIdentifier } = await getFundedWalletInfo(500, 10000);
       
@@ -189,7 +196,7 @@ describe('Simple Flows', () => {
       expect(swapResponse.accepted).toBe(true);
 
       // Wait for asynchronous operations to complete
-      console.log("Waiting 30 seconds for asynchronous operations to complete...");
+      testLogging("Waiting 30 seconds for asynchronous operations to complete...", [flowName, addLiquidityTestName]);
       await new Promise(resolve => setTimeout(resolve, 30000)); // 30 seconds
 
       // Add liquidity to the pool
@@ -207,8 +214,8 @@ describe('Simple Flows', () => {
     }, TEST_TIMEOUT);
   });
 
-  describe('Remove Liquidity', () => {
-    test('should remove liquidity from a pool successfully', async () => {
+  describe(removeLiquidityTestName, () => {
+    test(removeLiquidityTestName, async () => {
       // Generate funded wallet
       const { mnemonic, tokenIdentifier } = await getFundedWalletInfo(500, 10000);
       
@@ -276,7 +283,7 @@ describe('Simple Flows', () => {
       expect(addLiquidityResponse.accepted).toBe(true);
 
       // Wait for asynchronous operations to complete
-      console.log("Waiting 30 seconds for asynchronous operations to complete...");
+      testLogging("Waiting 30 seconds for asynchronous operations to complete...", [flowName, removeLiquidityTestName]);
       await new Promise(resolve => setTimeout(resolve, 30000)); // 30 seconds
 
       // Remove liquidity using the LP tokens that were minted
