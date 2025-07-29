@@ -174,21 +174,21 @@ jobs:
           sleep 5
           echo "Cleanup completed"
 
-      - name: Collect Logs on Failure
-        if: failure()
+      - name: Collect Logs
+        if: always()
         run: |
-          echo "Collecting logs for debugging..."
-          
-          echo "=== System processes ==="
+          echo "=== System Processes ==="
           ps aux | grep -E "(tsx|bun|node)" || true
           
-          echo "=== Network connections ==="
-          netstat -tlnp | grep -E "(3456)" || true
+          echo "=== Network Connections ==="
+          netstat -tlnp | grep 3456 || true
           
-          echo "=== Wallet server logs ==="
-          if [[ -f wallet-server/logs/server.log ]]; then
-              cat wallet-server/logs/server.log || true
+          echo "=== Complete Wallet Server Logs ==="
+          if [[ -f wallet-server/logs/wallet-server.log ]]; then
+              cat wallet-server/logs/wallet-server.log
+          else
+              echo "No wallet server logs found"
           fi
           
-          echo "=== Test output ==="
+          echo "=== Test Output ==="
           find ts-sdk -name "*.log" -exec cat {} \; || true
