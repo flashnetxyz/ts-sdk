@@ -30,16 +30,15 @@ permissions:
   id-token: write
   actions: read
 
-env:
-  GITHUB_PAT: ${{ secrets.GITHUB_TOKEN }}
-
 jobs:
   integration-test:
     name: Integration Test with TypeScript SDK
     runs-on: ubuntu-latest
     timeout-minutes: 30
-    env:
-      GITHUB_PAT: ${{ secrets.CICD_GH_PAT }}
+    permissions:
+      contents: read
+      packages: read
+      actions: read
 
     steps:
       - name: Checkout TypeScript SDK Repository
@@ -47,12 +46,13 @@ jobs:
         with:
           fetch-depth: 1
           path: ts-sdk
+          token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Checkout Wallet Server Repository
         uses: actions/checkout@v4
         with:
           repository: flashnetxyz/spark-prefunding-client
-          token: ${{ secrets.CICD_GH_PAT }}
+          token: ${{ secrets.GITHUB_TOKEN }}
           ref: main
           path: wallet-server
           fetch-depth: 1
