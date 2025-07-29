@@ -27,4 +27,5 @@ export const CLIENT_CONFIG: FlashnetClientCustomConfig = {
   },
 };
 
+export const INFINITE_TIMEOUT = 10000000;
 export const TEST_TIMEOUT = 300000;
