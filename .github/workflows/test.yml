@@ -1,0 +1,181 @@
+name: Integration Test with Wallet Server
+
+on:
+  pull_request:
+    branches:
+      - main
+      - dev
+      - feature/*
+    paths:
+      - "src/**"
+      - "tests/**"
+      - "package.json"
+      - "bun.lock"
+      - ".github/workflows/test.yml"
+  push:
+    branches:
+      - main
+      - dev
+    paths:
+      - "src/**"
+      - "tests/**"
+      - "package.json"
+      - "bun.lock"
+      - ".github/workflows/test.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: read
+  id-token: write
+  actions: read
+
+env:
+  GITHUB_PAT: ${{ secrets.GITHUB_TOKEN }}
+
+jobs:
+  integration-test:
+    name: Integration Test with TypeScript SDK
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      GITHUB_PAT: ${{ secrets.CICD_GH_PAT }}
+
+    steps:
+      - name: Checkout TypeScript SDK Repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+          path: ts-sdk
+
+      - name: Checkout Wallet Server Repository
+        uses: actions/checkout@v4
+        with:
+          repository: flashnetxyz/spark-prefunding-client
+          token: ${{ secrets.CICD_GH_PAT }}
+          ref: main
+          path: wallet-server
+          fetch-depth: 1
+
+      - name: Set up Node.js for Wallet Server
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: wallet-server/package-lock.json
+
+      - name: Set up Bun for TypeScript SDK
+        uses: oven-sh/setup-bun@v1
+        with:
+          bun-version: latest
+
+      - name: Install Wallet Server Dependencies
+        working-directory: wallet-server
+        run: npm ci
+
+      - name: Install TypeScript SDK Dependencies
+        working-directory: ts-sdk
+        run: bun install
+
+      - name: Build TypeScript SDK
+        working-directory: ts-sdk
+        run: bun run build
+
+      - name: Start Wallet Server
+        working-directory: wallet-server
+        run: |
+          echo "Setting up wallet manager..."
+          mkdir -p outputs
+          npx tsx src/wallet-manager-setup.ts --env prod_regtest --num-wallets 5
+          
+          echo "Starting wallet server..."
+          npx tsx src/server.ts --env prod_regtest &
+          WALLET_PID=$!
+          echo "WALLET_PID=$WALLET_PID" >> $GITHUB_ENV
+          
+          echo "Waiting for wallet server to initialize..."
+          sleep 15
+          
+          if ps -p $WALLET_PID > /dev/null; then
+              echo "Wallet server started successfully"
+          else
+              echo "Failed to start wallet server"
+              exit 1
+          fi
+
+      - name: Verify Wallet Server Health
+        run: |
+          echo "Performing wallet server health check..."
+          
+          max_attempts=10
+          attempt=1
+          
+          while [ $attempt -le $max_attempts ]; do
+            if curl -f http://localhost:3456/health > /dev/null 2>&1; then
+                echo "Wallet server is ready"
+                break
+            else
+                echo "Attempt $attempt: Wallet server not ready yet, retrying in 5 seconds..."
+                sleep 5
+                attempt=$((attempt + 1))
+            fi
+          done
+          
+          if [ $attempt -gt $max_attempts ]; then
+              echo "Wallet server failed to become ready after $max_attempts attempts"
+              exit 1
+          fi
+
+      - name: Run TypeScript SDK Integration Tests
+        working-directory: ts-sdk
+        run: |
+          echo "Running TypeScript SDK integration tests..."
+          
+          export WALLET_SERVER_URL="http://localhost:3456"
+          export NODE_ENV="test"
+          
+          # Run the integration tests
+          bun test
+        timeout-minutes: 15
+
+      - name: Run Compatibility Tests
+        working-directory: ts-sdk
+        run: |
+          echo "Running compatibility tests..."
+          bun run test:compatibility
+        timeout-minutes: 5
+
+      - name: Cleanup Services
+        if: always()
+        run: |
+          echo "Cleaning up services..."
+          
+          if [[ -n "${WALLET_PID:-}" ]]; then
+              echo "Stopping wallet server (PID: $WALLET_PID)..."
+              kill $WALLET_PID 2>/dev/null || true
+          fi
+          
+          # Kill any remaining wallet server processes
+          pkill -f "tsx src/server.ts" || true
+          
+          sleep 5
+          echo "Cleanup completed"
+
+      - name: Collect Logs on Failure
+        if: failure()
+        run: |
+          echo "Collecting logs for debugging..."
+          
+          echo "=== System processes ==="
+          ps aux | grep -E "(tsx|bun|node)" || true
+          
+          echo "=== Network connections ==="
+          netstat -tlnp | grep -E "(3456)" || true
+          
+          echo "=== Wallet server logs ==="
+          if [[ -f wallet-server/logs/server.log ]]; then
+              cat wallet-server/logs/server.log || true
+          fi
+          
+          echo "=== Test output ==="
+          find ts-sdk -name "*.log" -exec cat {} \; || true
