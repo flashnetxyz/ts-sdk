@@ -16,14 +16,14 @@ export class ApiClient {
    * @param config Client network configuration
    */
   constructor(config: ClientNetworkConfig);
-  
+
   /**
    * @deprecated Use ClientNetworkConfig instead of NetworkConfig
    * Create an ApiClient with legacy NetworkConfig for backward compatibility
    * @param config Legacy network configuration
    */
   constructor(config: NetworkConfig);
-  
+
   constructor(config: ClientNetworkConfig | NetworkConfig) {
     this.config = config as ClientNetworkConfig;
   }

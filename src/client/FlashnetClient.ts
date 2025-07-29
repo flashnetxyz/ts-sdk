@@ -2,19 +2,18 @@ import type { IssuerSparkWallet } from "@buildonspark/issuer-sdk";
 import type { SparkWallet } from "@buildonspark/spark-sdk";
 import { ApiClient } from "../api/client";
 import { TypedAmmApi } from "../api/typed-endpoints";
-import { 
-  BTC_ASSET_PUBKEY, 
-  getNetworkConfig,
+import {
+  BTC_ASSET_PUBKEY,
+  getClientEnvironmentName,
   getClientNetworkConfig,
   resolveClientNetworkConfig,
-  getClientEnvironmentName,
-  getDefaultSparkNetworkForEnvironment,
-  validateNetworkCombination
 } from "../config";
 import {
   type AddLiquidityRequest,
   type AddLiquidityResponse,
   type AllLpPositionsResponse,
+  type ClientEnvironment,
+  type ClientNetworkConfig,
   type ConfirmDepositResponse,
   type ConfirmInitialDepositRequest,
   type CreateConstantProductPoolRequest,
@@ -23,11 +22,17 @@ import {
   type ExecuteRouteSwapRequest,
   type ExecuteRouteSwapResponse,
   type ExecuteSwapRequest,
+  type FlashnetClientConfig,
+  type FlashnetClientCustomConfig,
+  type FlashnetClientEnvironmentConfig,
+  type FlashnetClientLegacyConfig,
   type GetHostFeesRequest,
   type GetHostFeesResponse,
   type GetHostResponse,
   type GetIntegratorFeesResponse,
   type GetPoolHostFeesResponse,
+  getClientEnvironmentFromLegacy,
+  getSparkNetworkFromLegacy,
   type ListGlobalSwapsQuery,
   type ListGlobalSwapsResponse,
   type ListPoolSwapsQuery,
@@ -39,13 +44,6 @@ import {
   type LpPositionDetailsResponse,
   Network,
   type NetworkType,
-  type SparkNetworkType,
-  type ClientEnvironment,
-  type ClientNetworkConfig,
-  type FlashnetClientConfig,
-  type FlashnetClientCustomConfig,
-  type FlashnetClientEnvironmentConfig,
-  type FlashnetClientLegacyConfig,
   type PoolDetailsResponse,
   type RegisterHostRequest,
   type RegisterHostResponse,
@@ -62,13 +60,12 @@ import {
   type SimulateRouteSwapResponse,
   type SimulateSwapRequest,
   type SimulateSwapResponse,
+  type SparkNetworkType,
   type SwapResponse,
   type WithdrawHostFeesRequest,
   type WithdrawHostFeesResponse,
   type WithdrawIntegratorFeesRequest,
   type WithdrawIntegratorFeesResponse,
-  getSparkNetworkFromLegacy,
-  getClientEnvironmentFromLegacy,
 } from "../types";
 import { generateNonce } from "../utils";
 import { AuthManager } from "../utils/auth";
@@ -86,24 +83,20 @@ import {
 } from "../utils/intents";
 import { createWalletSigner } from "../utils/signer";
 import {
-  encodeSparkAddress,
   encodeSparkAddressNew,
-  getNetworkFromAddress,
   getSparkNetworkFromAddress,
 } from "../utils/spark-address";
 import {
-  encodeHumanReadableTokenIdentifier,
-  decodeHumanReadableTokenIdentifier,
-  encodeSparkHumanReadableTokenIdentifier,
   decodeSparkHumanReadableTokenIdentifier,
-  type HumanReadableTokenIdentifier,
+  encodeSparkHumanReadableTokenIdentifier,
   type SparkHumanReadableTokenIdentifier,
 } from "../utils/tokenAddress";
 
 export interface TokenBalance {
   balance: bigint;
   tokenInfo?: {
-    tokenPublicKey: string;
+    tokenIdentifier: string;
+    tokenAddress: string;
     tokenName: string;
     tokenSymbol: string;
     tokenDecimals: number;
@@ -172,9 +165,9 @@ export class FlashnetClient {
   get networkType(): NetworkType {
     // Map Spark network back to legacy network type
     // This is for backward compatibility
-    return this.sparkNetwork === "REGTEST" && this.clientEnvironment === "local" 
-      ? "LOCAL" 
-      : this.sparkNetwork as NetworkType;
+    return this.sparkNetwork === "REGTEST" && this.clientEnvironment === "local"
+      ? "LOCAL"
+      : (this.sparkNetwork as NetworkType);
   }
 
   /**
@@ -234,62 +227,76 @@ export class FlashnetClient {
 
   constructor(
     wallet: IssuerSparkWallet | SparkWallet,
-    configOrOptions?: FlashnetClientConfig | FlashnetClientCustomConfig | FlashnetClientEnvironmentConfig | FlashnetClientLegacyConfig
+    configOrOptions?:
+      | FlashnetClientConfig
+      | FlashnetClientCustomConfig
+      | FlashnetClientEnvironmentConfig
+      | FlashnetClientLegacyConfig
   ) {
     this._wallet = wallet;
 
     // Determine configuration type and extract values
-    const isLegacyConfig = !configOrOptions || 'network' in configOrOptions || 
-      (!('sparkNetworkType' in configOrOptions));
-    
+    const isLegacyConfig =
+      !configOrOptions ||
+      "network" in configOrOptions ||
+      !("sparkNetworkType" in configOrOptions);
+
     if (isLegacyConfig) {
       // Legacy configuration system - derive from wallet or options
-      const legacyConfig = configOrOptions as FlashnetClientLegacyConfig | undefined;
-      
+      const legacyConfig = configOrOptions as
+        | FlashnetClientLegacyConfig
+        | undefined;
+
       if (legacyConfig?.network) {
         // Use provided legacy network
         this.sparkNetwork = getSparkNetworkFromLegacy(legacyConfig.network);
-        this.clientEnvironment = getClientEnvironmentFromLegacy(legacyConfig.network);
+        this.clientEnvironment = getClientEnvironmentFromLegacy(
+          legacyConfig.network
+        );
       } else {
         // Auto-detect from wallet (existing behavior)
         // @ts-expect-error - wallet.config is protected
         const networkEnum = wallet.config.getNetwork();
         const networkName = Network[networkEnum] as NetworkType;
-        const detectedNetwork = networkName === "MAINNET" ? "MAINNET" : "REGTEST";
-        
+        const detectedNetwork =
+          networkName === "MAINNET" ? "MAINNET" : "REGTEST";
+
         this.sparkNetwork = getSparkNetworkFromLegacy(detectedNetwork);
-        this.clientEnvironment = getClientEnvironmentFromLegacy(detectedNetwork);
+        this.clientEnvironment =
+          getClientEnvironmentFromLegacy(detectedNetwork);
       }
     } else {
       // New configuration system
-      const config = configOrOptions as FlashnetClientConfig | FlashnetClientCustomConfig | FlashnetClientEnvironmentConfig;
+      const config = configOrOptions as
+        | FlashnetClientConfig
+        | FlashnetClientCustomConfig
+        | FlashnetClientEnvironmentConfig;
       this.sparkNetwork = config.sparkNetworkType;
-      
+
       // Determine client configuration based on the specific config type
       let clientConfig: ClientEnvironment | ClientNetworkConfig;
-      
-      if ('clientConfig' in config) {
+
+      if ("clientConfig" in config) {
         // FlashnetClientConfig - can be either environment or custom config
         clientConfig = config.clientConfig;
-      } else if ('clientNetworkConfig' in config) {
+      } else if ("clientNetworkConfig" in config) {
         // FlashnetClientCustomConfig - custom configuration
         clientConfig = config.clientNetworkConfig;
-      } else if ('clientEnvironment' in config) {
+      } else if ("clientEnvironment" in config) {
         // FlashnetClientEnvironmentConfig - predefined environment
         clientConfig = config.clientEnvironment;
       } else {
-        throw new Error('Invalid configuration: must specify clientConfig, clientNetworkConfig, or clientEnvironment');
+        throw new Error(
+          "Invalid configuration: must specify clientConfig, clientNetworkConfig, or clientEnvironment"
+        );
       }
-      
+
       // Resolve the client environment name for internal tracking
       const environmentName = getClientEnvironmentName(clientConfig);
-      this.clientEnvironment = environmentName === 'custom' ? 'local' : environmentName as ClientEnvironment;
-      
-      // Validate Spark network and client environment combination
-      const validation = validateNetworkCombination(this.sparkNetwork, this.clientEnvironment);
-      if (!validation.valid) {
-        throw new Error(`Invalid network combination: ${validation.error}`);
-      }
+      this.clientEnvironment =
+        environmentName === "custom"
+          ? "local"
+          : (environmentName as ClientEnvironment);
     }
 
     // Panic if mainnet for now
@@ -299,27 +306,30 @@ export class FlashnetClient {
 
     // Initialize API client with resolved client configuration
     let resolvedClientConfig: ClientNetworkConfig;
-    
+
     if (!isLegacyConfig) {
-      const config = configOrOptions as FlashnetClientConfig | FlashnetClientCustomConfig | FlashnetClientEnvironmentConfig;
+      const config = configOrOptions as
+        | FlashnetClientConfig
+        | FlashnetClientCustomConfig
+        | FlashnetClientEnvironmentConfig;
       let clientConfigParam: ClientEnvironment | ClientNetworkConfig;
-      
-      if ('clientConfig' in config) {
+
+      if ("clientConfig" in config) {
         clientConfigParam = config.clientConfig;
-      } else if ('clientNetworkConfig' in config) {
+      } else if ("clientNetworkConfig" in config) {
         clientConfigParam = config.clientNetworkConfig;
-      } else if ('clientEnvironment' in config) {
+      } else if ("clientEnvironment" in config) {
         clientConfigParam = config.clientEnvironment;
       } else {
-        throw new Error('Invalid configuration');
+        throw new Error("Invalid configuration");
       }
-      
+
       resolvedClientConfig = resolveClientNetworkConfig(clientConfigParam);
     } else {
       // Use legacy resolution
       resolvedClientConfig = getClientNetworkConfig(this.clientEnvironment);
     }
-    
+
     this.apiClient = new ApiClient(resolvedClientConfig);
     this.typedApi = new TypedAmmApi(this.apiClient);
     this.authManager = new AuthManager(this.apiClient, "", wallet);
@@ -393,7 +403,10 @@ export class FlashnetClient {
     if (tokenIdentifier.startsWith("btkn")) {
       return tokenIdentifier;
     }
-    return encodeSparkHumanReadableTokenIdentifier(tokenIdentifier, this.sparkNetwork);
+    return encodeSparkHumanReadableTokenIdentifier(
+      tokenIdentifier,
+      this.sparkNetwork
+    );
   }
 
   /**
@@ -425,18 +438,25 @@ export class FlashnetClient {
 
     if (balance.tokenBalances) {
       for (const [tokenPubkey, tokenData] of balance.tokenBalances.entries()) {
-        const info =
-          "tokenInfo" in tokenData
-            ? tokenData.tokenInfo
-            : (tokenData as any).tokenMetadata;
+        const info = tokenData.tokenMetadata;
+
+        // Convert raw token identifier to hex and human-readable forms
+        const tokenIdentifierHex = Buffer.from(
+          info.rawTokenIdentifier
+        ).toString("hex");
+        const tokenAddress = encodeSparkHumanReadableTokenIdentifier(
+          info.rawTokenIdentifier,
+          this.sparkNetwork
+        );
 
         tokenBalances.set(tokenPubkey, {
           balance: BigInt(tokenData.balance),
           tokenInfo: {
-            tokenPublicKey: info.tokenPublicKey,
+            tokenIdentifier: tokenIdentifierHex,
+            tokenAddress,
             tokenName: info.tokenName,
-            tokenSymbol: (info.tokenSymbol || info.tokenTicker) as string,
-            tokenDecimals: (info.tokenDecimals ?? info.decimals) as number,
+            tokenSymbol: info.tokenTicker,
+            tokenDecimals: info.decimals,
             maxSupply: info.maxSupply,
           },
         });
@@ -475,7 +495,8 @@ export class FlashnetClient {
         // If direct lookup fails (possible representation mismatch), try the human-readable form
         const hrKey = this.toHumanReadableTokenIdentifier(tokenPubkey);
         const effectiveTokenBalance =
-          balance.tokenBalances.get(tokenPubkey) ?? balance.tokenBalances.get(hrKey);
+          balance.tokenBalances.get(tokenPubkey) ??
+          balance.tokenBalances.get(hrKey);
         const available = effectiveTokenBalance?.balance ?? 0n;
 
         if (available < requiredAmount) {
@@ -520,11 +541,10 @@ export class FlashnetClient {
     return this.typedApi.getLpPosition(poolId, provider);
   }
 
-   /**
+  /**
    * Get LP position details for a provider in a pool
    */
-  async getAllLpPositions(
-  ): Promise<AllLpPositionsResponse> {
+  async getAllLpPositions(): Promise<AllLpPositionsResponse> {
     await this.ensureInitialized();
     return this.typedApi.getAllLpPositions();
   }
@@ -735,7 +755,9 @@ export class FlashnetClient {
           assetATransferId = transfer.id;
         } else {
           assetATransferId = await this._wallet.transferTokens({
-            tokenIdentifier: this.toHumanReadableTokenIdentifier(params.assetAAddress) as any,
+            tokenIdentifier: this.toHumanReadableTokenIdentifier(
+              params.assetAAddress
+            ) as any,
             tokenAmount: BigInt(params.assetAInitialReserve),
             receiverSparkAddress: lpSparkAddress,
           });
@@ -766,9 +788,8 @@ export class FlashnetClient {
           poolOwnerPublicKey: this.publicKey,
         };
 
-        const confirmResponse = await this.typedApi.confirmInitialDeposit(
-          confirmRequest
-        );
+        const confirmResponse =
+          await this.typedApi.confirmInitialDeposit(confirmRequest);
 
         if (!confirmResponse.confirmed) {
           throw new Error(
@@ -886,7 +907,9 @@ export class FlashnetClient {
       transferId = transfer.id;
     } else {
       transferId = await this._wallet.transferTokens({
-        tokenIdentifier: this.toHumanReadableTokenIdentifier(params.assetInAddress) as any,
+        tokenIdentifier: this.toHumanReadableTokenIdentifier(
+          params.assetInAddress
+        ) as any,
         tokenAmount: BigInt(params.amountIn),
         receiverSparkAddress: lpSparkAddress,
       });
@@ -1019,7 +1042,9 @@ export class FlashnetClient {
       initialTransferId = transfer.id;
     } else {
       initialTransferId = await this._wallet.transferTokens({
-        tokenIdentifier: this.toHumanReadableTokenIdentifier(params.initialAssetAddress) as any,
+        tokenIdentifier: this.toHumanReadableTokenIdentifier(
+          params.initialAssetAddress
+        ) as any,
         tokenAmount: BigInt(params.inputAmount),
         receiverSparkAddress: lpSparkAddress,
       });
@@ -1167,7 +1192,9 @@ export class FlashnetClient {
       assetATransferId = transfer.id;
     } else {
       assetATransferId = await this._wallet.transferTokens({
-        tokenIdentifier: this.toHumanReadableTokenIdentifier(pool.assetAAddress) as any,
+        tokenIdentifier: this.toHumanReadableTokenIdentifier(
+          pool.assetAAddress
+        ) as any,
         tokenAmount: BigInt(params.assetAAmount),
         receiverSparkAddress: lpSparkAddress,
       });
@@ -1183,7 +1210,9 @@ export class FlashnetClient {
       assetBTransferId = transfer.id;
     } else {
       assetBTransferId = await this._wallet.transferTokens({
-        tokenIdentifier: this.toHumanReadableTokenIdentifier(pool.assetBAddress) as any,
+        tokenIdentifier: this.toHumanReadableTokenIdentifier(
+          pool.assetBAddress
+        ) as any,
         tokenAmount: BigInt(params.assetBAmount),
         receiverSparkAddress: lpSparkAddress,
       });
@@ -1523,8 +1552,13 @@ export class FlashnetClient {
    * @param tokenIdentifier - Token identifier as hex string or Uint8Array
    * @returns Human-readable token address
    */
-  encodeTokenAddress(tokenIdentifier: string | Uint8Array): SparkHumanReadableTokenIdentifier {
-    return encodeSparkHumanReadableTokenIdentifier(tokenIdentifier, this.sparkNetwork);
+  encodeTokenAddress(
+    tokenIdentifier: string | Uint8Array
+  ): SparkHumanReadableTokenIdentifier {
+    return encodeSparkHumanReadableTokenIdentifier(
+      tokenIdentifier,
+      this.sparkNetwork
+    );
   }
 
   /**
@@ -1532,7 +1566,10 @@ export class FlashnetClient {
    * @param address - Human-readable token address
    * @returns Object containing the token identifier (as hex string) and Spark network
    */
-  decodeTokenAddress(address: SparkHumanReadableTokenIdentifier): { tokenIdentifier: string; network: SparkNetworkType } {
+  decodeTokenAddress(address: SparkHumanReadableTokenIdentifier): {
+    tokenIdentifier: string;
+    network: SparkNetworkType;
+  } {
     return decodeSparkHumanReadableTokenIdentifier(address, this.sparkNetwork);
   }
 
@@ -1542,8 +1579,13 @@ export class FlashnetClient {
    * @param tokenIdentifier - Token identifier as hex string or Uint8Array
    * @returns Human-readable token address
    */
-  encodeLegacyTokenAddress(tokenIdentifier: string | Uint8Array): HumanReadableTokenIdentifier {
-    return encodeHumanReadableTokenIdentifier(tokenIdentifier, this.sparkNetwork);
+  encodeLegacyTokenAddress(
+    tokenIdentifier: string | Uint8Array
+  ): SparkHumanReadableTokenIdentifier {
+    return encodeSparkHumanReadableTokenIdentifier(
+      tokenIdentifier,
+      this.sparkNetwork
+    );
   }
 
   /**
@@ -1552,8 +1594,11 @@ export class FlashnetClient {
    * @param address - Human-readable token address
    * @returns Object containing the token identifier (as hex string) and network
    */
-  decodeLegacyTokenAddress(address: HumanReadableTokenIdentifier): { tokenIdentifier: string; network: NetworkType } {
-    return decodeHumanReadableTokenIdentifier(address, this.sparkNetwork);
+  decodeLegacyTokenAddress(address: SparkHumanReadableTokenIdentifier): {
+    tokenIdentifier: string;
+    network: NetworkType;
+  } {
+    return decodeSparkHumanReadableTokenIdentifier(address, this.sparkNetwork);
   }
 
   // ===== Status =====
@@ -1573,8 +1618,8 @@ export class FlashnetClient {
    */
   private async addInitialLiquidity(
     poolId: string,
-    assetATokenPublicKey: string,
-    assetBTokenPublicKey: string,
+    assetAAddress: string,
+    assetBAddress: string,
     assetAAmount: string,
     assetBAmount: string
   ): Promise<void> {
@@ -1585,7 +1630,7 @@ export class FlashnetClient {
 
     // Transfer asset A
     let assetATransferId: string;
-    if (assetATokenPublicKey === BTC_ASSET_PUBKEY) {
+    if (assetAAddress === BTC_ASSET_PUBKEY) {
       const transfer = await this._wallet.transfer({
         amountSats: Number(assetAAmount),
         receiverSparkAddress: lpSparkAddress,
@@ -1593,7 +1638,9 @@ export class FlashnetClient {
       assetATransferId = transfer.id;
     } else {
       assetATransferId = await this._wallet.transferTokens({
-        tokenIdentifier: this.toHumanReadableTokenIdentifier(assetATokenPublicKey) as any,
+        tokenIdentifier: this.toHumanReadableTokenIdentifier(
+          assetAAddress
+        ) as any,
         tokenAmount: BigInt(assetAAmount),
         receiverSparkAddress: lpSparkAddress,
       });
@@ -1601,7 +1648,7 @@ export class FlashnetClient {
 
     // Transfer asset B
     let assetBTransferId: string;
-    if (assetBTokenPublicKey === BTC_ASSET_PUBKEY) {
+    if (assetBAddress === BTC_ASSET_PUBKEY) {
       const transfer = await this._wallet.transfer({
         amountSats: Number(assetBAmount),
         receiverSparkAddress: lpSparkAddress,
@@ -1609,7 +1656,9 @@ export class FlashnetClient {
       assetBTransferId = transfer.id;
     } else {
       assetBTransferId = await this._wallet.transferTokens({
-        tokenIdentifier: this.toHumanReadableTokenIdentifier(assetBTokenPublicKey) as any,
+        tokenIdentifier: this.toHumanReadableTokenIdentifier(
+          assetBAddress
+        ) as any,
         tokenAmount: BigInt(assetBAmount),
         receiverSparkAddress: lpSparkAddress,
       });
@@ -1662,4 +1711,3 @@ export class FlashnetClient {
     await this._wallet.cleanupConnections();
   }
 }
-

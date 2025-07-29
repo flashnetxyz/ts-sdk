@@ -48,32 +48,32 @@ export { createWalletSigner } from "./src/utils/signer";
 
 // Export Spark address utilities (new and legacy)
 export {
-  // New Spark network functions
-  convertSparkAddressToSparkNetwork,
-  decodeSparkAddressNew,
-  encodeSparkAddressNew,
-  getSparkNetworkFromAddress,
-  isValidSparkAddressNew,
   // Legacy functions (deprecated)
   convertSparkAddressToNetwork,
+  // New Spark network functions
+  convertSparkAddressToSparkNetwork,
   decodeSparkAddress,
+  decodeSparkAddressNew,
   encodeSparkAddress,
+  encodeSparkAddressNew,
   getNetworkFromAddress,
-  isValidSparkAddress,
+  getSparkNetworkFromAddress,
   // Common utilities
   isValidPublicKey,
+  isValidSparkAddress,
+  isValidSparkAddressNew,
   looksLikePublicKey,
   type SparkAddressFormat,
 } from "./src/utils/spark-address";
 
 // Export token address utilities (new and legacy)
 export {
-  // New Spark network functions
-  encodeSparkHumanReadableTokenIdentifier,
+  decodeHumanReadableTokenIdentifier,
   decodeSparkHumanReadableTokenIdentifier,
-  type SparkHumanReadableTokenIdentifier,
   // Legacy functions (deprecated)
   encodeHumanReadableTokenIdentifier,
-  decodeHumanReadableTokenIdentifier,
+  // New Spark network functions
+  encodeSparkHumanReadableTokenIdentifier,
   type HumanReadableTokenIdentifier,
+  type SparkHumanReadableTokenIdentifier,
 } from "./src/utils/tokenAddress";

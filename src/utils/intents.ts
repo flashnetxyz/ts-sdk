@@ -245,8 +245,7 @@ export function generateRouteSwapIntentMessage(params: {
     minFinalOutputAmount: params.minAmountOut,
     maxRouteSlippageBps: params.maxRouteSlippageBps,
     nonce: params.nonce,
-    defaultIntegratorFeeRateBps:
-      params.defaultIntegratorFeeRateBps ?? "0",
+    defaultIntegratorFeeRateBps: params.defaultIntegratorFeeRateBps ?? "0",
   };
 
   return new TextEncoder().encode(JSON.stringify(signingPayload));
