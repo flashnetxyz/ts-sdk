@@ -172,7 +172,7 @@ describe('Simple Flows', () => {
       expect(pool.status).toBe("ACTIVE");
 
       // Calculate swap parameters
-      const satoshiIn = DEFAULT_PARAMS.graduation_threshold_pct * 2;
+      const satoshiIn = 200;
       const maxSlippageBps = DEFAULT_PARAMS.max_slippage_bps;
 
       // Execute swap to create some liquidity in the pool
@@ -187,6 +187,10 @@ describe('Simple Flows', () => {
 
       // Verify swap was accepted
       expect(swapResponse.accepted).toBe(true);
+
+      // Wait for asynchronous operations to complete
+      console.log("Waiting 30 seconds for asynchronous operations to complete...");
+      await new Promise(resolve => setTimeout(resolve, 30000)); // 30 seconds
 
       // Add liquidity to the pool
       const assetAAmount = 100;
@@ -241,7 +245,7 @@ describe('Simple Flows', () => {
       expect(pool.status).toBe("ACTIVE");
 
       // Calculate swap parameters
-      const satoshiIn = DEFAULT_PARAMS.graduation_threshold_pct * 2;
+      const satoshiIn = 200;
       const maxSlippageBps = DEFAULT_PARAMS.max_slippage_bps;
 
       // Execute swap to create some liquidity in the pool
@@ -253,6 +257,10 @@ describe('Simple Flows', () => {
         maxSlippageBps: maxSlippageBps,
         minAmountOut: "1", // Minimum amount out
       });
+
+      // Wait for asynchronous operations to complete
+      console.log("Waiting 30 seconds for asynchronous operations to complete...");
+      await new Promise(resolve => setTimeout(resolve, 30000)); // 30 seconds
 
       // Add liquidity to the pool
       const assetAAmount = 200;
@@ -266,6 +274,10 @@ describe('Simple Flows', () => {
 
       // Verify liquidity was added successfully
       expect(addLiquidityResponse.accepted).toBe(true);
+
+      // Wait for asynchronous operations to complete
+      console.log("Waiting 30 seconds for asynchronous operations to complete...");
+      await new Promise(resolve => setTimeout(resolve, 30000)); // 30 seconds
 
       // Remove liquidity using the LP tokens that were minted
       const removeLiquidityResponse = await client.removeLiquidity({
