@@ -4,7 +4,7 @@ import { BTC_ASSET_PUBKEY } from '../../src/config';
 import { IssuerSparkWallet } from '@buildonspark/issuer-sdk';
 import { getFundedWalletInfo } from './wallet-server-handlers';
 import { DEFAULT_PARAMS, NETWORK, CLIENT_CONFIG, TEST_TIMEOUT } from './config';
-import { generateRandomHostNamespace } from './utils';
+import { generateRandomHostNamespace, testLogging } from './utils';
 
 const flowName = "Simple Flows";
 const userPoolCreationTestName = "User Pool Creation";
