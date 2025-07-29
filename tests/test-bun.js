@@ -14,7 +14,7 @@ console.log("✓ validatePublicKey imported:", typeof validatePublicKey);
 
 // Test basic functionality
 try {
-  new ApiClient({ ammGatewayUrl: "https://api.example.com" });
+  new ApiClient({ ammGatewayUrl: "https://api.amm.makebitcoingreatagain.dev" });
   console.log("✓ ApiClient instantiated successfully");
 
   // Test validation function

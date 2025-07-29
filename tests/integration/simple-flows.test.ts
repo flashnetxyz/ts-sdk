@@ -4,7 +4,7 @@ import { BTC_ASSET_PUBKEY } from '../../src/config';
 import { IssuerSparkWallet } from '@buildonspark/issuer-sdk';
 import { getFundedWalletInfo } from './wallet-server-handlers';
 import { DEFAULT_PARAMS, NETWORK, CLIENT_CONFIG, TEST_TIMEOUT } from './config';
-import { generateRandomHostNamespace } from './utils';
+import { generateRandomHostNamespace, delay } from './utils';
 
 describe('Pool Creation Tests', () => {
   describe('User Pool Creation', () => {
@@ -188,6 +188,9 @@ describe('Pool Creation Tests', () => {
       // Verify swap was accepted
       expect(swapResponse.accepted).toBe(true);
 
+      // Wait for swap to settle before adding liquidity
+      await delay(5000);
+
       // Add liquidity to the pool
       const assetAAmount = 100;
       const assetBAmount = 100;
@@ -253,6 +256,9 @@ describe('Pool Creation Tests', () => {
         maxSlippageBps: maxSlippageBps,
         minAmountOut: "1", // Minimum amount out
       });
+
+      // Wait for swap to settle before adding liquidity
+      await delay(5000);
 
       // Add liquidity to the pool
       const assetAAmount = 200;
