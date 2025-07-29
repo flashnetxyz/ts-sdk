@@ -6,7 +6,7 @@ import { getFundedWalletInfo } from './wallet-server-handlers';
 import { DEFAULT_PARAMS, NETWORK, CLIENT_CONFIG, TEST_TIMEOUT } from './config';
 import { generateRandomHostNamespace } from './utils';
 
-describe('Pool Creation Tests', () => {
+describe('Simple Flows', () => {
   describe('User Pool Creation', () => {
     test('should create a user pool successfully', async () => {
       // Generate funded wallet
