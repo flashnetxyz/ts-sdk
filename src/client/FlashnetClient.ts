@@ -1287,7 +1287,18 @@ export class FlashnetClient {
 
     // Check LP token balance
     const position = await this.getLpPosition(params.poolId);
-    const lpTokensOwned = BigInt(position.lpTokensOwned);
+    // FIXME: When the RemoveLiquidityResponse is updated to return a integer, we can remove this
+    const lpTokensOwned = (() => {
+      try {
+        return BigInt(position.lpTokensOwned);
+      } catch (e) {
+        console.error("Error parsing LP tokens owned", e);
+        console.error(
+          `The Issue problably is that the LP tokens owned is float: ${position.lpTokensOwned}`
+        );
+        return BigInt(Math.floor(Number(position.lpTokensOwned)));
+      }
+    })();
     const tokensToRemove = BigInt(params.lpTokensToRemove);
 
     if (lpTokensOwned < tokensToRemove) {
