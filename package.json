@@ -71,8 +71,8 @@
     "typescript": "^5.8.3"
   },
   "peerDependencies": {
-    "@buildonspark/issuer-sdk": "^0.0.81",
-    "@buildonspark/spark-sdk": "^0.2.2",
+    "@buildonspark/issuer-sdk": "^0.0.84",
+    "@buildonspark/spark-sdk": "^0.2.5",
     "typescript": "^5"
   },
   "peerDependenciesMeta": {
