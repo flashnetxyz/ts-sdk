@@ -299,11 +299,6 @@ export class FlashnetClient {
           : (environmentName as ClientEnvironment);
     }
 
-    // Panic if mainnet for now
-    if (this.sparkNetwork === "MAINNET") {
-      throw new Error("Mainnet is not supported yet");
-    }
-
     // Initialize API client with resolved client configuration
     let resolvedClientConfig: ClientNetworkConfig;
 
@@ -362,11 +357,6 @@ export class FlashnetClient {
         `Warning: Configured Spark network (${this.sparkNetwork}) doesn't match detected network from address (${detectedSparkNetwork}). Using detected network.`
       );
       this.sparkNetwork = detectedSparkNetwork;
-    }
-
-    // Panic if mainnet for now
-    if (this.sparkNetwork === "MAINNET") {
-      throw new Error("Mainnet is not supported yet");
     }
 
     // Re-initialize auth manager with correct public key
