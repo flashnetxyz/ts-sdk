@@ -67,7 +67,7 @@ import {
   type WithdrawIntegratorFeesRequest,
   type WithdrawIntegratorFeesResponse,
 } from "../types";
-import { generateNonce } from "../utils";
+import { generateNonce, compareDecimalStrings } from "../utils";
 import { AuthManager } from "../utils/auth";
 import {
   generateAddLiquidityIntentMessage,
@@ -1277,10 +1277,10 @@ export class FlashnetClient {
 
     // Check LP token balance
     const position = await this.getLpPosition(params.poolId);
-    const lpTokensOwned = BigInt(position.lpTokensOwned);
-    const tokensToRemove = BigInt(params.lpTokensToRemove);
+    const lpTokensOwned = position.lpTokensOwned;
+    const tokensToRemove = params.lpTokensToRemove;
 
-    if (lpTokensOwned < tokensToRemove) {
+    if (compareDecimalStrings(lpTokensOwned, tokensToRemove) < 0) {
       throw new Error(
         `Insufficient LP tokens. Owned: ${lpTokensOwned}, Requested: ${tokensToRemove}`
       );

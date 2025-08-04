@@ -1,6 +1,6 @@
 {
   "name": "@flashnet/sdk",
-  "version": "0.3.9",
+  "version": "0.3.10",
   "main": "./dist/cjs/index.js",
   "module": "./dist/esm/index.js",
   "types": "./dist/esm/index.d.ts",
@@ -69,8 +69,8 @@
     "typescript": "^5.8.3"
   },
   "peerDependencies": {
-    "@buildonspark/issuer-sdk": "^0.0.81",
-    "@buildonspark/spark-sdk": "^0.2.2",
+    "@buildonspark/issuer-sdk": "^0.0.84",
+    "@buildonspark/spark-sdk": "^0.2.5",
     "typescript": "^5"
   },
   "peerDependenciesMeta": {
