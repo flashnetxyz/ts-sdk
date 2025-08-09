@@ -448,6 +448,7 @@ export interface SimulateSwapRequest {
   assetInAddress: string;
   assetOutAddress: string;
   amountIn: string;
+  integratorBps?: string;
 }
 
 export interface SimulateSwapResponse {
