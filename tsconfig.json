@@ -19,6 +19,7 @@
     "noPropertyAccessFromIndexSignature": false,
     "strictNullChecks": true,
     
+    "rootDir": "./",
     "outDir": "./dist",
     "declaration": true,
     "declarationMap": true,
@@ -30,6 +31,6 @@
     "emitDecoratorMetadata": true,
     "experimentalDecorators": true
   },
-  "include": ["index.ts", "src/**/*"],
-  "exclude": ["node_modules", "dist", "**/*.test.ts", "**/*.spec.ts"]
+  "include": ["index.ts", "src/**/*", "tests/**/*"],
+  "exclude": ["node_modules", "dist"]
 }
