@@ -343,6 +343,8 @@ export interface AddLiquidityRequest {
   assetBSparkTransferId: string;
   assetAAmountToAdd: string;
   assetBAmountToAdd: string;
+  assetAMinAmountIn: string;
+  assetBMinAmountIn: string;
   nonce: string;
   signature: string;
 }
@@ -849,6 +851,8 @@ export interface AmmAddLiquiditySettlementRequest {
   assetBSparkTransferId: string;
   assetAAmount: string;
   assetBAmount: string;
+  assetAMinAmountIn: string;
+  assetBMinAmountIn: string;
   nonce: string;
 }
 

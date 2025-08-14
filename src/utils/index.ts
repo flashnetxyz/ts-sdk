@@ -1,10 +1,12 @@
+import { randomUUID } from "crypto";
+
 export * from "./auth";
 export * from "./intents";
 export * from "./spark-address";
 
 // Helper function to generate UUID (nonce)
 export function generateNonce(): string {
-  return crypto.randomUUID();
+  return randomUUID();
 }
 
 // Helper function to convert decimal amounts to smallest units
