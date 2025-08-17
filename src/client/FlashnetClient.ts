@@ -1389,7 +1389,6 @@ export class FlashnetClient {
    */
   async withdrawHostFees(params: {
     lpIdentityPublicKey: string;
-    assetAAmount?: string;
     assetBAmount?: string;
   }): Promise<WithdrawHostFeesResponse> {
     await this.ensureInitialized();
@@ -1398,7 +1397,6 @@ export class FlashnetClient {
     const intentMessage = generateWithdrawHostFeesIntentMessage({
       hostPublicKey: this.publicKey,
       lpIdentityPublicKey: params.lpIdentityPublicKey,
-      assetAAmount: params.assetAAmount,
       assetBAmount: params.assetBAmount,
       nonce,
     });
@@ -1413,7 +1411,6 @@ export class FlashnetClient {
 
     const request: WithdrawHostFeesRequest = {
       lpIdentityPublicKey: params.lpIdentityPublicKey,
-      assetAAmount: params.assetAAmount,
       assetBAmount: params.assetBAmount,
       nonce,
       signature: Buffer.from(signature).toString("hex"),
@@ -1449,7 +1446,6 @@ export class FlashnetClient {
    */
   async withdrawIntegratorFees(params: {
     lpIdentityPublicKey: string;
-    assetAAmount?: string;
     assetBAmount?: string;
   }): Promise<WithdrawIntegratorFeesResponse> {
     await this.ensureInitialized();
@@ -1458,7 +1454,6 @@ export class FlashnetClient {
     const intentMessage = generateWithdrawIntegratorFeesIntentMessage({
       integratorPublicKey: this.publicKey,
       lpIdentityPublicKey: params.lpIdentityPublicKey,
-      assetAAmount: params.assetAAmount,
       assetBAmount: params.assetBAmount,
       nonce,
     });
@@ -1474,7 +1469,6 @@ export class FlashnetClient {
     const request: WithdrawIntegratorFeesRequest = {
       integratorPublicKey: this.publicKey,
       lpIdentityPublicKey: params.lpIdentityPublicKey,
-      assetAAmount: params.assetAAmount,
       assetBAmount: params.assetBAmount,
       nonce,
       signature: Buffer.from(signature).toString("hex"),

@@ -237,7 +237,6 @@ export interface GetHostResponse {
 
 export interface WithdrawHostFeesRequest {
   lpIdentityPublicKey: string;
-  assetAAmount?: string;
   assetBAmount?: string;
   nonce: string;
   signature: string;
@@ -943,7 +942,6 @@ export interface GetHostFeesResponse {
   hostNamespace: string;
   feeRecipientType: string;
   pools: HostPoolFees[];
-  totalAssetAFees?: string;
   totalAssetBFees?: string;
 }
 
@@ -951,16 +949,13 @@ export interface GetHostFeesResponse {
 export interface IntegratorPoolFees {
   poolId: string;
   hostNamespace?: string;
-  assetAPubkey: string;
   assetBPubkey: string;
-  assetAFees: string;
   assetBFees: string;
 }
 
 export interface GetIntegratorFeesResponse {
   integratorPublicKey: string;
   pools: IntegratorPoolFees[];
-  totalAssetAFees?: string;
   totalAssetBFees?: string;
 }
 
