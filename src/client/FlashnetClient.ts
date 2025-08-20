@@ -641,6 +641,85 @@ export class FlashnetClient {
   }
 
   /**
+   * Calculates virtual reserves for a bonding curve AMM.
+   *
+   * This helper function calculates the initial virtual reserves (`v_A^0`, `v_B^0`)
+   * based on the bonding curve parameters. These virtual reserves ensure smooth
+   * pricing and price continuity during graduation to the double-sided phase.
+   *
+   * @param params - The parameters for the calculation.
+   * @param params.initialTokenSupply - The initial supply of Asset A (tokens to be sold).
+   * @param params.graduationThresholdPct - The percentage of tokens that need to be sold for graduation (20-95%).
+   * @param params.targetRaise - The target amount of Asset B to raise at graduation.
+   * @returns An object containing `virtualReserveA`, `virtualReserveB`, and `threshold`.
+   */
+  public static calculateVirtualReserves(params: {
+    initialTokenSupply: number | string;
+    graduationThresholdPct: number;
+    targetRaise: number | string;
+  }): { virtualReserveA: number; virtualReserveB: number; threshold: number } {
+    const supply = Number(params.initialTokenSupply);
+    const targetB = Number(params.targetRaise);
+    const lpFrac = 1.0;
+
+    // Validate inputs
+    if (supply <= 0) {
+      throw new Error("Initial token supply must be positive");
+    }
+    if (targetB <= 0) {
+      throw new Error("Target raise must be positive");
+    }
+
+    const MIN_GRADUATION_THRESHOLD_PCT = 20;
+    const MAX_GRADUATION_THRESHOLD_PCT = 95;
+
+    // Validate graduation threshold is a positive whole number
+    if (
+      !Number.isInteger(params.graduationThresholdPct) ||
+      params.graduationThresholdPct <= 0
+    ) {
+      throw new Error("Graduation threshold percentage must be a positive whole number");
+    }
+
+    if (
+      params.graduationThresholdPct < MIN_GRADUATION_THRESHOLD_PCT ||
+      params.graduationThresholdPct > MAX_GRADUATION_THRESHOLD_PCT
+    ) {
+      throw new Error(
+        `Graduation threshold percentage must be between ${MIN_GRADUATION_THRESHOLD_PCT} and ${MAX_GRADUATION_THRESHOLD_PCT}`
+      );
+    }
+
+    if (lpFrac <= 0 || lpFrac > 1) {
+      throw new Error("LP fraction must be between 0 and 1");
+    }
+
+    // Calculate graduation parameters
+    const f = params.graduationThresholdPct / 100;
+    const g = lpFrac;
+
+    // Check feasibility: f - g*(1-f) > 0
+    const denom = f - g * (1 - f);
+    if (denom <= 0) {
+      throw new Error(
+        `Invalid configuration: graduation threshold ${
+          f * 100
+        }% with LP fraction ${g} is infeasible. Need f > g/(1+g)`
+      );
+    }
+
+    // Calculate virtual reserves and round down to integers
+    const virtualA = Math.floor((supply * f * f) / denom);
+    const virtualB = Math.floor((targetB * g * (1 - f)) / denom);
+
+    return {
+      virtualReserveA: virtualA,
+      virtualReserveB: virtualB,
+      threshold: params.graduationThresholdPct,
+    };
+  }
+
+  /**
    * Create a single-sided pool with automatic initial deposit
    *
    * This method creates a single-sided pool and automatically handles the initial deposit.
@@ -665,17 +744,22 @@ export class FlashnetClient {
       );
     }
 
+    // Clip decimals off reserves before any operations
+    const clippedAssetAInitialReserve = Math.floor(Number(params.assetAInitialReserve)).toString();
+    const clippedVirtualReserveA = Math.floor(Number(params.virtualReserveA)).toString();
+    const clippedVirtualReserveB = Math.floor(Number(params.virtualReserveB)).toString();
+
     // Check balance for initial reserve
     const requirements: { btc?: bigint; tokens?: Map<string, bigint> } = {
       tokens: new Map(),
     };
 
     if (params.assetAAddress === BTC_ASSET_PUBKEY) {
-      requirements.btc = BigInt(params.assetAInitialReserve);
+      requirements.btc = BigInt(clippedAssetAInitialReserve);
     } else {
       requirements.tokens?.set(
         params.assetAAddress,
-        BigInt(params.assetAInitialReserve)
+        BigInt(clippedAssetAInitialReserve)
       );
     }
 
@@ -692,9 +776,9 @@ export class FlashnetClient {
       poolOwnerPublicKey: this.publicKey,
       assetAAddress: this.toHexTokenIdentifier(params.assetAAddress),
       assetBAddress: this.toHexTokenIdentifier(params.assetBAddress),
-      assetAInitialReserve: params.assetAInitialReserve,
-      virtualReserveA: params.virtualReserveA,
-      virtualReserveB: params.virtualReserveB,
+      assetAInitialReserve: clippedAssetAInitialReserve,
+      virtualReserveA: clippedVirtualReserveA,
+      virtualReserveB: clippedVirtualReserveB,
       threshold: params.threshold,
       lpFeeRateBps: params.lpFeeRateBps.toString(),
       totalHostFeeRateBps: params.totalHostFeeRateBps.toString(),
@@ -713,9 +797,9 @@ export class FlashnetClient {
       poolOwnerPublicKey: this.publicKey,
       assetAAddress: this.toHexTokenIdentifier(params.assetAAddress),
       assetBAddress: this.toHexTokenIdentifier(params.assetBAddress),
-      assetAInitialReserve: params.assetAInitialReserve,
-      virtualReserveA: params.virtualReserveA,
-      virtualReserveB: params.virtualReserveB,
+      assetAInitialReserve: clippedAssetAInitialReserve,
+      virtualReserveA: clippedVirtualReserveA,
+      virtualReserveB: clippedVirtualReserveB,
       threshold: params.threshold,
       lpFeeRateBps: params.lpFeeRateBps.toString(),
       totalHostFeeRateBps: params.totalHostFeeRateBps.toString(),
@@ -738,7 +822,7 @@ export class FlashnetClient {
         let assetATransferId: string;
         if (params.assetAAddress === BTC_ASSET_PUBKEY) {
           const transfer = await this._wallet.transfer({
-            amountSats: Number(params.assetAInitialReserve),
+            amountSats: Number(clippedAssetAInitialReserve),
             receiverSparkAddress: lpSparkAddress,
           });
           assetATransferId = transfer.id;
@@ -747,7 +831,7 @@ export class FlashnetClient {
             tokenIdentifier: this.toHumanReadableTokenIdentifier(
               params.assetAAddress
             ) as any,
-            tokenAmount: BigInt(params.assetAInitialReserve),
+            tokenAmount: BigInt(clippedAssetAInitialReserve),
             receiverSparkAddress: lpSparkAddress,
           });
         }
