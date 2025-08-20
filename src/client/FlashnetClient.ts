@@ -551,6 +551,8 @@ export class FlashnetClient {
     initialLiquidity?: {
       assetAAmount: bigint;
       assetBAmount: bigint;
+      assetAMinAmountIn: bigint;
+      assetBMinAmountIn: bigint;
     };
   }): Promise<CreatePoolResponse> {
     await this.ensureInitialized();
@@ -629,7 +631,9 @@ export class FlashnetClient {
         params.assetAAddress,
         params.assetBAddress,
         params.initialLiquidity.assetAAmount.toString(),
-        params.initialLiquidity.assetBAmount.toString()
+        params.initialLiquidity.assetBAmount.toString(),
+        params.initialLiquidity.assetAMinAmountIn.toString(),
+        params.initialLiquidity.assetBMinAmountIn.toString()
       );
     }
 
@@ -778,8 +782,9 @@ export class FlashnetClient {
           poolOwnerPublicKey: this.publicKey,
         };
 
-        const confirmResponse =
-          await this.typedApi.confirmInitialDeposit(confirmRequest);
+        const confirmResponse = await this.typedApi.confirmInitialDeposit(
+          confirmRequest
+        );
 
         if (!confirmResponse.confirmed) {
           throw new Error(
@@ -1136,6 +1141,8 @@ export class FlashnetClient {
     poolId: string;
     assetAAmount: string;
     assetBAmount: string;
+    assetAMinAmountIn: string;
+    assetBMinAmountIn: string;
   }): Promise<AddLiquidityResponse> {
     await this.ensureInitialized();
 
@@ -1217,6 +1224,8 @@ export class FlashnetClient {
       assetBSparkTransferId: assetBTransferId,
       assetAAmount: params.assetAAmount.toString(),
       assetBAmount: params.assetBAmount.toString(),
+      assetAMinAmountIn: params.assetAMinAmountIn.toString(),
+      assetBMinAmountIn: params.assetBMinAmountIn.toString(),
       nonce,
     });
 
@@ -1235,6 +1244,8 @@ export class FlashnetClient {
       assetBSparkTransferId: assetBTransferId,
       assetAAmountToAdd: params.assetAAmount.toString(),
       assetBAmountToAdd: params.assetBAmount.toString(),
+      assetAMinAmountIn: params.assetAMinAmountIn.toString(),
+      assetBMinAmountIn: params.assetBMinAmountIn.toString(),
       nonce,
       signature: Buffer.from(signature).toString("hex"),
     };
@@ -1611,7 +1622,9 @@ export class FlashnetClient {
     assetAAddress: string,
     assetBAddress: string,
     assetAAmount: string,
-    assetBAmount: string
+    assetBAmount: string,
+    assetAMinAmountIn: string,
+    assetBMinAmountIn: string
   ): Promise<void> {
     const lpSparkAddress = encodeSparkAddressNew({
       identityPublicKey: poolId,
@@ -1663,6 +1676,8 @@ export class FlashnetClient {
       assetBSparkTransferId: assetBTransferId,
       assetAAmount: assetAAmount.toString(),
       assetBAmount: assetBAmount.toString(),
+      assetAMinAmountIn: assetAMinAmountIn.toString(),
+      assetBMinAmountIn: assetBMinAmountIn.toString(),
       nonce,
     });
 
@@ -1680,6 +1695,8 @@ export class FlashnetClient {
       assetBSparkTransferId: assetBTransferId,
       assetAAmountToAdd: assetAAmount.toString(),
       assetBAmountToAdd: assetBAmount.toString(),
+      assetAMinAmountIn: assetAMinAmountIn.toString(),
+      assetBMinAmountIn: assetBMinAmountIn.toString(),
       nonce,
       signature: Buffer.from(signature).toString("hex"),
     };
