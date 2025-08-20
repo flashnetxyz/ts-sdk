@@ -306,8 +306,9 @@ export interface CreateSingleSidedPoolRequest {
   assetAAddress: string;
   assetBAddress: string;
   assetAInitialReserve: string;
-  graduationThresholdPct: number;
-  targetBRaisedAtGraduation: string;
+  virtualReserveA: string;
+  virtualReserveB: string;
+  threshold: string;
   lpFeeRateBps: string;
   totalHostFeeRateBps: string;
   hostNamespace?: string;
@@ -807,8 +808,9 @@ export interface ValidateAmmInitializeSingleSidedPoolData {
   assetATokenPublicKey: string;
   assetBTokenPublicKey: string;
   assetAInitialReserve: string;
-  graduationThresholdPct: string;
-  targetBRaisedAtGraduation: string;
+  virtualReserveA: string;
+  virtualReserveB: string;
+  threshold: string;
   totalHostFeeRateBps: string;
   lpFeeRateBps: string;
   nonce: string;
@@ -896,7 +898,6 @@ export interface RegisterHostIntentData {
 export interface ValidateAmmWithdrawHostFeesData {
   hostPublicKey: string;
   lpIdentityPublicKey: string;
-  assetAAmount?: string;
   assetBAmount?: string;
   nonce: string;
 }
@@ -924,7 +925,6 @@ export interface ValidateRouteSwapData {
 export interface ValidateAmmWithdrawIntegratorFeesData {
   integratorPublicKey: string;
   lpIdentityPublicKey: string;
-  assetAAmount?: string;
   assetBAmount?: string;
   nonce: string;
 }
@@ -936,9 +936,7 @@ export interface GetHostFeesRequest {
 
 export interface HostPoolFees {
   poolId: string;
-  assetAPubkey: string;
   assetBPubkey: string;
-  assetAFees: string;
   assetBFees: string;
 }
 
@@ -970,6 +968,5 @@ export interface GetPoolIntegratorFeesRequest {
 export interface GetPoolIntegratorFeesResponse {
   poolId: string;
   integratorPublicKey: string;
-  assetAFees: string;
   assetBFees: string;
 }

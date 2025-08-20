@@ -354,8 +354,6 @@ export class TypedAmmApi {
 
   /**
    * Get pool integrator fees
-  /**
-   * Get pool integrator fees
    * @GET /v1/integrators/pool-fees/{poolId}
    * @requires Bearer token
    */
@@ -363,7 +361,7 @@ export class TypedAmmApi {
     poolId: string
   ): Promise<Types.GetPoolIntegratorFeesResponse> {
     return this.client.ammGet<Types.GetPoolIntegratorFeesResponse>(
-      `/v1/integrators/pool-fees/${poolId}`
+      `/v1/hosts/pool-integrator-fees/${poolId}`
     );
   }
 

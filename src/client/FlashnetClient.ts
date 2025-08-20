@@ -650,21 +650,14 @@ export class FlashnetClient {
     assetAAddress: string;
     assetBAddress: string;
     assetAInitialReserve: string;
-    assetAPctSoldAtGraduation: number;
-    targetBRaisedAtGraduation: string;
+    virtualReserveA: string;
+    virtualReserveB: string;
+    threshold: string;
     lpFeeRateBps: number;
     totalHostFeeRateBps: number;
     hostNamespace?: string;
   }): Promise<CreatePoolResponse> {
     await this.ensureInitialized();
-
-    // check that assetAPctSoldAtGraduation is between 0 and 100 - no decimals
-    if (
-      params.assetAPctSoldAtGraduation < 0 ||
-      params.assetAPctSoldAtGraduation > 100
-    ) {
-      throw new Error(`assetAPctSoldAtGraduation must be between 0 and 100`);
-    }
 
     if (!params.hostNamespace && params.totalHostFeeRateBps < 10) {
       throw new Error(
@@ -700,8 +693,9 @@ export class FlashnetClient {
       assetAAddress: this.toHexTokenIdentifier(params.assetAAddress),
       assetBAddress: this.toHexTokenIdentifier(params.assetBAddress),
       assetAInitialReserve: params.assetAInitialReserve,
-      graduationThresholdPct: params.assetAPctSoldAtGraduation.toString(),
-      targetBRaisedAtGraduation: params.targetBRaisedAtGraduation,
+      virtualReserveA: params.virtualReserveA,
+      virtualReserveB: params.virtualReserveB,
+      threshold: params.threshold,
       lpFeeRateBps: params.lpFeeRateBps.toString(),
       totalHostFeeRateBps: params.totalHostFeeRateBps.toString(),
       nonce,
@@ -720,8 +714,9 @@ export class FlashnetClient {
       assetAAddress: this.toHexTokenIdentifier(params.assetAAddress),
       assetBAddress: this.toHexTokenIdentifier(params.assetBAddress),
       assetAInitialReserve: params.assetAInitialReserve,
-      graduationThresholdPct: params.assetAPctSoldAtGraduation,
-      targetBRaisedAtGraduation: params.targetBRaisedAtGraduation,
+      virtualReserveA: params.virtualReserveA,
+      virtualReserveB: params.virtualReserveB,
+      threshold: params.threshold,
       lpFeeRateBps: params.lpFeeRateBps.toString(),
       totalHostFeeRateBps: params.totalHostFeeRateBps.toString(),
       hostNamespace: params.hostNamespace,

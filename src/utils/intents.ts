@@ -20,8 +20,9 @@ export function generatePoolInitializationIntentMessage(params: {
   assetAAddress: string;
   assetBAddress: string;
   assetAInitialReserve: string;
-  graduationThresholdPct: string;
-  targetBRaisedAtGraduation: string;
+  virtualReserveA: string;
+  virtualReserveB: string;
+  threshold: string;
   lpFeeRateBps: string;
   totalHostFeeRateBps: string;
   nonce: string;
@@ -31,8 +32,9 @@ export function generatePoolInitializationIntentMessage(params: {
     assetATokenPublicKey: params.assetAAddress,
     assetBTokenPublicKey: params.assetBAddress,
     assetAInitialReserve: params.assetAInitialReserve,
-    graduationThresholdPct: params.graduationThresholdPct,
-    targetBRaisedAtGraduation: params.targetBRaisedAtGraduation,
+    virtualReserveA: params.virtualReserveA,
+    virtualReserveB: params.virtualReserveB,
+    threshold: params.threshold,
     totalHostFeeRateBps: params.totalHostFeeRateBps,
     lpFeeRateBps: params.lpFeeRateBps,
     nonce: params.nonce,
@@ -195,7 +197,6 @@ export function generateWithdrawHostFeesIntentMessage(params: {
   const signingPayload = {
     hostPublicKey: params.hostPublicKey,
     lpIdentityPublicKey: params.lpIdentityPublicKey,
-    assetAAmount: "0",
     assetBAmount: params.assetBAmount,
     nonce: params.nonce,
   };
@@ -216,7 +217,6 @@ export function generateWithdrawIntegratorFeesIntentMessage(params: {
   const signingPayload: ValidateAmmWithdrawIntegratorFeesData = {
     integratorPublicKey: params.integratorPublicKey,
     lpIdentityPublicKey: params.lpIdentityPublicKey,
-    assetAAmount: "0",
     assetBAmount: params.assetBAmount,
     nonce: params.nonce,
   };
