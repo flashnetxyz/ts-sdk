@@ -188,7 +188,6 @@ export function generateRegisterHostIntentMessage(params: {
 export function generateWithdrawHostFeesIntentMessage(params: {
   hostPublicKey: string;
   lpIdentityPublicKey: string;
-  assetAAmount?: string;
   assetBAmount?: string;
   nonce: string;
 }): Uint8Array {
@@ -196,7 +195,7 @@ export function generateWithdrawHostFeesIntentMessage(params: {
   const signingPayload = {
     hostPublicKey: params.hostPublicKey,
     lpIdentityPublicKey: params.lpIdentityPublicKey,
-    assetAAmount: params.assetAAmount,
+    assetAAmount: "0",
     assetBAmount: params.assetBAmount,
     nonce: params.nonce,
   };
@@ -211,14 +210,13 @@ export function generateWithdrawHostFeesIntentMessage(params: {
 export function generateWithdrawIntegratorFeesIntentMessage(params: {
   integratorPublicKey: string;
   lpIdentityPublicKey: string;
-  assetAAmount?: string;
   assetBAmount?: string;
   nonce: string;
 }): Uint8Array {
   const signingPayload: ValidateAmmWithdrawIntegratorFeesData = {
     integratorPublicKey: params.integratorPublicKey,
     lpIdentityPublicKey: params.lpIdentityPublicKey,
-    assetAAmount: params.assetAAmount,
+    assetAAmount: "0",
     assetBAmount: params.assetBAmount,
     nonce: params.nonce,
   };
