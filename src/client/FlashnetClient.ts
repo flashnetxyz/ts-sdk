@@ -12,13 +12,21 @@ import {
   type AddLiquidityRequest,
   type AddLiquidityResponse,
   type AllLpPositionsResponse,
+  type ClaimEscrowRequest,
+  type ClaimEscrowResponse,
   type ClientEnvironment,
   type ClientNetworkConfig,
+  type Condition,
   type ConfirmDepositResponse,
   type ConfirmInitialDepositRequest,
   type CreateConstantProductPoolRequest,
+  type CreateEscrowRequest,
+  type CreateEscrowResponse,
   type CreatePoolResponse,
   type CreateSingleSidedPoolRequest,
+  type EscrowCondition,
+  type EscrowRecipient,
+  type EscrowState,
   type ExecuteRouteSwapRequest,
   type ExecuteRouteSwapResponse,
   type ExecuteSwapRequest,
@@ -26,6 +34,8 @@ import {
   type FlashnetClientCustomConfig,
   type FlashnetClientEnvironmentConfig,
   type FlashnetClientLegacyConfig,
+  type FundEscrowRequest,
+  type FundEscrowResponse,
   type GetHostFeesRequest,
   type GetHostFeesResponse,
   type GetHostResponse,
@@ -71,7 +81,10 @@ import { generateNonce, compareDecimalStrings } from "../utils";
 import { AuthManager } from "../utils/auth";
 import {
   generateAddLiquidityIntentMessage,
+  generateClaimEscrowIntentMessage,
   generateConstantProductPoolInitializationIntentMessage,
+  generateCreateEscrowIntentMessage,
+  generateFundEscrowIntentMessage,
   generatePoolConfirmInitialDepositIntentMessage,
   generatePoolInitializationIntentMessage,
   generatePoolSwapIntentMessage,
@@ -1582,6 +1595,207 @@ export class FlashnetClient {
   async getIntegratorFees(): Promise<GetIntegratorFeesResponse> {
     await this.ensureInitialized();
     return this.typedApi.getIntegratorFees();
+  }
+
+  // ===== Escrow Operations =====
+
+  /**
+   * Creates a new escrow contract.
+   * This is the first step in a two-step process: create, then fund.
+   * @param params Parameters to create the escrow.
+   * @returns The escrow creation response, including the ID and deposit address.
+   */
+  async createEscrow(params: {
+    assetId: string;
+    assetAmount: string;
+    recipients: { id: string; amount: string }[];
+    claimConditions: Condition[];
+    abandonHost?: string;
+    abandonConditions?: Condition[];
+    autoFund?: boolean;
+  }): Promise<CreateEscrowResponse | FundEscrowResponse> {
+    await this.ensureInitialized();
+
+    const nonce = generateNonce();
+    // The intent message requires a different structure for recipients and conditions
+    const intentRecipients: EscrowRecipient[] = params.recipients.map(
+      (r) => ({
+        recipientId: r.id,
+        amount: r.amount,
+        hasClaimed: false, // Default value for creation
+      })
+    );
+
+    const intentMessage = generateCreateEscrowIntentMessage({
+      creatorPublicKey: this.publicKey,
+      assetId: params.assetId,
+      assetAmount: params.assetAmount,
+      recipients: intentRecipients,
+      claimConditions: params.claimConditions as unknown as EscrowCondition[], // Assuming API `Condition` is compatible
+      abandonHost: params.abandonHost,
+      abandonConditions:
+        (params.abandonConditions as unknown as EscrowCondition[]) || undefined,
+      nonce,
+    });
+
+    const messageHash = new Uint8Array(
+      await crypto.subtle.digest("SHA-256", intentMessage)
+    );
+    const signature = await (
+      this._wallet as any
+    ).config.signer.signMessageWithIdentityKey(messageHash, true);
+
+    const request: CreateEscrowRequest = {
+      creatorPublicKey: this.publicKey,
+      assetId: params.assetId,
+      assetAmount: params.assetAmount,
+      recipients: params.recipients,
+      claimConditions: params.claimConditions,
+      abandonHost: params.abandonHost,
+      abandonConditions: params.abandonConditions,
+      nonce,
+      signature: Buffer.from(signature).toString("hex"),
+    };
+
+    const createResponse = await this.typedApi.createEscrow(request);
+
+    const autoFund = params.autoFund !== false;
+
+    if (!autoFund) {
+      return createResponse;
+    }
+
+    // Auto-fund the escrow
+    return this.fundEscrow({
+      escrowId: createResponse.escrowId,
+      depositAddress: createResponse.depositAddress,
+      assetId: params.assetId,
+      assetAmount: params.assetAmount,
+    });
+  }
+
+  /**
+   * Funds an escrow contract to activate it.
+   * This handles the asset transfer and confirmation in one step.
+   * @param params Parameters to fund the escrow, including asset details and deposit address.
+   * @returns The funding confirmation response.
+   */
+  async fundEscrow(params: {
+    escrowId: string;
+    depositAddress: string;
+    assetId: string;
+    assetAmount: string;
+  }): Promise<FundEscrowResponse> {
+    await this.ensureInitialized();
+
+    // 1. Balance check
+    const requirements: { btc?: bigint; tokens?: Map<string, bigint> } = {
+      tokens: new Map(),
+    };
+    if (params.assetId === BTC_ASSET_PUBKEY) {
+      requirements.btc = BigInt(params.assetAmount);
+    } else {
+      requirements.tokens?.set(params.assetId, BigInt(params.assetAmount));
+    }
+    const balanceCheck = await this.checkBalance(requirements);
+    if (!balanceCheck.sufficient) {
+      throw new Error(
+        `Insufficient balance to fund escrow: ${balanceCheck.message}`
+      );
+    }
+
+    // 2. Perform transfer
+    const escrowSparkAddress = encodeSparkAddressNew({
+      identityPublicKey: params.depositAddress,
+      network: this.sparkNetwork,
+    });
+
+    let sparkTransferId: string;
+    if (params.assetId === BTC_ASSET_PUBKEY) {
+      const transfer = await this._wallet.transfer({
+        amountSats: Number(params.assetAmount),
+        receiverSparkAddress: escrowSparkAddress,
+      });
+      sparkTransferId = transfer.id;
+    } else {
+      sparkTransferId = await this._wallet.transferTokens({
+        tokenIdentifier: this.toHumanReadableTokenIdentifier(
+          params.assetId
+        ) as any,
+        tokenAmount: BigInt(params.assetAmount),
+        receiverSparkAddress: escrowSparkAddress,
+      });
+    }
+
+    // 3. Generate intent, sign, and call API
+    const nonce = generateNonce();
+    const intentMessage = generateFundEscrowIntentMessage({
+      escrowId: params.escrowId,
+      creatorPublicKey: this.publicKey,
+      sparkTransferId,
+      nonce,
+    });
+
+    const messageHash = new Uint8Array(
+      await crypto.subtle.digest("SHA-256", intentMessage)
+    );
+    const signature = await (
+      this._wallet as any
+    ).config.signer.signMessageWithIdentityKey(messageHash, true);
+
+    const request: FundEscrowRequest = {
+      escrowId: params.escrowId,
+      sparkTransferId,
+      nonce,
+      signature: Buffer.from(signature).toString("hex"),
+    };
+
+    return this.typedApi.fundEscrow(request);
+  }
+
+  /**
+   * Claims funds from an active escrow contract.
+   * The caller must be a valid recipient and all claim conditions must be met.
+   * @param params Parameters for the claim.
+   * @returns The claim processing response.
+   */
+  async claimEscrow(params: {
+    escrowId: string;
+  }): Promise<ClaimEscrowResponse> {
+    await this.ensureInitialized();
+
+    const nonce = generateNonce();
+    const intentMessage = generateClaimEscrowIntentMessage({
+      escrowId: params.escrowId,
+      recipientPublicKey: this.publicKey,
+      nonce,
+    });
+
+    const messageHash = new Uint8Array(
+      await crypto.subtle.digest("SHA-256", intentMessage)
+    );
+    const signature = await (
+      this._wallet as any
+    ).config.signer.signMessageWithIdentityKey(messageHash, true);
+
+    const request: ClaimEscrowRequest = {
+      escrowId: params.escrowId,
+      nonce,
+      signature: Buffer.from(signature).toString("hex"),
+    };
+
+    return this.typedApi.claimEscrow(request);
+  }
+
+  /**
+   * Retrieves the current state of an escrow contract.
+   * This is a read-only operation and does not require authentication.
+   * @param escrowId The unique identifier of the escrow.
+   * @returns The full state of the escrow.
+   */
+  async getEscrow(escrowId: string): Promise<EscrowState> {
+    await this.ensureInitialized();
+    return this.typedApi.getEscrow(escrowId);
   }
 
   // ===== Swap History =====
