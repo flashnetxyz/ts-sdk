@@ -255,7 +255,7 @@ export class FlashnetClient {
         );
       } else {
         // Auto-detect from wallet (existing behavior)
-        // @ts-expect-error - wallet.config is protected
+        // @ts-expect-error - wallet.config is protected but needed for network detection
         const networkEnum = wallet.config.getNetwork();
         const networkName = Network[networkEnum] as NetworkType;
         const detectedNetwork =

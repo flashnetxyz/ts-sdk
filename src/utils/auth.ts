@@ -55,7 +55,7 @@ export class AuthManager {
       if (this.wallet) {
         // Use wallet signing
         signature =
-          // @ts-expect-error
+          // @ts-expect-error - wallet.config is protected but needed for signing
           await this.wallet.config.signer.signMessageWithIdentityKey(
             messageHash,
             true
