@@ -14,7 +14,7 @@ export function createWalletSigner(
 ): Signer {
   return {
     async signMessage(message: Uint8Array): Promise<Uint8Array> {
-      // @ts-expect-error - accessing internal wallet API
+      // @ts-expect-error - wallet.config is protected but needed for signing
       const signature = await wallet.config.signer.signMessageWithIdentityKey(
         message,
         true
