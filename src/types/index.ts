@@ -319,7 +319,12 @@ export interface CreateSingleSidedPoolRequest {
 export interface CreatePoolResponse {
   poolId: string;
   message: string;
-  transferInitialDeposit?: () => Promise<string>;
+}
+
+export interface CreatePoolNoInitialDepsoitResponse {
+  poolId: string;
+  message: string;
+  transferInitialDeposit: () => Promise<string>;
 }
 
 export interface ConfirmInitialDepositRequest {
