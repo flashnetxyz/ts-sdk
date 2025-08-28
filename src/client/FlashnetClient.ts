@@ -17,6 +17,7 @@ import {
   type ConfirmDepositResponse,
   type ConfirmInitialDepositRequest,
   type CreateConstantProductPoolRequest,
+  type CreatePoolNoInitialDepsoitResponse,
   type CreatePoolResponse,
   type CreateSingleSidedPoolRequest,
   type ExecuteRouteSwapRequest,
@@ -67,7 +68,7 @@ import {
   type WithdrawIntegratorFeesRequest,
   type WithdrawIntegratorFeesResponse,
 } from "../types";
-import { generateNonce, compareDecimalStrings } from "../utils";
+import { compareDecimalStrings, generateNonce } from "../utils";
 import { AuthManager } from "../utils/auth";
 import {
   generateAddLiquidityIntentMessage,
@@ -652,6 +653,52 @@ export class FlashnetClient {
     totalHostFeeRateBps: number;
     hostNamespace?: string;
   }): Promise<CreatePoolResponse> {
+    const createResponse =
+      await this.createSingleSidedPoolNoInitialDeposit(params);
+
+    try {
+      const assetATransferId = await createResponse.transferInitialDeposit();
+
+      const confirmResponse = await this.confirmInitialDeposit(
+        createResponse.poolId,
+        assetATransferId
+      );
+
+      if (!confirmResponse.confirmed) {
+        throw new Error(
+          `Failed to confirm initial deposit: ${confirmResponse.message}`
+        );
+      }
+    } catch (error) {
+      // If initial deposit fails, we should inform the user
+      throw new Error(
+        `Pool created with ID ${
+          createResponse.poolId
+        }, but initial deposit failed: ${
+          error instanceof Error ? error.message : String(error)
+        }`
+      );
+    }
+
+    return createResponse;
+  }
+
+  /**
+   * Create a single-sided pool without automatic initial deposit
+   *
+   * This method creates a single-sided pool.
+   * The initial reserve amount will be transferred to the pool and confirmed.
+   */
+  async createSingleSidedPoolNoInitialDeposit(params: {
+    assetAAddress: string;
+    assetBAddress: string;
+    assetAInitialReserve: string;
+    assetAPctSoldAtGraduation: number;
+    targetBRaisedAtGraduation: string;
+    lpFeeRateBps: number;
+    totalHostFeeRateBps: number;
+    hostNamespace?: string;
+  }): Promise<CreatePoolNoInitialDepsoitResponse> {
     await this.ensureInitialized();
 
     // check that assetAPctSoldAtGraduation is between 0 and 100 - no decimals
@@ -727,78 +774,35 @@ export class FlashnetClient {
 
     const createResponse = await this.typedApi.createSingleSidedPool(request);
 
-    // If pool creation was successful, handle the initial deposit
-    if (createResponse.poolId) {
-      try {
-        // Transfer initial reserve to the pool using new address encoding
-        const lpSparkAddress = encodeSparkAddressNew({
-          identityPublicKey: createResponse.poolId,
-          network: this.sparkNetwork,
+    const poolId = createResponse.poolId;
+    const transferInitialDeposit = async () => {
+      // Transfer initial reserve to the pool using new address encoding
+      const lpSparkAddress = encodeSparkAddressNew({
+        identityPublicKey: poolId,
+        network: this.sparkNetwork,
+      });
+
+      if (params.assetAAddress === BTC_ASSET_PUBKEY) {
+        const transfer = await this._wallet.transfer({
+          amountSats: Number(params.assetAInitialReserve),
+          receiverSparkAddress: lpSparkAddress,
         });
-
-        let assetATransferId: string;
-        if (params.assetAAddress === BTC_ASSET_PUBKEY) {
-          const transfer = await this._wallet.transfer({
-            amountSats: Number(params.assetAInitialReserve),
-            receiverSparkAddress: lpSparkAddress,
-          });
-          assetATransferId = transfer.id;
-        } else {
-          assetATransferId = await this._wallet.transferTokens({
-            tokenIdentifier: this.toHumanReadableTokenIdentifier(
-              params.assetAAddress
-            ) as any,
-            tokenAmount: BigInt(params.assetAInitialReserve),
-            receiverSparkAddress: lpSparkAddress,
-          });
-        }
-
-        // Confirm the initial deposit
-        const confirmNonce = generateNonce();
-        const confirmIntentMessage =
-          generatePoolConfirmInitialDepositIntentMessage({
-            poolOwnerPublicKey: this.publicKey,
-            lpIdentityPublicKey: createResponse.poolId,
-            assetASparkTransferId: assetATransferId,
-            nonce: confirmNonce,
-          });
-
-        const confirmMessageHash = new Uint8Array(
-          await crypto.subtle.digest("SHA-256", confirmIntentMessage)
-        );
-        const confirmSignature = await (
-          this._wallet as any
-        ).config.signer.signMessageWithIdentityKey(confirmMessageHash, true);
-
-        const confirmRequest: ConfirmInitialDepositRequest = {
-          poolId: createResponse.poolId,
-          assetASparkTransferId: assetATransferId,
-          nonce: confirmNonce,
-          signature: Buffer.from(confirmSignature).toString("hex"),
-          poolOwnerPublicKey: this.publicKey,
-        };
-
-        const confirmResponse =
-          await this.typedApi.confirmInitialDeposit(confirmRequest);
-
-        if (!confirmResponse.confirmed) {
-          throw new Error(
-            `Failed to confirm initial deposit: ${confirmResponse.message}`
-          );
-        }
-      } catch (error) {
-        // If initial deposit fails, we should inform the user
-        throw new Error(
-          `Pool created with ID ${
-            createResponse.poolId
-          }, but initial deposit failed: ${
-            error instanceof Error ? error.message : String(error)
-          }`
-        );
+        return transfer.id;
+      } else {
+        return await this._wallet.transferTokens({
+          tokenIdentifier: this.toHumanReadableTokenIdentifier(
+            params.assetAAddress
+          ) as any,
+          tokenAmount: BigInt(params.assetAInitialReserve),
+          receiverSparkAddress: lpSparkAddress,
+        });
       }
-    }
+    };
 
-    return createResponse;
+    return {
+      ...createResponse,
+      transferInitialDeposit,
+    };
   }
 
   /**

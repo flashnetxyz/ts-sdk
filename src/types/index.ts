@@ -321,6 +321,12 @@ export interface CreatePoolResponse {
   message: string;
 }
 
+export interface CreatePoolNoInitialDepsoitResponse {
+  poolId: string;
+  message: string;
+  transferInitialDeposit: () => Promise<string>;
+}
+
 export interface ConfirmInitialDepositRequest {
   poolId: string;
   assetASparkTransferId: string;
