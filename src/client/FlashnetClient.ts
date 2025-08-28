@@ -636,10 +636,32 @@ export class FlashnetClient {
     return response;
   }
 
+/**
+   * Create a single-sided pool without automatic initial deposit
+   *
+   * This method creates a single-sided pool.
+   * The initial reserve amount will be transferred to the pool and confirmed.
+   */
+  async createSingleSidedPoolNoInitialDeposit(params: {
+    assetAAddress: string;
+    assetBAddress: string;
+    assetAInitialReserve: string;
+    assetAPctSoldAtGraduation: number;
+    targetBRaisedAtGraduation: string;
+    lpFeeRateBps: number;
+    totalHostFeeRateBps: number;
+    hostNamespace?: string;
+  }): Promise<Required<CreatePoolResponse>> {
+    return this.createSingleSidedPool({
+      ...params,
+      disableInitialDepositHandling: true,
+    }) as Promise<Required<CreatePoolResponse>>;
+  }
+
   /**
    * Create a single-sided pool with automatic initial deposit
    *
-   * This method creates a single-sided pool and automatically handles the initial deposit.
+   * This method creates a single-sided pool and by default automatically handles the initial deposit.
    * The initial reserve amount will be transferred to the pool and confirmed.
    */
   async createSingleSidedPool(params: {
@@ -651,6 +673,7 @@ export class FlashnetClient {
     lpFeeRateBps: number;
     totalHostFeeRateBps: number;
     hostNamespace?: string;
+    disableInitialDepositHandling?: boolean;
   }): Promise<CreatePoolResponse> {
     await this.ensureInitialized();
 
@@ -727,31 +750,42 @@ export class FlashnetClient {
 
     const createResponse = await this.typedApi.createSingleSidedPool(request);
 
+    const poolId = createResponse.poolId;
+    const transferInitialDeposit = async () => {
+      // Transfer initial reserve to the pool using new address encoding
+      const lpSparkAddress = encodeSparkAddressNew({
+        identityPublicKey: poolId,
+        network: this.sparkNetwork,
+      });
+
+      if (params.assetAAddress === BTC_ASSET_PUBKEY) {
+        const transfer = await this._wallet.transfer({
+          amountSats: Number(params.assetAInitialReserve),
+          receiverSparkAddress: lpSparkAddress,
+        });
+        return transfer.id;
+      } else {
+        return await this._wallet.transferTokens({
+          tokenIdentifier: this.toHumanReadableTokenIdentifier(
+            params.assetAAddress
+          ) as any,
+          tokenAmount: BigInt(params.assetAInitialReserve),
+          receiverSparkAddress: lpSparkAddress,
+        });
+      }
+    }
+
+    if (params.disableInitialDepositHandling) {
+      return {
+        ...createResponse,
+        transferInitialDeposit
+      }
+    }
+
     // If pool creation was successful, handle the initial deposit
     if (createResponse.poolId) {
       try {
-        // Transfer initial reserve to the pool using new address encoding
-        const lpSparkAddress = encodeSparkAddressNew({
-          identityPublicKey: createResponse.poolId,
-          network: this.sparkNetwork,
-        });
-
-        let assetATransferId: string;
-        if (params.assetAAddress === BTC_ASSET_PUBKEY) {
-          const transfer = await this._wallet.transfer({
-            amountSats: Number(params.assetAInitialReserve),
-            receiverSparkAddress: lpSparkAddress,
-          });
-          assetATransferId = transfer.id;
-        } else {
-          assetATransferId = await this._wallet.transferTokens({
-            tokenIdentifier: this.toHumanReadableTokenIdentifier(
-              params.assetAAddress
-            ) as any,
-            tokenAmount: BigInt(params.assetAInitialReserve),
-            receiverSparkAddress: lpSparkAddress,
-          });
-        }
+        let assetATransferId = await transferInitialDeposit();
 
         // Confirm the initial deposit
         const confirmNonce = generateNonce();
