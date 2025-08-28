@@ -17,6 +17,7 @@ import {
   type ConfirmDepositResponse,
   type ConfirmInitialDepositRequest,
   type CreateConstantProductPoolRequest,
+  type CreatePoolNoInitialDepsoitResponse,
   type CreatePoolResponse,
   type CreateSingleSidedPoolRequest,
   type ExecuteRouteSwapRequest,
@@ -66,9 +67,8 @@ import {
   type WithdrawHostFeesResponse,
   type WithdrawIntegratorFeesRequest,
   type WithdrawIntegratorFeesResponse,
-  type CreatePoolNoInitialDepsoitResponse,
 } from "../types";
-import { generateNonce, compareDecimalStrings } from "../utils";
+import { compareDecimalStrings, generateNonce } from "../utils";
 import { AuthManager } from "../utils/auth";
 import {
   generateAddLiquidityIntentMessage,
@@ -653,12 +653,16 @@ export class FlashnetClient {
     totalHostFeeRateBps: number;
     hostNamespace?: string;
   }): Promise<CreatePoolResponse> {
-    const createResponse = await this.createSingleSidedPoolNoInitialDeposit(params);
+    const createResponse =
+      await this.createSingleSidedPoolNoInitialDeposit(params);
 
     try {
-      let assetATransferId = await createResponse.transferInitialDeposit();
+      const assetATransferId = await createResponse.transferInitialDeposit();
 
-      const confirmResponse = await this.confirmInitialDeposit(createResponse.poolId, assetATransferId);
+      const confirmResponse = await this.confirmInitialDeposit(
+        createResponse.poolId,
+        assetATransferId
+      );
 
       if (!confirmResponse.confirmed) {
         throw new Error(
@@ -679,13 +683,12 @@ export class FlashnetClient {
     return createResponse;
   }
 
-
   /**
-     * Create a single-sided pool without automatic initial deposit
-     *
-     * This method creates a single-sided pool.
-     * The initial reserve amount will be transferred to the pool and confirmed.
-     */
+   * Create a single-sided pool without automatic initial deposit
+   *
+   * This method creates a single-sided pool.
+   * The initial reserve amount will be transferred to the pool and confirmed.
+   */
   async createSingleSidedPoolNoInitialDeposit(params: {
     assetAAddress: string;
     assetBAddress: string;
@@ -794,12 +797,12 @@ export class FlashnetClient {
           receiverSparkAddress: lpSparkAddress,
         });
       }
-    }
+    };
 
     return {
       ...createResponse,
-      transferInitialDeposit
-    }
+      transferInitialDeposit,
+    };
   }
 
   /**
