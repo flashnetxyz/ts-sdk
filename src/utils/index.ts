@@ -1,6 +1,7 @@
 export * from "./auth";
 export * from "./intents";
 export * from "./spark-address";
+export * from "./tokenAddress";
 
 // Helper function to generate UUID (nonce)
 export function generateNonce(): string {

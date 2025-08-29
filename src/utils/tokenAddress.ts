@@ -20,6 +20,16 @@ export type SparkHumanReadableTokenIdentifier =
   | `btkns1${string}`
   | `btknl1${string}`;
 
+const NETWORK_MAGIC = {
+  MAINNET: 3652501241,
+  TESTNET: 118034699,
+  REGTEST: 3669344250,
+  SIGNET: 1294402529,
+};
+
+export const SPARK_TOKEN_CREATION_ENTITY_PUBLIC_KEY =
+  "0205fe807e8fe1f368df955cc291f16d840b7f28374b0ed80b80c3e2e0921a0674";
+
 /**
  * Encode token identifier using Spark network type
  * @param tokenIdentifier Token identifier as hex string or Uint8Array
@@ -165,4 +175,94 @@ export function decodeHumanReadableTokenIdentifier(
     }
     throw new Error("Failed to decode human readable token identifier");
   }
+}
+
+async function sha256(buffer: Uint8Array): Promise<Uint8Array> {
+  return new Uint8Array(await crypto.subtle.digest("SHA-256", buffer));
+}
+
+function bigintTo16ByteArray(value: bigint) {
+  let valueToTrack = value;
+  const buffer = new Uint8Array(16);
+  for (let i = 15; i >= 0 && valueToTrack > 0n; i--) {
+    buffer[i] = Number(valueToTrack & 255n);
+    valueToTrack >>= 8n;
+  }
+  return buffer;
+}
+
+export async function getTokenIdentifier(token: {
+  issuerPublicKey: string;
+  name: string;
+  ticker: string;
+  decimals: number;
+  maxSupply: bigint;
+  isFreezable: boolean;
+  network: keyof typeof NETWORK_MAGIC;
+  creationEntityPublicKey: string;
+}): Promise<Uint8Array> {
+  const encoder = new TextEncoder();
+  const allHashes = [
+    await sha256(new Uint8Array([1])),
+    await sha256(hexToBytes(token.issuerPublicKey)),
+    await sha256(encoder.encode(token.name)),
+    await sha256(encoder.encode(token.ticker)),
+    await sha256(new Uint8Array([token.decimals])),
+  ];
+
+  const maxSupplyBytes = bigintTo16ByteArray(token.maxSupply);
+  if (maxSupplyBytes.length !== 16) {
+    throw Error(
+      `Max supply must be exactly 16 bytes, got ${maxSupplyBytes.length}`
+    );
+  }
+  allHashes.push(await sha256(maxSupplyBytes));
+  allHashes.push(await sha256(new Uint8Array([token.isFreezable ? 1 : 0])));
+
+  const networkMagic = NETWORK_MAGIC[token.network];
+  const networkBytes = new Uint8Array(4);
+  new DataView(networkBytes.buffer).setUint32(0, networkMagic, false);
+  allHashes.push(await sha256(networkBytes));
+
+  const creationEntityBytes = hexToBytes(token.creationEntityPublicKey);
+  const isL1 =
+    !creationEntityBytes ||
+    (creationEntityBytes.length === 33 &&
+      creationEntityBytes.every((byte) => byte === 0));
+
+  if (isL1) {
+    allHashes.push(await sha256(new Uint8Array([1])));
+  } else {
+    const layerData = new Uint8Array(34);
+    layerData[0] = 2;
+    layerData.set(creationEntityBytes, 1);
+    allHashes.push(await sha256(layerData));
+  }
+
+  const concatenated = new Uint8Array(
+    allHashes.reduce((acc, h) => acc + h.length, 0)
+  );
+  let offset = 0;
+  for (const h of allHashes) {
+    concatenated.set(h, offset);
+    offset += h.length;
+  }
+
+  return await sha256(concatenated);
+}
+
+export async function getHumanReadableTokenIdentifier(token: {
+  issuerPublicKey: string;
+  name: string;
+  ticker: string;
+  decimals: number;
+  maxSupply: bigint;
+  isFreezable: boolean;
+  network: keyof typeof NETWORK_MAGIC;
+  creationEntityPublicKey: string;
+}): Promise<SparkHumanReadableTokenIdentifier> {
+  return encodeSparkHumanReadableTokenIdentifier(
+    await getTokenIdentifier(token),
+    token.network
+  );
 }
