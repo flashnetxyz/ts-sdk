@@ -354,8 +354,6 @@ export class TypedAmmApi {
 
   /**
    * Get pool integrator fees
-  /**
-   * Get pool integrator fees
    * @GET /v1/integrators/pool-fees/{poolId}
    * @requires Bearer token
    */
@@ -363,7 +361,7 @@ export class TypedAmmApi {
     poolId: string
   ): Promise<Types.GetPoolIntegratorFeesResponse> {
     return this.client.ammGet<Types.GetPoolIntegratorFeesResponse>(
-      `/v1/integrators/pool-fees/${poolId}`
+      `/v1/hosts/pool-integrator-fees/${poolId}`
     );
   }
 
@@ -379,6 +377,58 @@ export class TypedAmmApi {
       "/v1/integrators/withdraw-fees",
       request
     );
+  }
+
+  // ===== Escrow Endpoints =====
+
+  /**
+   * Create a new escrow contract
+   * @POST /v1/escrows/create
+   * @requires Bearer token
+   */
+  async createEscrow(
+    request: Types.CreateEscrowRequest
+  ): Promise<Types.CreateEscrowResponse> {
+    return this.client.ammPost<Types.CreateEscrowResponse>(
+      "/v1/escrows/create",
+      request
+    );
+  }
+
+  /**
+   * Fund an existing escrow contract
+   * @POST /v1/escrows/fund
+   * @requires Bearer token
+   */
+  async fundEscrow(
+    request: Types.FundEscrowRequest
+  ): Promise<Types.FundEscrowResponse> {
+    return this.client.ammPost<Types.FundEscrowResponse>(
+      "/v1/escrows/fund",
+      request
+    );
+  }
+
+  /**
+   * Claim funds from an escrow contract
+   * @POST /v1/escrows/claim
+   * @requires Bearer token
+   */
+  async claimEscrow(
+    request: Types.ClaimEscrowRequest
+  ): Promise<Types.ClaimEscrowResponse> {
+    return this.client.ammPost<Types.ClaimEscrowResponse>(
+      "/v1/escrows/claim",
+      request
+    );
+  }
+
+  /**
+   * Get the state of an escrow contract
+   * @GET /v1/escrows/{escrowId}
+   */
+  async getEscrow(escrowId: string): Promise<Types.EscrowState> {
+    return this.client.ammGet<Types.EscrowState>(`/v1/escrows/${escrowId}`);
   }
 
   // ===== Status Endpoints =====

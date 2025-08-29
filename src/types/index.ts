@@ -237,7 +237,6 @@ export interface GetHostResponse {
 
 export interface WithdrawHostFeesRequest {
   lpIdentityPublicKey: string;
-  assetAAmount?: string;
   assetBAmount?: string;
   nonce: string;
   signature: string;
@@ -307,8 +306,9 @@ export interface CreateSingleSidedPoolRequest {
   assetAAddress: string;
   assetBAddress: string;
   assetAInitialReserve: string;
-  graduationThresholdPct: number;
-  targetBRaisedAtGraduation: string;
+  virtualReserveA: string;
+  virtualReserveB: string;
+  threshold: string;
   lpFeeRateBps: string;
   totalHostFeeRateBps: string;
   hostNamespace?: string;
@@ -343,6 +343,8 @@ export interface AddLiquidityRequest {
   assetBSparkTransferId: string;
   assetAAmountToAdd: string;
   assetBAmountToAdd: string;
+  assetAMinAmountIn: string;
+  assetBMinAmountIn: string;
   nonce: string;
   signature: string;
 }
@@ -806,8 +808,9 @@ export interface ValidateAmmInitializeSingleSidedPoolData {
   assetATokenPublicKey: string;
   assetBTokenPublicKey: string;
   assetAInitialReserve: string;
-  graduationThresholdPct: string;
-  targetBRaisedAtGraduation: string;
+  virtualReserveA: string;
+  virtualReserveB: string;
+  threshold: string;
   totalHostFeeRateBps: string;
   lpFeeRateBps: string;
   nonce: string;
@@ -849,6 +852,8 @@ export interface AmmAddLiquiditySettlementRequest {
   assetBSparkTransferId: string;
   assetAAmount: string;
   assetBAmount: string;
+  assetAMinAmountIn: string;
+  assetBMinAmountIn: string;
   nonce: string;
 }
 
@@ -893,7 +898,6 @@ export interface RegisterHostIntentData {
 export interface ValidateAmmWithdrawHostFeesData {
   hostPublicKey: string;
   lpIdentityPublicKey: string;
-  assetAAmount?: string;
   assetBAmount?: string;
   nonce: string;
 }
@@ -921,7 +925,6 @@ export interface ValidateRouteSwapData {
 export interface ValidateAmmWithdrawIntegratorFeesData {
   integratorPublicKey: string;
   lpIdentityPublicKey: string;
-  assetAAmount?: string;
   assetBAmount?: string;
   nonce: string;
 }
@@ -933,9 +936,7 @@ export interface GetHostFeesRequest {
 
 export interface HostPoolFees {
   poolId: string;
-  assetAPubkey: string;
   assetBPubkey: string;
-  assetAFees: string;
   assetBFees: string;
 }
 
@@ -943,7 +944,6 @@ export interface GetHostFeesResponse {
   hostNamespace: string;
   feeRecipientType: string;
   pools: HostPoolFees[];
-  totalAssetAFees?: string;
   totalAssetBFees?: string;
 }
 
@@ -951,16 +951,13 @@ export interface GetHostFeesResponse {
 export interface IntegratorPoolFees {
   poolId: string;
   hostNamespace?: string;
-  assetAPubkey: string;
   assetBPubkey: string;
-  assetAFees: string;
   assetBFees: string;
 }
 
 export interface GetIntegratorFeesResponse {
   integratorPublicKey: string;
   pools: IntegratorPoolFees[];
-  totalAssetAFees?: string;
   totalAssetBFees?: string;
 }
 
@@ -971,7 +968,6 @@ export interface GetPoolIntegratorFeesRequest {
 export interface GetPoolIntegratorFeesResponse {
   poolId: string;
   integratorPublicKey: string;
-  assetAFees: string;
   assetBFees: string;
 }
 
@@ -979,4 +975,252 @@ export interface TransferAssetRecipient {
   receiverSparkAddress: string;
   assetAddress: string;
   amount: string;
+
+// ===== Escrow Types =====
+
+// --- Escrow Intent Validation Data ---
+
+/**
+ * Data for validating an escrow claim intent.
+ */
+export interface ValidateEscrowClaimData {
+  escrowId: string;
+  recipientPublicKey: string;
+  nonce: string;
+}
+
+/**
+ * Data for validating an escrow fund intent.
+ */
+export interface ValidateEscrowFundData {
+  escrowId: string;
+  creatorPublicKey: string;
+  sparkTransferId: string;
+  nonce: string;
+}
+
+/**
+ * A recipient in an escrow contract for intent validation.
+ */
+export interface EscrowRecipient {
+  recipientId: string;
+  amount: string;
+  hasClaimed: boolean;
+  claimedAt?: string;
+}
+
+/**
+ * Time comparison types for time-based conditions.
+ */
+export enum TimeComparison {
+  TIME_COMPARISON_UNSPECIFIED = 0,
+  TIME_COMPARISON_AFTER = 1,
+  TIME_COMPARISON_BEFORE = 2,
+  TIME_COMPARISON_BETWEEN = 3,
+}
+
+/**
+ * Time-based condition data for intent validation.
+ */
+export interface TimeConditionData {
+  comparison: TimeComparison;
+  timestampStart: string;
+  timestampEnd?: string;
+}
+
+/**
+ * AMM phase values for AMM state conditions.
+ */
+export enum AmmPhase {
+  AMM_PHASE_UNSPECIFIED = 0,
+  AMM_PHASE_SINGLE_SIDED = 1,
+  AMM_PHASE_DOUBLE_SIDED = 2,
+  AMM_PHASE_GRADUATED = 3,
+}
+
+/**
+ * AMM state check types for intent validation.
+ */
+export enum AmmStateCheckType {
+  PHASE = 0,
+  MINIMUM_RESERVE = 1,
+  EXISTS = 2,
+}
+
+/**
+ * AMM state condition data for intent validation.
+ */
+export interface AmmStateConditionData {
+  ammId: string;
+  checkType: AmmStateCheckType;
+  requiredPhase?: AmmPhase;
+  minimumReserveAmount?: string;
+  mustExist?: boolean;
+}
+
+/**
+ * Logical condition data for AND/OR operations for intent validation.
+ */
+export interface LogicalConditionData {
+  conditions: EscrowCondition[];
+}
+
+/**
+ * Types of conditions for escrow for intent validation.
+ */
+export enum ConditionType {
+  TIME = 0,
+  AMM_STATE = 1,
+  LOGICAL = 2,
+}
+
+/**
+ * Generic escrow condition for intent validation.
+ */
+export interface EscrowCondition {
+  conditionType: ConditionType;
+  timeCondition?: TimeConditionData;
+  ammStateCondition?: AmmStateConditionData;
+  logicalCondition?: LogicalConditionData;
+}
+
+/**
+ * Data for validating an escrow creation intent.
+ */
+export interface ValidateEscrowCreateData {
+  creatorPublicKey: string;
+  assetId: string;
+  assetAmount: string;
+  recipients: EscrowRecipient[];
+  claimConditions: EscrowCondition[];
+  abandonHost?: string;
+  abandonConditions?: EscrowCondition[];
+  nonce: string;
+}
+
+// --- Escrow API Types ---
+
+/**
+ * Recipient definition for escrow creation API request.
+ */
+export interface EscrowRecipientInput {
+  id: string;
+  amount: string;
+}
+
+/**
+ * Flexible condition definition for API requests.
+ */
+export interface Condition {
+  conditionType: string;
+  data: any;
+}
+
+/**
+ * Request body for creating a new escrow contract.
+ */
+export interface CreateEscrowRequest {
+  creatorPublicKey: string;
+  assetId: string;
+  assetAmount: string;
+  recipients: EscrowRecipientInput[];
+  claimConditions: Condition[];
+  abandonHost?: string;
+  abandonConditions?: Condition[];
+  nonce: string;
+  signature: string;
+}
+
+/**
+ * Response after successfully initiating escrow creation.
+ */
+export interface CreateEscrowResponse {
+  requestId: string;
+  escrowId: string;
+  depositAddress: string;
+  message: string;
+}
+
+/**
+ * Request body for funding an escrow contract.
+ */
+export interface FundEscrowRequest {
+  escrowId: string;
+  sparkTransferId: string;
+  nonce: string;
+  signature: string;
+}
+
+/**
+ * Response after successfully funding an escrow contract.
+ */
+export interface FundEscrowResponse {
+  requestId: string;
+  escrowId: string;
+  status: string;
+  message: string;
+}
+
+/**
+ * Request body for claiming funds from an escrow contract.
+ */
+export interface ClaimEscrowRequest {
+  escrowId: string;
+  nonce: string;
+  signature: string;
+}
+
+/**
+ * Response after successfully initiating an escrow claim.
+ */
+export interface ClaimEscrowResponse {
+  requestId: string;
+  escrowId: string;
+  recipientId: string;
+  claimedAmount: string;
+  outboundTransferId: string;
+  message: string;
+}
+
+/**
+ * Status of an escrow contract.
+ */
+export type EscrowStatus =
+  | "PENDING_FUNDING"
+  | "ACTIVE"
+  | "COMPLETED"
+  | "ABANDONED";
+
+/**
+ * Asset held in escrow.
+ */
+export interface Asset {
+  id: string;
+  amount: string;
+}
+
+/**
+ * Recipient state within an active escrow.
+ */
+export interface EscrowRecipientState {
+  id: string;
+  amount: string;
+  hasClaimed: boolean;
+  claimedAt?: string;
+}
+
+/**
+ * Complete state of an escrow contract.
+ */
+export interface EscrowState {
+  id: string;
+  asset: Asset;
+  recipients: EscrowRecipientState[];
+  status: EscrowStatus;
+  claimConditions: Condition[];
+  abandonHost?: string;
+  abandonConditions?: Condition[];
+  createdAt: string;
+  updatedAt: string;
+  totalClaimed: string;
 }

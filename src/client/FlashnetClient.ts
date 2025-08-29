@@ -12,13 +12,21 @@ import {
   type AddLiquidityRequest,
   type AddLiquidityResponse,
   type AllLpPositionsResponse,
+  type ClaimEscrowRequest,
+  type ClaimEscrowResponse,
   type ClientEnvironment,
   type ClientNetworkConfig,
+  type Condition,
   type ConfirmDepositResponse,
   type ConfirmInitialDepositRequest,
   type CreateConstantProductPoolRequest,
+  type CreateEscrowRequest,
+  type CreateEscrowResponse,
   type CreatePoolResponse,
   type CreateSingleSidedPoolRequest,
+  type EscrowCondition,
+  type EscrowRecipient,
+  type EscrowState,
   type ExecuteRouteSwapRequest,
   type ExecuteRouteSwapResponse,
   type ExecuteSwapRequest,
@@ -26,6 +34,8 @@ import {
   type FlashnetClientCustomConfig,
   type FlashnetClientEnvironmentConfig,
   type FlashnetClientLegacyConfig,
+  type FundEscrowRequest,
+  type FundEscrowResponse,
   type GetHostFeesRequest,
   type GetHostFeesResponse,
   type GetHostResponse,
@@ -72,7 +82,10 @@ import { compareDecimalStrings, generateNonce } from "../utils";
 import { AuthManager } from "../utils/auth";
 import {
   generateAddLiquidityIntentMessage,
+  generateClaimEscrowIntentMessage,
   generateConstantProductPoolInitializationIntentMessage,
+  generateCreateEscrowIntentMessage,
+  generateFundEscrowIntentMessage,
   generatePoolConfirmInitialDepositIntentMessage,
   generatePoolInitializationIntentMessage,
   generatePoolSwapIntentMessage,
@@ -589,6 +602,8 @@ export class FlashnetClient {
     initialLiquidity?: {
       assetAAmount: bigint;
       assetBAmount: bigint;
+      assetAMinAmountIn: bigint;
+      assetBMinAmountIn: bigint;
     };
   }): Promise<CreatePoolResponse> {
     await this.ensureInitialized();
@@ -651,11 +666,92 @@ export class FlashnetClient {
         params.assetAAddress,
         params.assetBAddress,
         params.initialLiquidity.assetAAmount.toString(),
-        params.initialLiquidity.assetBAmount.toString()
+        params.initialLiquidity.assetBAmount.toString(),
+        params.initialLiquidity.assetAMinAmountIn.toString(),
+        params.initialLiquidity.assetBMinAmountIn.toString()
       );
     }
 
     return response;
+  }
+
+  /**
+   * Calculates virtual reserves for a bonding curve AMM.
+   *
+   * This helper function calculates the initial virtual reserves (`v_A^0`, `v_B^0`)
+   * based on the bonding curve parameters. These virtual reserves ensure smooth
+   * pricing and price continuity during graduation to the double-sided phase.
+   *
+   * @param params - The parameters for the calculation.
+   * @param params.initialTokenSupply - The initial supply of Asset A (tokens to be sold).
+   * @param params.graduationThresholdPct - The percentage of tokens that need to be sold for graduation (20-95%).
+   * @param params.targetRaise - The target amount of Asset B to raise at graduation.
+   * @returns An object containing `virtualReserveA`, `virtualReserveB`, and `threshold`.
+   */
+  public static calculateVirtualReserves(params: {
+    initialTokenSupply: number | string;
+    graduationThresholdPct: number;
+    targetRaise: number | string;
+  }): { virtualReserveA: number; virtualReserveB: number; threshold: number } {
+    const supply = Number(params.initialTokenSupply);
+    const targetB = Number(params.targetRaise);
+    const lpFrac = 1.0;
+
+    // Validate inputs
+    if (supply <= 0) {
+      throw new Error("Initial token supply must be positive");
+    }
+    if (targetB <= 0) {
+      throw new Error("Target raise must be positive");
+    }
+
+    const MIN_GRADUATION_THRESHOLD_PCT = 20;
+    const MAX_GRADUATION_THRESHOLD_PCT = 95;
+
+    // Validate graduation threshold is a positive whole number
+    if (
+      !Number.isInteger(params.graduationThresholdPct) ||
+      params.graduationThresholdPct <= 0
+    ) {
+      throw new Error("Graduation threshold percentage must be a positive whole number");
+    }
+
+    if (
+      params.graduationThresholdPct < MIN_GRADUATION_THRESHOLD_PCT ||
+      params.graduationThresholdPct > MAX_GRADUATION_THRESHOLD_PCT
+    ) {
+      throw new Error(
+        `Graduation threshold percentage must be between ${MIN_GRADUATION_THRESHOLD_PCT} and ${MAX_GRADUATION_THRESHOLD_PCT}`
+      );
+    }
+
+    if (lpFrac <= 0 || lpFrac > 1) {
+      throw new Error("LP fraction must be between 0 and 1");
+    }
+
+    // Calculate graduation parameters
+    const f = params.graduationThresholdPct / 100;
+    const g = lpFrac;
+
+    // Check feasibility: f - g*(1-f) > 0
+    const denom = f - g * (1 - f);
+    if (denom <= 0) {
+      throw new Error(
+        `Invalid configuration: graduation threshold ${
+          f * 100
+        }% with LP fraction ${g} is infeasible. Need f > g/(1+g)`
+      );
+    }
+
+    // Calculate virtual reserves and round down to integers
+    const virtualA = Math.floor((supply * f * f) / denom);
+    const virtualB = Math.floor((targetB * g * (1 - f)) / denom);
+
+    return {
+      virtualReserveA: virtualA,
+      virtualReserveB: virtualB,
+      threshold: params.graduationThresholdPct,
+    };
   }
 
   /**
@@ -668,8 +764,9 @@ export class FlashnetClient {
     assetAAddress: string;
     assetBAddress: string;
     assetAInitialReserve: string;
-    assetAPctSoldAtGraduation: number;
-    targetBRaisedAtGraduation: string;
+    virtualReserveA: string;
+    virtualReserveB: string;
+    threshold: string;
     lpFeeRateBps: number;
     totalHostFeeRateBps: number;
     hostNamespace?: string;
@@ -677,25 +774,22 @@ export class FlashnetClient {
   }): Promise<CreatePoolResponse> {
     await this.ensureInitialized();
 
-    // check that assetAPctSoldAtGraduation is between 0 and 100 - no decimals
-    if (
-      params.assetAPctSoldAtGraduation < 0 ||
-      params.assetAPctSoldAtGraduation > 100
-    ) {
-      throw new Error(`assetAPctSoldAtGraduation must be between 0 and 100`);
-    }
-
     if (!params.hostNamespace && params.totalHostFeeRateBps < 10) {
       throw new Error(
         `Host fee must be greater than 10 bps when no host namespace is provided`
       );
     }
 
+    // Clip decimals off reserves before any operations
+    const clippedAssetAInitialReserve = Math.floor(Number(params.assetAInitialReserve)).toString();
+    const clippedVirtualReserveA = Math.floor(Number(params.virtualReserveA)).toString();
+    const clippedVirtualReserveB = Math.floor(Number(params.virtualReserveB)).toString();
+
     await this.checkBalance({
       balancesToCheck: [
         {
           assetAddress: params.assetAInitialReserve,
-          amount: params.assetAInitialReserve,
+          amount: clippedAssetAInitialReserve,
         },
       ],
       errorPrefix: "Insufficient balance for pool creation: ",
@@ -707,9 +801,10 @@ export class FlashnetClient {
       poolOwnerPublicKey: this.publicKey,
       assetAAddress: this.toHexTokenIdentifier(params.assetAAddress),
       assetBAddress: this.toHexTokenIdentifier(params.assetBAddress),
-      assetAInitialReserve: params.assetAInitialReserve,
-      graduationThresholdPct: params.assetAPctSoldAtGraduation.toString(),
-      targetBRaisedAtGraduation: params.targetBRaisedAtGraduation,
+      assetAInitialReserve: clippedAssetAInitialReserve,
+      virtualReserveA: clippedVirtualReserveA,
+      virtualReserveB: clippedVirtualReserveB,
+      threshold: params.threshold,
       lpFeeRateBps: params.lpFeeRateBps.toString(),
       totalHostFeeRateBps: params.totalHostFeeRateBps.toString(),
       nonce,
@@ -727,9 +822,10 @@ export class FlashnetClient {
       poolOwnerPublicKey: this.publicKey,
       assetAAddress: this.toHexTokenIdentifier(params.assetAAddress),
       assetBAddress: this.toHexTokenIdentifier(params.assetBAddress),
-      assetAInitialReserve: params.assetAInitialReserve,
-      graduationThresholdPct: params.assetAPctSoldAtGraduation,
-      targetBRaisedAtGraduation: params.targetBRaisedAtGraduation,
+      assetAInitialReserve: clippedAssetAInitialReserve,
+      virtualReserveA: clippedVirtualReserveA,
+      virtualReserveB: clippedVirtualReserveB,
+      threshold: params.threshold,
       lpFeeRateBps: params.lpFeeRateBps.toString(),
       totalHostFeeRateBps: params.totalHostFeeRateBps.toString(),
       hostNamespace: params.hostNamespace,
@@ -753,7 +849,7 @@ export class FlashnetClient {
       const assetATransferId = await this.transferAsset({
         receiverSparkAddress: lpSparkAddress,
         assetAddress: params.assetAAddress,
-        amount: params.assetAInitialReserve,
+        amount: clippedAssetAInitialReserve,
       });
 
       const confirmResponse = await this.confirmInitialDeposit(
@@ -1083,6 +1179,8 @@ export class FlashnetClient {
     poolId: string;
     assetAAmount: string;
     assetBAmount: string;
+    assetAMinAmountIn: string;
+    assetBMinAmountIn: string;
   }): Promise<AddLiquidityResponse> {
     await this.ensureInitialized();
 
@@ -1120,6 +1218,8 @@ export class FlashnetClient {
       assetBSparkTransferId: assetBTransferId,
       assetAAmount: params.assetAAmount.toString(),
       assetBAmount: params.assetBAmount.toString(),
+      assetAMinAmountIn: params.assetAMinAmountIn.toString(),
+      assetBMinAmountIn: params.assetBMinAmountIn.toString(),
       nonce,
     });
 
@@ -1138,6 +1238,8 @@ export class FlashnetClient {
       assetBSparkTransferId: assetBTransferId,
       assetAAmountToAdd: params.assetAAmount.toString(),
       assetBAmountToAdd: params.assetBAmount.toString(),
+      assetAMinAmountIn: params.assetAMinAmountIn.toString(),
+      assetBMinAmountIn: params.assetBMinAmountIn.toString(),
       nonce,
       signature: Buffer.from(signature).toString("hex"),
     };
@@ -1292,7 +1394,6 @@ export class FlashnetClient {
    */
   async withdrawHostFees(params: {
     lpIdentityPublicKey: string;
-    assetAAmount?: string;
     assetBAmount?: string;
   }): Promise<WithdrawHostFeesResponse> {
     await this.ensureInitialized();
@@ -1301,7 +1402,6 @@ export class FlashnetClient {
     const intentMessage = generateWithdrawHostFeesIntentMessage({
       hostPublicKey: this.publicKey,
       lpIdentityPublicKey: params.lpIdentityPublicKey,
-      assetAAmount: params.assetAAmount,
       assetBAmount: params.assetBAmount,
       nonce,
     });
@@ -1316,7 +1416,6 @@ export class FlashnetClient {
 
     const request: WithdrawHostFeesRequest = {
       lpIdentityPublicKey: params.lpIdentityPublicKey,
-      assetAAmount: params.assetAAmount,
       assetBAmount: params.assetBAmount,
       nonce,
       signature: Buffer.from(signature).toString("hex"),
@@ -1352,7 +1451,6 @@ export class FlashnetClient {
    */
   async withdrawIntegratorFees(params: {
     lpIdentityPublicKey: string;
-    assetAAmount?: string;
     assetBAmount?: string;
   }): Promise<WithdrawIntegratorFeesResponse> {
     await this.ensureInitialized();
@@ -1361,7 +1459,6 @@ export class FlashnetClient {
     const intentMessage = generateWithdrawIntegratorFeesIntentMessage({
       integratorPublicKey: this.publicKey,
       lpIdentityPublicKey: params.lpIdentityPublicKey,
-      assetAAmount: params.assetAAmount,
       assetBAmount: params.assetBAmount,
       nonce,
     });
@@ -1377,7 +1474,6 @@ export class FlashnetClient {
     const request: WithdrawIntegratorFeesRequest = {
       integratorPublicKey: this.publicKey,
       lpIdentityPublicKey: params.lpIdentityPublicKey,
-      assetAAmount: params.assetAAmount,
       assetBAmount: params.assetBAmount,
       nonce,
       signature: Buffer.from(signature).toString("hex"),
@@ -1401,6 +1497,207 @@ export class FlashnetClient {
   async getIntegratorFees(): Promise<GetIntegratorFeesResponse> {
     await this.ensureInitialized();
     return this.typedApi.getIntegratorFees();
+  }
+
+  // ===== Escrow Operations =====
+
+  /**
+   * Creates a new escrow contract.
+   * This is the first step in a two-step process: create, then fund.
+   * @param params Parameters to create the escrow.
+   * @returns The escrow creation response, including the ID and deposit address.
+   */
+  async createEscrow(params: {
+    assetId: string;
+    assetAmount: string;
+    recipients: { id: string; amount: string }[];
+    claimConditions: Condition[];
+    abandonHost?: string;
+    abandonConditions?: Condition[];
+    autoFund?: boolean;
+  }): Promise<CreateEscrowResponse | FundEscrowResponse> {
+    await this.ensureInitialized();
+
+    const nonce = generateNonce();
+    // The intent message requires a different structure for recipients and conditions
+    const intentRecipients: EscrowRecipient[] = params.recipients.map(
+      (r) => ({
+        recipientId: r.id,
+        amount: r.amount,
+        hasClaimed: false, // Default value for creation
+      })
+    );
+
+    const intentMessage = generateCreateEscrowIntentMessage({
+      creatorPublicKey: this.publicKey,
+      assetId: params.assetId,
+      assetAmount: params.assetAmount,
+      recipients: intentRecipients,
+      claimConditions: params.claimConditions as unknown as EscrowCondition[], // Assuming API `Condition` is compatible
+      abandonHost: params.abandonHost,
+      abandonConditions:
+        (params.abandonConditions as unknown as EscrowCondition[]) || undefined,
+      nonce,
+    });
+
+    const messageHash = new Uint8Array(
+      await crypto.subtle.digest("SHA-256", intentMessage)
+    );
+    const signature = await (
+      this._wallet as any
+    ).config.signer.signMessageWithIdentityKey(messageHash, true);
+
+    const request: CreateEscrowRequest = {
+      creatorPublicKey: this.publicKey,
+      assetId: params.assetId,
+      assetAmount: params.assetAmount,
+      recipients: params.recipients,
+      claimConditions: params.claimConditions,
+      abandonHost: params.abandonHost,
+      abandonConditions: params.abandonConditions,
+      nonce,
+      signature: Buffer.from(signature).toString("hex"),
+    };
+
+    const createResponse = await this.typedApi.createEscrow(request);
+
+    const autoFund = params.autoFund !== false;
+
+    if (!autoFund) {
+      return createResponse;
+    }
+
+    // Auto-fund the escrow
+    return this.fundEscrow({
+      escrowId: createResponse.escrowId,
+      depositAddress: createResponse.depositAddress,
+      assetId: params.assetId,
+      assetAmount: params.assetAmount,
+    });
+  }
+
+  /**
+   * Funds an escrow contract to activate it.
+   * This handles the asset transfer and confirmation in one step.
+   * @param params Parameters to fund the escrow, including asset details and deposit address.
+   * @returns The funding confirmation response.
+   */
+  async fundEscrow(params: {
+    escrowId: string;
+    depositAddress: string;
+    assetId: string;
+    assetAmount: string;
+  }): Promise<FundEscrowResponse> {
+    await this.ensureInitialized();
+
+    // 1. Balance check
+    const requirements: { btc?: bigint; tokens?: Map<string, bigint> } = {
+      tokens: new Map(),
+    };
+    if (params.assetId === BTC_ASSET_PUBKEY) {
+      requirements.btc = BigInt(params.assetAmount);
+    } else {
+      requirements.tokens?.set(params.assetId, BigInt(params.assetAmount));
+    }
+    const balanceCheck = await this.checkBalance(requirements);
+    if (!balanceCheck.sufficient) {
+      throw new Error(
+        `Insufficient balance to fund escrow: ${balanceCheck.message}`
+      );
+    }
+
+    // 2. Perform transfer
+    const escrowSparkAddress = encodeSparkAddressNew({
+      identityPublicKey: params.depositAddress,
+      network: this.sparkNetwork,
+    });
+
+    let sparkTransferId: string;
+    if (params.assetId === BTC_ASSET_PUBKEY) {
+      const transfer = await this._wallet.transfer({
+        amountSats: Number(params.assetAmount),
+        receiverSparkAddress: escrowSparkAddress,
+      });
+      sparkTransferId = transfer.id;
+    } else {
+      sparkTransferId = await this._wallet.transferTokens({
+        tokenIdentifier: this.toHumanReadableTokenIdentifier(
+          params.assetId
+        ) as any,
+        tokenAmount: BigInt(params.assetAmount),
+        receiverSparkAddress: escrowSparkAddress,
+      });
+    }
+
+    // 3. Generate intent, sign, and call API
+    const nonce = generateNonce();
+    const intentMessage = generateFundEscrowIntentMessage({
+      escrowId: params.escrowId,
+      creatorPublicKey: this.publicKey,
+      sparkTransferId,
+      nonce,
+    });
+
+    const messageHash = new Uint8Array(
+      await crypto.subtle.digest("SHA-256", intentMessage)
+    );
+    const signature = await (
+      this._wallet as any
+    ).config.signer.signMessageWithIdentityKey(messageHash, true);
+
+    const request: FundEscrowRequest = {
+      escrowId: params.escrowId,
+      sparkTransferId,
+      nonce,
+      signature: Buffer.from(signature).toString("hex"),
+    };
+
+    return this.typedApi.fundEscrow(request);
+  }
+
+  /**
+   * Claims funds from an active escrow contract.
+   * The caller must be a valid recipient and all claim conditions must be met.
+   * @param params Parameters for the claim.
+   * @returns The claim processing response.
+   */
+  async claimEscrow(params: {
+    escrowId: string;
+  }): Promise<ClaimEscrowResponse> {
+    await this.ensureInitialized();
+
+    const nonce = generateNonce();
+    const intentMessage = generateClaimEscrowIntentMessage({
+      escrowId: params.escrowId,
+      recipientPublicKey: this.publicKey,
+      nonce,
+    });
+
+    const messageHash = new Uint8Array(
+      await crypto.subtle.digest("SHA-256", intentMessage)
+    );
+    const signature = await (
+      this._wallet as any
+    ).config.signer.signMessageWithIdentityKey(messageHash, true);
+
+    const request: ClaimEscrowRequest = {
+      escrowId: params.escrowId,
+      nonce,
+      signature: Buffer.from(signature).toString("hex"),
+    };
+
+    return this.typedApi.claimEscrow(request);
+  }
+
+  /**
+   * Retrieves the current state of an escrow contract.
+   * This is a read-only operation and does not require authentication.
+   * @param escrowId The unique identifier of the escrow.
+   * @returns The full state of the escrow.
+   */
+  async getEscrow(escrowId: string): Promise<EscrowState> {
+    await this.ensureInitialized();
+    return this.typedApi.getEscrow(escrowId);
   }
 
   // ===== Swap History =====
@@ -1566,7 +1863,9 @@ export class FlashnetClient {
     assetAAddress: string,
     assetBAddress: string,
     assetAAmount: string,
-    assetBAmount: string
+    assetBAmount: string,
+    assetAMinAmountIn: string,
+    assetBMinAmountIn: string
   ): Promise<void> {
     const lpSparkAddress = encodeSparkAddressNew({
       identityPublicKey: poolId,
@@ -1595,6 +1894,8 @@ export class FlashnetClient {
       assetBSparkTransferId: assetBTransferId,
       assetAAmount: assetAAmount.toString(),
       assetBAmount: assetBAmount.toString(),
+      assetAMinAmountIn: assetAMinAmountIn.toString(),
+      assetBMinAmountIn: assetBMinAmountIn.toString(),
       nonce,
     });
 
@@ -1612,6 +1913,8 @@ export class FlashnetClient {
       assetBSparkTransferId: assetBTransferId,
       assetAAmountToAdd: assetAAmount.toString(),
       assetBAmountToAdd: assetBAmount.toString(),
+      assetAMinAmountIn: assetAMinAmountIn.toString(),
+      assetBMinAmountIn: assetBMinAmountIn.toString(),
       nonce,
       signature: Buffer.from(signature).toString("hex"),
     };
