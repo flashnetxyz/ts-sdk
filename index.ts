@@ -74,6 +74,9 @@ export {
   encodeHumanReadableTokenIdentifier,
   // New Spark network functions
   encodeSparkHumanReadableTokenIdentifier,
+  getHumanReadableTokenIdentifier,
+  getTokenIdentifier,
   type HumanReadableTokenIdentifier,
+  SPARK_TOKEN_CREATION_ENTITY_PUBLIC_KEY,
   type SparkHumanReadableTokenIdentifier,
 } from "./src/utils/tokenAddress";
