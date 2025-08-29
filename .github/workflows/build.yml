@@ -10,14 +10,13 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - uses: pnpm/action-setup@v2
+      - uses: oven-sh/setup-bun@v1
         with:
-          version: 9
+          bun-version: latest
 
       - uses: actions/setup-node@v4
         with:
           node-version: 20
-          cache: pnpm
 
-      - run: pnpm install
-      - run: pnpm run build
+      - run: bun install
+      - run: bun run build
