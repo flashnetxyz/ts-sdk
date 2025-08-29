@@ -1610,32 +1610,32 @@ export class FlashnetClient {
       network: this.sparkNetwork,
     });
 
-    let sparkTransferId: string;
-    if (params.assetId === BTC_ASSET_PUBKEY) {
-      const transfer = await this._wallet.transfer({
-        amountSats: Number(params.assetAmount),
-        receiverSparkAddress: escrowSparkAddress,
-      });
-      sparkTransferId = transfer.id;
-    } else {
-      sparkTransferId = await this._wallet.transferTokens({
-        tokenIdentifier: this.toHumanReadableTokenIdentifier(
-          params.assetId
-        ) as any,
-        tokenAmount: BigInt(params.assetAmount),
-        receiverSparkAddress: escrowSparkAddress,
-      });
-    }
+    const sparkTransferId = await this.transferAsset({
+      receiverSparkAddress: escrowSparkAddress,
+      assetAddress: params.assetId,
+      amount: params.assetAmount,
+    });
 
-    // 3. Generate intent, sign, and call API
+    // 3. Execute signed intent
+    return await this.executeFundEscrowIntent({
+      escrowId: params.escrowId,
+      sparkTransferId,
+    });
+  }
+
+  async executeFundEscrowIntent(params: {
+    escrowId: string;
+    sparkTransferId: string;
+  }): Promise<FundEscrowResponse> {
+    // Generate intent
     const nonce = generateNonce();
     const intentMessage = generateFundEscrowIntentMessage({
-      escrowId: params.escrowId,
+      ...params,
       creatorPublicKey: this.publicKey,
-      sparkTransferId,
       nonce,
     });
 
+    // Sign
     const messageHash = new Uint8Array(
       await crypto.subtle.digest("SHA-256", intentMessage)
     );
@@ -1643,9 +1643,9 @@ export class FlashnetClient {
       this._wallet as any
     ).config.signer.signMessageWithIdentityKey(messageHash, true);
 
+    // Call API
     const request: FundEscrowRequest = {
-      escrowId: params.escrowId,
-      sparkTransferId,
+      ...params,
       nonce,
       signature: Buffer.from(signature).toString("hex"),
     };
