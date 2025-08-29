@@ -1112,9 +1112,38 @@ export interface EscrowRecipientInput {
 /**
  * Flexible condition definition for API requests.
  */
-export interface Condition {
-  conditionType: string;
-  data: any;
+export type Condition = LogicCondition | TimeCondition | AmmStateCondition;
+
+interface LogicCondition {
+  conditionType: 'and' | 'or';
+  data: {
+    conditions: Condition[];
+  };
+}
+
+interface TimeCondition {
+  conditionType: 'time';
+  data: {
+    comparison: 'after' | 'before';
+    timestamp: string;
+  };
+}
+
+interface AmmStateCondition {
+  conditionType: 'amm_state';
+  data: {
+    ammId: string;
+    stateCheck:
+      | {
+          type: 'minimum_reserve';
+          asset: 'A' | 'B';
+          min: string;
+        }
+      | {
+          type: 'phase';
+          phase: 'double_sided';
+        };
+  };
 }
 
 /**
