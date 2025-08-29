@@ -17,7 +17,6 @@ import {
   type ConfirmDepositResponse,
   type ConfirmInitialDepositRequest,
   type CreateConstantProductPoolRequest,
-  type CreatePoolNoInitialDepsoitResponse,
   type CreatePoolResponse,
   type CreateSingleSidedPoolRequest,
   type ExecuteRouteSwapRequest,
@@ -63,6 +62,7 @@ import {
   type SimulateSwapResponse,
   type SparkNetworkType,
   type SwapResponse,
+  type TransferAssetRecipient,
   type WithdrawHostFeesRequest,
   type WithdrawHostFeesResponse,
   type WithdrawIntegratorFeesRequest,
@@ -116,6 +116,22 @@ export interface WalletBalance {
 export interface FlashnetClientOptions {
   autoAuthenticate?: boolean; // Default: true
 }
+
+/**
+ * Helper type for fixed lists
+ */
+type Tuple<
+  T,
+  N extends number,
+  Acc extends readonly T[] = [],
+> = Acc["length"] extends N ? Acc : Tuple<T, N, [...Acc, T]>;
+
+/**
+ * Helper type that works for both fixed and unknown length lists
+ */
+type TupleArray<T, N extends number | unknown> = N extends number
+  ? Tuple<T, N> & T[]
+  : T[];
 
 /**
  * FlashnetClient - A comprehensive client for interacting with Flashnet AMM
@@ -463,18 +479,38 @@ export class FlashnetClient {
   /**
    * Check if wallet has sufficient balance for an operation
    */
-  private async checkBalance(requirements: {
-    btc?: bigint;
-    tokens?: Map<string, bigint>;
-  }): Promise<{ sufficient: boolean; message?: string }> {
-    const balance = await this.getBalance();
+  async checkBalance(params: {
+    balancesToCheck: {
+      assetAddress: string;
+      amount: string | bigint;
+    }[];
+    errorPrefix?: string;
+    walletBalance?: WalletBalance;
+  }): Promise<void> {
+    const balance = params.walletBalance ?? (await this.getBalance());
+
+    // Check balance
+    const requirements: { btc?: bigint; tokens?: Map<string, bigint> } = {
+      tokens: new Map(),
+    };
+
+    for (const balance of params.balancesToCheck) {
+      if (balance.assetAddress === BTC_ASSET_PUBKEY) {
+        requirements.btc = BigInt(balance.amount);
+      } else {
+        requirements.tokens?.set(balance.assetAddress, BigInt(balance.amount));
+      }
+    }
 
     // Check BTC balance
     if (requirements.btc && balance.balance < requirements.btc) {
-      return {
-        sufficient: false,
-        message: `Insufficient BTC balance. Required: ${requirements.btc} sats, Available: ${balance.balance} sats`,
-      };
+      throw new Error(
+        [
+          params.errorPrefix ?? "",
+          `Insufficient BTC balance. `,
+          `Required: ${requirements.btc} sats, Available: ${balance.balance} sats`,
+        ].join("")
+      );
     }
 
     // Check token balances
@@ -491,15 +527,16 @@ export class FlashnetClient {
         const available = effectiveTokenBalance?.balance ?? 0n;
 
         if (available < requiredAmount) {
-          return {
-            sufficient: false,
-            message: `Insufficient token balance for ${tokenPubkey}. Required: ${requiredAmount}, Available: ${available}`,
-          };
+          throw new Error(
+            [
+              params.errorPrefix ?? "",
+              `Insufficient token balance for ${tokenPubkey}. `,
+              `Required: ${requiredAmount}, Available: ${available}`,
+            ].join("")
+          );
         }
       }
     }
-
-    return { sufficient: true };
   }
 
   // ===== Pool Operations =====
@@ -558,35 +595,19 @@ export class FlashnetClient {
 
     // Check if we need to add initial liquidity
     if (params.initialLiquidity) {
-      const requirements: { btc?: bigint; tokens?: Map<string, bigint> } = {
-        tokens: new Map(),
-      };
-
-      if (params.assetAAddress === BTC_ASSET_PUBKEY) {
-        requirements.btc = params.initialLiquidity.assetAAmount;
-      } else {
-        requirements.tokens?.set(
-          params.assetAAddress,
-          params.initialLiquidity.assetAAmount
-        );
-      }
-
-      if (params.assetBAddress === BTC_ASSET_PUBKEY) {
-        requirements.btc =
-          (requirements.btc || 0n) + params.initialLiquidity.assetBAmount;
-      } else {
-        requirements.tokens?.set(
-          params.assetBAddress,
-          params.initialLiquidity.assetBAmount
-        );
-      }
-
-      const balanceCheck = await this.checkBalance(requirements);
-      if (!balanceCheck.sufficient) {
-        throw new Error(
-          `Insufficient balance for initial liquidity: ${balanceCheck.message}`
-        );
-      }
+      await this.checkBalance({
+        balancesToCheck: [
+          {
+            assetAddress: params.assetAAddress,
+            amount: params.initialLiquidity.assetAAmount,
+          },
+          {
+            assetAddress: params.assetBAddress,
+            amount: params.initialLiquidity.assetBAmount,
+          },
+        ],
+        errorPrefix: "Insufficient balance for initial liquidity: ",
+      });
     }
 
     // Generate intent
@@ -640,7 +661,7 @@ export class FlashnetClient {
   /**
    * Create a single-sided pool with automatic initial deposit
    *
-   * This method creates a single-sided pool and automatically handles the initial deposit.
+   * This method creates a single-sided pool and by default automatically handles the initial deposit.
    * The initial reserve amount will be transferred to the pool and confirmed.
    */
   async createSingleSidedPool(params: {
@@ -652,53 +673,8 @@ export class FlashnetClient {
     lpFeeRateBps: number;
     totalHostFeeRateBps: number;
     hostNamespace?: string;
+    disableInitialDeposit?: boolean;
   }): Promise<CreatePoolResponse> {
-    const createResponse =
-      await this.createSingleSidedPoolNoInitialDeposit(params);
-
-    try {
-      const assetATransferId = await createResponse.transferInitialDeposit();
-
-      const confirmResponse = await this.confirmInitialDeposit(
-        createResponse.poolId,
-        assetATransferId
-      );
-
-      if (!confirmResponse.confirmed) {
-        throw new Error(
-          `Failed to confirm initial deposit: ${confirmResponse.message}`
-        );
-      }
-    } catch (error) {
-      // If initial deposit fails, we should inform the user
-      throw new Error(
-        `Pool created with ID ${
-          createResponse.poolId
-        }, but initial deposit failed: ${
-          error instanceof Error ? error.message : String(error)
-        }`
-      );
-    }
-
-    return createResponse;
-  }
-
-  /**
-   * Create a single-sided pool without automatic initial deposit
-   *
-   * This method creates a single-sided pool.
-   * The initial reserve amount will be transferred to the pool and confirmed.
-   */
-  async createSingleSidedPoolNoInitialDeposit(params: {
-    assetAAddress: string;
-    assetBAddress: string;
-    assetAInitialReserve: string;
-    assetAPctSoldAtGraduation: number;
-    targetBRaisedAtGraduation: string;
-    lpFeeRateBps: number;
-    totalHostFeeRateBps: number;
-    hostNamespace?: string;
-  }): Promise<CreatePoolNoInitialDepsoitResponse> {
     await this.ensureInitialized();
 
     // check that assetAPctSoldAtGraduation is between 0 and 100 - no decimals
@@ -715,26 +691,15 @@ export class FlashnetClient {
       );
     }
 
-    // Check balance for initial reserve
-    const requirements: { btc?: bigint; tokens?: Map<string, bigint> } = {
-      tokens: new Map(),
-    };
-
-    if (params.assetAAddress === BTC_ASSET_PUBKEY) {
-      requirements.btc = BigInt(params.assetAInitialReserve);
-    } else {
-      requirements.tokens?.set(
-        params.assetAAddress,
-        BigInt(params.assetAInitialReserve)
-      );
-    }
-
-    const balanceCheck = await this.checkBalance(requirements);
-    if (!balanceCheck.sufficient) {
-      throw new Error(
-        `Insufficient balance for pool creation: ${balanceCheck.message}`
-      );
-    }
+    await this.checkBalance({
+      balancesToCheck: [
+        {
+          assetAddress: params.assetAInitialReserve,
+          amount: params.assetAInitialReserve,
+        },
+      ],
+      errorPrefix: "Insufficient balance for pool creation: ",
+    });
 
     // Generate intent
     const nonce = generateNonce();
@@ -774,35 +739,45 @@ export class FlashnetClient {
 
     const createResponse = await this.typedApi.createSingleSidedPool(request);
 
-    const poolId = createResponse.poolId;
-    const transferInitialDeposit = async () => {
+    if (params.disableInitialDeposit) {
+      return createResponse;
+    }
+
+    try {
       // Transfer initial reserve to the pool using new address encoding
       const lpSparkAddress = encodeSparkAddressNew({
-        identityPublicKey: poolId,
+        identityPublicKey: createResponse.poolId,
         network: this.sparkNetwork,
       });
 
-      if (params.assetAAddress === BTC_ASSET_PUBKEY) {
-        const transfer = await this._wallet.transfer({
-          amountSats: Number(params.assetAInitialReserve),
-          receiverSparkAddress: lpSparkAddress,
-        });
-        return transfer.id;
-      } else {
-        return await this._wallet.transferTokens({
-          tokenIdentifier: this.toHumanReadableTokenIdentifier(
-            params.assetAAddress
-          ) as any,
-          tokenAmount: BigInt(params.assetAInitialReserve),
-          receiverSparkAddress: lpSparkAddress,
-        });
-      }
-    };
+      const assetATransferId = await this.transferAsset({
+        receiverSparkAddress: lpSparkAddress,
+        assetAddress: params.assetAAddress,
+        amount: params.assetAInitialReserve,
+      });
 
-    return {
-      ...createResponse,
-      transferInitialDeposit,
-    };
+      const confirmResponse = await this.confirmInitialDeposit(
+        createResponse.poolId,
+        assetATransferId
+      );
+
+      if (!confirmResponse.confirmed) {
+        throw new Error(
+          `Failed to confirm initial deposit: ${confirmResponse.message}`
+        );
+      }
+    } catch (error) {
+      // If initial deposit fails, we should inform the user
+      throw new Error(
+        `Pool created with ID ${
+          createResponse.poolId
+        }, but initial deposit failed: ${
+          error instanceof Error ? error.message : String(error)
+        }`
+      );
+    }
+
+    return createResponse;
   }
 
   /**
@@ -870,51 +845,48 @@ export class FlashnetClient {
   }): Promise<SwapResponse> {
     await this.ensureInitialized();
 
-    // Check balance
-    const requirements: { btc?: bigint; tokens?: Map<string, bigint> } = {
-      tokens: new Map(),
-    };
-
-    if (params.assetInAddress === BTC_ASSET_PUBKEY) {
-      requirements.btc = BigInt(params.amountIn);
-    } else {
-      requirements.tokens?.set(params.assetInAddress, BigInt(params.amountIn));
-    }
-
-    const balanceCheck = await this.checkBalance(requirements);
-    if (!balanceCheck.sufficient) {
-      throw new Error(`Insufficient balance for swap: ${balanceCheck.message}`);
-    }
-
     // Transfer assets to pool using new address encoding
     const lpSparkAddress = encodeSparkAddressNew({
       identityPublicKey: params.poolId,
       network: this.sparkNetwork,
     });
 
-    let transferId: string;
-    if (params.assetInAddress === BTC_ASSET_PUBKEY) {
-      const transfer = await this._wallet.transfer({
-        amountSats: Number(params.amountIn),
+    const transferId = await this.transferAsset(
+      {
         receiverSparkAddress: lpSparkAddress,
-      });
-      transferId = transfer.id;
-    } else {
-      transferId = await this._wallet.transferTokens({
-        tokenIdentifier: this.toHumanReadableTokenIdentifier(
-          params.assetInAddress
-        ) as any,
-        tokenAmount: BigInt(params.amountIn),
-        receiverSparkAddress: lpSparkAddress,
-      });
-    }
+        assetAddress: params.assetInAddress,
+        amount: params.amountIn,
+      },
+      "Insufficient balance for swap: "
+    );
+
+    const response = await this.executeSwapIntent({
+      ...params,
+      transferId,
+    });
+
+    return response;
+  }
+
+  async executeSwapIntent(params: {
+    poolId: string;
+    transferId: string;
+    assetInAddress: string;
+    assetOutAddress: string;
+    amountIn: string;
+    maxSlippageBps: number;
+    minAmountOut: string;
+    integratorFeeRateBps?: number;
+    integratorPublicKey?: string;
+  }) {
+    await this.ensureInitialized();
 
     // Generate swap intent
     const nonce = generateNonce();
     const intentMessage = generatePoolSwapIntentMessage({
       userPublicKey: this.publicKey,
       lpIdentityPublicKey: params.poolId,
-      assetInSparkTransferId: transferId,
+      assetInSparkTransferId: params.transferId,
       assetInTokenPublicKey: this.toHexTokenIdentifier(params.assetInAddress),
       assetOutTokenPublicKey: this.toHexTokenIdentifier(params.assetOutAddress),
       amountIn: params.amountIn.toString(),
@@ -940,7 +912,7 @@ export class FlashnetClient {
       amountIn: params.amountIn.toString(),
       maxSlippageBps: params.maxSlippageBps?.toString(),
       minAmountOut: params.minAmountOut,
-      assetInSparkTransferId: transferId,
+      assetInSparkTransferId: params.transferId,
       totalIntegratorFeeRateBps: params.integratorFeeRateBps?.toString() || "0",
       integratorPublicKey: params.integratorPublicKey || "",
       nonce,
@@ -990,27 +962,6 @@ export class FlashnetClient {
   }): Promise<ExecuteRouteSwapResponse> {
     await this.ensureInitialized();
 
-    // Check balance for initial asset
-    const requirements: { btc?: bigint; tokens?: Map<string, bigint> } = {
-      tokens: new Map(),
-    };
-
-    if (params.initialAssetAddress === BTC_ASSET_PUBKEY) {
-      requirements.btc = BigInt(params.inputAmount);
-    } else {
-      requirements.tokens?.set(
-        params.initialAssetAddress,
-        BigInt(params.inputAmount)
-      );
-    }
-
-    const balanceCheck = await this.checkBalance(requirements);
-    if (!balanceCheck.sufficient) {
-      throw new Error(
-        `Insufficient balance for route swap: ${balanceCheck.message}`
-      );
-    }
-
     // Validate hops array
     if (!params.hops.length) {
       throw new Error("Route swap requires at least one hop");
@@ -1027,22 +978,14 @@ export class FlashnetClient {
       network: this.sparkNetwork,
     });
 
-    let initialTransferId: string;
-    if (params.initialAssetAddress === BTC_ASSET_PUBKEY) {
-      const transfer = await this._wallet.transfer({
-        amountSats: Number(params.inputAmount),
+    const initialTransferId = await this.transferAsset(
+      {
         receiverSparkAddress: lpSparkAddress,
-      });
-      initialTransferId = transfer.id;
-    } else {
-      initialTransferId = await this._wallet.transferTokens({
-        tokenIdentifier: this.toHumanReadableTokenIdentifier(
-          params.initialAssetAddress
-        ) as any,
-        tokenAmount: BigInt(params.inputAmount),
-        receiverSparkAddress: lpSparkAddress,
-      });
-    }
+        assetAddress: params.initialAssetAddress,
+        amount: params.inputAmount,
+      },
+      "Insufficient balance for route swap: "
+    );
 
     // Prepare hops for validation
     const hops: RouteHopValidation[] = params.hops.map((hop) => ({
@@ -1146,71 +1089,27 @@ export class FlashnetClient {
     // Get pool details to know which assets we're dealing with
     const pool = await this.getPool(params.poolId);
 
-    // Check balance
-    const requirements: { btc?: bigint; tokens?: Map<string, bigint> } = {
-      tokens: new Map(),
-    };
-
-    if (pool.assetAAddress === BTC_ASSET_PUBKEY) {
-      requirements.btc = BigInt(params.assetAAmount);
-    } else {
-      requirements.tokens?.set(pool.assetAAddress, BigInt(params.assetAAmount));
-    }
-
-    if (pool.assetBAddress === BTC_ASSET_PUBKEY) {
-      requirements.btc = (requirements.btc || 0n) + BigInt(params.assetBAmount);
-    } else {
-      requirements.tokens?.set(pool.assetBAddress, BigInt(params.assetBAmount));
-    }
-
-    const balanceCheck = await this.checkBalance(requirements);
-    if (!balanceCheck.sufficient) {
-      throw new Error(
-        `Insufficient balance for adding liquidity: ${balanceCheck.message}`
-      );
-    }
-
     // Transfer assets to pool using new address encoding
     const lpSparkAddress = encodeSparkAddressNew({
       identityPublicKey: params.poolId,
       network: this.sparkNetwork,
     });
 
-    // Transfer asset A
-    let assetATransferId: string;
-    if (pool.assetAAddress === BTC_ASSET_PUBKEY) {
-      const transfer = await this._wallet.transfer({
-        amountSats: Number(params.assetAAmount),
-        receiverSparkAddress: lpSparkAddress,
-      });
-      assetATransferId = transfer.id;
-    } else {
-      assetATransferId = await this._wallet.transferTokens({
-        tokenIdentifier: this.toHumanReadableTokenIdentifier(
-          pool.assetAAddress
-        ) as any,
-        tokenAmount: BigInt(params.assetAAmount),
-        receiverSparkAddress: lpSparkAddress,
-      });
-    }
-
-    // Transfer asset B
-    let assetBTransferId: string;
-    if (pool.assetBAddress === BTC_ASSET_PUBKEY) {
-      const transfer = await this._wallet.transfer({
-        amountSats: Number(params.assetBAmount),
-        receiverSparkAddress: lpSparkAddress,
-      });
-      assetBTransferId = transfer.id;
-    } else {
-      assetBTransferId = await this._wallet.transferTokens({
-        tokenIdentifier: this.toHumanReadableTokenIdentifier(
-          pool.assetBAddress
-        ) as any,
-        tokenAmount: BigInt(params.assetBAmount),
-        receiverSparkAddress: lpSparkAddress,
-      });
-    }
+    const [assetATransferId, assetBTransferId] = await this.transferAssets<2>(
+      [
+        {
+          receiverSparkAddress: lpSparkAddress,
+          assetAddress: pool.assetAAddress,
+          amount: params.assetAAmount,
+        },
+        {
+          receiverSparkAddress: lpSparkAddress,
+          assetAddress: pool.assetBAddress,
+          amount: params.assetBAmount,
+        },
+      ],
+      "Insufficient balance for adding liquidity: "
+    );
 
     // Generate add liquidity intent
     const nonce = generateNonce();
@@ -1608,6 +1507,58 @@ export class FlashnetClient {
   // ===== Helper Methods =====
 
   /**
+   * Performs asset transfer using generalized asset address for both BTC and tokens.
+   */
+  async transferAsset(
+    recipient: TransferAssetRecipient,
+    checkBalanceErrorPrefix?: string
+  ): Promise<string> {
+    const transferIds = await this.transferAssets<1>(
+      [recipient],
+      checkBalanceErrorPrefix
+    );
+    return transferIds[0];
+  }
+
+  /**
+   * Performs asset transfers using generalized asset addresses for both BTC and tokens.
+   * Supports optional generic to hardcode recipients length so output list can be typed with same length.
+   */
+  async transferAssets<N extends number | unknown = unknown>(
+    recipients: TupleArray<TransferAssetRecipient, N>,
+    checkBalanceErrorPrefix?: string
+  ): Promise<TupleArray<string, N>> {
+    if (checkBalanceErrorPrefix) {
+      await this.checkBalance({
+        balancesToCheck: recipients,
+        errorPrefix: checkBalanceErrorPrefix,
+      });
+    }
+
+    const transferIds = [];
+    for (const recipient of recipients) {
+      if (recipient.assetAddress === BTC_ASSET_PUBKEY) {
+        const transfer = await this._wallet.transfer({
+          amountSats: Number(recipient.amount),
+          receiverSparkAddress: recipient.receiverSparkAddress,
+        });
+        transferIds.push(transfer.id);
+      } else {
+        const transferId = await this._wallet.transferTokens({
+          tokenIdentifier: this.toHumanReadableTokenIdentifier(
+            recipient.assetAddress
+          ) as any,
+          tokenAmount: BigInt(recipient.amount),
+          receiverSparkAddress: recipient.receiverSparkAddress,
+        });
+        transferIds.push(transferId);
+      }
+    }
+
+    return transferIds as TupleArray<string, N>;
+  }
+
+  /**
    * Helper method to add initial liquidity after pool creation
    */
   private async addInitialLiquidity(
@@ -1622,41 +1573,18 @@ export class FlashnetClient {
       network: this.sparkNetwork,
     });
 
-    // Transfer asset A
-    let assetATransferId: string;
-    if (assetAAddress === BTC_ASSET_PUBKEY) {
-      const transfer = await this._wallet.transfer({
-        amountSats: Number(assetAAmount),
+    const [assetATransferId, assetBTransferId] = await this.transferAssets<2>([
+      {
         receiverSparkAddress: lpSparkAddress,
-      });
-      assetATransferId = transfer.id;
-    } else {
-      assetATransferId = await this._wallet.transferTokens({
-        tokenIdentifier: this.toHumanReadableTokenIdentifier(
-          assetAAddress
-        ) as any,
-        tokenAmount: BigInt(assetAAmount),
+        assetAddress: assetAAddress,
+        amount: assetAAmount,
+      },
+      {
         receiverSparkAddress: lpSparkAddress,
-      });
-    }
-
-    // Transfer asset B
-    let assetBTransferId: string;
-    if (assetBAddress === BTC_ASSET_PUBKEY) {
-      const transfer = await this._wallet.transfer({
-        amountSats: Number(assetBAmount),
-        receiverSparkAddress: lpSparkAddress,
-      });
-      assetBTransferId = transfer.id;
-    } else {
-      assetBTransferId = await this._wallet.transferTokens({
-        tokenIdentifier: this.toHumanReadableTokenIdentifier(
-          assetBAddress
-        ) as any,
-        tokenAmount: BigInt(assetBAmount),
-        receiverSparkAddress: lpSparkAddress,
-      });
-    }
+        assetAddress: assetBAddress,
+        amount: assetBAmount,
+      },
+    ]);
 
     // Add liquidity
     const nonce = generateNonce();
