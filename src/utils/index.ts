@@ -56,5 +56,15 @@ export function compareDecimalStrings(a: string, b: string): number {
   return fracAPadded < fracBPadded ? -1 : 1;
 }
 
+export function bigintTo16ByteArray(value: bigint) {
+  let valueToTrack = value;
+  const buffer = new Uint8Array(16);
+  for (let i = 15; i >= 0 && valueToTrack > 0n; i--) {
+    buffer[i] = Number(valueToTrack & 255n);
+    valueToTrack >>= 8n;
+  }
+  return buffer;
+}
+
 // Export the createWalletSigner utility
 export { createWalletSigner } from "../utils/signer";

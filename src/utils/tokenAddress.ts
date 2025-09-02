@@ -1,6 +1,8 @@
 import { bytesToHex, hexToBytes } from "@noble/hashes/utils";
 import { bech32m } from "@scure/base";
 import type { NetworkType, SparkNetworkType } from "../types";
+import { sha256 } from "@noble/hashes/sha2.js";
+import { bigintTo16ByteArray } from ".";
 
 const SparkHumanReadableTokenIdentifierNetworkPrefix: Record<
   SparkNetworkType,
@@ -19,6 +21,18 @@ export type SparkHumanReadableTokenIdentifier =
   | `btknt1${string}`
   | `btkns1${string}`
   | `btknl1${string}`;
+
+type TokenIdentifierHashes = {
+  versionHash: Uint8Array;
+  issuerPublicKeyHash: Uint8Array;
+  nameHash: Uint8Array;
+  tickerHash: Uint8Array;
+  decimalsHash: Uint8Array;
+  maxSupplyHash: Uint8Array;
+  isFreezableHash: Uint8Array;
+  networkHash: Uint8Array;
+  creationEntityPublicKeyHash: Uint8Array;
+};
 
 const NETWORK_MAGIC = {
   MAINNET: 3652501241,
@@ -177,67 +191,83 @@ export function decodeHumanReadableTokenIdentifier(
   }
 }
 
-async function sha256(buffer: Uint8Array): Promise<Uint8Array> {
-  return new Uint8Array(await crypto.subtle.digest("SHA-256", buffer));
-}
-
-function bigintTo16ByteArray(value: bigint) {
-  let valueToTrack = value;
-  const buffer = new Uint8Array(16);
-  for (let i = 15; i >= 0 && valueToTrack > 0n; i--) {
-    buffer[i] = Number(valueToTrack & 255n);
-    valueToTrack >>= 8n;
-  }
-  return buffer;
-}
-
-export async function getTokenIdentifier(token: {
-  issuerPublicKey: string;
+export function getTokenIdentifierHashes(token: {
+  issuerPublicKey: string | Uint8Array;
   name: string;
   ticker: string;
   decimals: number;
   maxSupply: bigint;
   isFreezable: boolean;
   network: keyof typeof NETWORK_MAGIC;
-  creationEntityPublicKey: string;
-}): Promise<Uint8Array> {
+  creationEntityPublicKey: string | Uint8Array;
+}): TokenIdentifierHashes {
   const encoder = new TextEncoder();
-  const allHashes = [
-    await sha256(new Uint8Array([1])),
-    await sha256(hexToBytes(token.issuerPublicKey)),
-    await sha256(encoder.encode(token.name)),
-    await sha256(encoder.encode(token.ticker)),
-    await sha256(new Uint8Array([token.decimals])),
-  ];
 
-  const maxSupplyBytes = bigintTo16ByteArray(token.maxSupply);
-  if (maxSupplyBytes.length !== 16) {
-    throw Error(
-      `Max supply must be exactly 16 bytes, got ${maxSupplyBytes.length}`
-    );
-  }
-  allHashes.push(await sha256(maxSupplyBytes));
-  allHashes.push(await sha256(new Uint8Array([token.isFreezable ? 1 : 0])));
+  const oneHash = sha256(new Uint8Array([1]));
+  const versionHash = oneHash;
+  const nameHash = sha256(encoder.encode(token.name));
+  const tickerHash = sha256(encoder.encode(token.ticker));
+  const decimalsHash = sha256(new Uint8Array([token.decimals]));
+
+  const isFreezableHash = sha256(new Uint8Array([token.isFreezable ? 1 : 0]));
 
   const networkMagic = NETWORK_MAGIC[token.network];
   const networkBytes = new Uint8Array(4);
   new DataView(networkBytes.buffer).setUint32(0, networkMagic, false);
-  allHashes.push(await sha256(networkBytes));
+  const networkHash = sha256(networkBytes);
 
-  const creationEntityBytes = hexToBytes(token.creationEntityPublicKey);
+  const creationEntityBytes =
+    typeof token.creationEntityPublicKey === "string"
+      ? hexToBytes(token.creationEntityPublicKey)
+      : token.creationEntityPublicKey;
   const isL1 =
     !creationEntityBytes ||
     (creationEntityBytes.length === 33 &&
       creationEntityBytes.every((byte) => byte === 0));
 
-  if (isL1) {
-    allHashes.push(await sha256(new Uint8Array([1])));
-  } else {
-    const layerData = new Uint8Array(34);
-    layerData[0] = 2;
-    layerData.set(creationEntityBytes, 1);
-    allHashes.push(await sha256(layerData));
-  }
+  const creationEntityPublicKeyHash = isL1
+    ? oneHash
+    : (() => {
+        const layerData = new Uint8Array(34);
+        layerData[0] = 2;
+        layerData.set(creationEntityBytes, 1);
+        return sha256(layerData);
+      })();
+
+  const issuerPublicKeyHash = sha256(
+    typeof token.issuerPublicKey === "string"
+      ? hexToBytes(token.issuerPublicKey)
+      : token.issuerPublicKey
+  );
+
+  const maxSupplyBytes = bigintTo16ByteArray(token.maxSupply);
+  const maxSupplyHash = sha256(maxSupplyBytes);
+
+  return {
+    versionHash,
+    issuerPublicKeyHash,
+    nameHash,
+    tickerHash,
+    decimalsHash,
+    maxSupplyHash,
+    isFreezableHash,
+    networkHash,
+    creationEntityPublicKeyHash,
+  };
+}
+
+export function getTokenIdentifierWithHashes(hashes: TokenIdentifierHashes) {
+  const allHashes = [
+    hashes.versionHash,
+    hashes.issuerPublicKeyHash,
+    hashes.nameHash,
+    hashes.tickerHash,
+    hashes.decimalsHash,
+    hashes.maxSupplyHash,
+    hashes.isFreezableHash,
+    hashes.networkHash,
+    hashes.creationEntityPublicKeyHash,
+  ];
 
   const concatenated = new Uint8Array(
     allHashes.reduce((acc, h) => acc + h.length, 0)
@@ -248,21 +278,35 @@ export async function getTokenIdentifier(token: {
     offset += h.length;
   }
 
-  return await sha256(concatenated);
+  return sha256(concatenated);
 }
 
-export async function getHumanReadableTokenIdentifier(token: {
-  issuerPublicKey: string;
+export function getTokenIdentifier(token: {
+  issuerPublicKey: string | Uint8Array;
   name: string;
   ticker: string;
   decimals: number;
   maxSupply: bigint;
   isFreezable: boolean;
   network: keyof typeof NETWORK_MAGIC;
-  creationEntityPublicKey: string;
-}): Promise<SparkHumanReadableTokenIdentifier> {
+  creationEntityPublicKey: string | Uint8Array;
+}): Uint8Array {
+  const tokenHashes = getTokenIdentifierHashes(token);
+  return getTokenIdentifierWithHashes(tokenHashes);
+}
+
+export function getHumanReadableTokenIdentifier(token: {
+  issuerPublicKey: string | Uint8Array;
+  name: string;
+  ticker: string;
+  decimals: number;
+  maxSupply: bigint;
+  isFreezable: boolean;
+  network: keyof typeof NETWORK_MAGIC;
+  creationEntityPublicKey: string | Uint8Array;
+}): SparkHumanReadableTokenIdentifier {
   return encodeSparkHumanReadableTokenIdentifier(
-    await getTokenIdentifier(token),
+    getTokenIdentifier(token),
     token.network
   );
 }
