@@ -3,12 +3,18 @@
 import {
   getHumanReadableTokenIdentifier,
   SPARK_TOKEN_CREATION_ENTITY_PUBLIC_KEY,
+  getTokenIdentifierHashes,
+  getTokenIdentifierWithHashes,
+  encodeSparkHumanReadableTokenIdentifier,
+  bigintTo16ByteArray,
 } from "@flashnet/sdk";
 import { ApiClient } from "@flashnet/sdk/api";
 // Test modular imports without wallet dependencies
 import { AuthManager } from "@flashnet/sdk/auth";
 import { getNetworkConfig } from "@flashnet/sdk/config";
 import { encodeSparkAddress, generateNonce } from "@flashnet/sdk/utils";
+import { secp256k1 } from "@noble/curves/secp256k1";
+import { sha256 } from "@noble/hashes/sha2";
 
 console.log("Testing modular imports...\n");
 
@@ -49,7 +55,7 @@ console.log(`  AuthManager created with custom signer`);
 
 // Test 5: getHumanReadableTokenIdentifier
 console.log("✓ Testing getHumanReadableTokenIdentifier");
-const generatedTokenAddress = await getHumanReadableTokenIdentifier({
+const generatedTokenAddress = getHumanReadableTokenIdentifier({
   issuerPublicKey:
     "029e4d50f931c170e100c1b7129e353cddd69c8ae50bf274e7a68b05144ef8b55e",
   decimals: 8,
@@ -70,6 +76,42 @@ if (
     `  Calculated token address does not match expected btkn1daywtenlww42njymqzyegvcwuy3p9f26zknme0srxa7tagewvuys86h553`
   );
   process.exit(1);
+}
+
+{
+  const issuerPrivateKey = secp256k1.utils.randomSecretKey();
+  const issuerPublicKey = secp256k1.getPublicKey(issuerPrivateKey);
+
+  const start = Date.now();
+
+  let maxSupply = 100_000_000_000_000_000n;
+  const hashes = getTokenIdentifierHashes({
+    issuerPublicKey,
+    decimals: 8,
+    isFreezable: false,
+    name: "FlashSparks",
+    ticker: "FSPKS",
+    maxSupply,
+    network: "MAINNET",
+    creationEntityPublicKey: SPARK_TOKEN_CREATION_ENTITY_PUBLIC_KEY,
+  });
+
+  let humanReadableTokenIdentifier = "";
+  while (!humanReadableTokenIdentifier.endsWith("d0g")) {
+    const tokenIdentifier = getTokenIdentifierWithHashes(hashes);
+    humanReadableTokenIdentifier = encodeSparkHumanReadableTokenIdentifier(
+      tokenIdentifier,
+      "MAINNET"
+    );
+
+    hashes.maxSupplyHash = sha256(bigintTo16ByteArray(++maxSupply));
+  }
+
+  const end = Date.now();
+  console.log(`  Time elapsed: ${(end - start) / 1000} seconds`);
+  console.log(
+    `  Token identifier with d0g suffix: ${humanReadableTokenIdentifier}`
+  );
 }
 
 console.log("\n✅ All modular imports working correctly!");

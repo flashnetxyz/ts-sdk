@@ -32,7 +32,12 @@ export {
 // Export configuration (new and legacy)
 export * from "./src/config";
 export type * from "./src/types";
-export { fromSmallestUnit, generateNonce, toSmallestUnit } from "./src/utils";
+export {
+  fromSmallestUnit,
+  generateNonce,
+  toSmallestUnit,
+  bigintTo16ByteArray,
+} from "./src/utils";
 export { AuthManager } from "./src/utils/auth";
 export {
   generateAddLiquidityIntentMessage,
@@ -76,6 +81,8 @@ export {
   encodeSparkHumanReadableTokenIdentifier,
   getHumanReadableTokenIdentifier,
   getTokenIdentifier,
+  getTokenIdentifierHashes,
+  getTokenIdentifierWithHashes,
   type HumanReadableTokenIdentifier,
   SPARK_TOKEN_CREATION_ENTITY_PUBLIC_KEY,
   type SparkHumanReadableTokenIdentifier,
