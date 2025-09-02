@@ -1,6 +1,6 @@
 {
   "name": "@flashnet/sdk",
-  "version": "0.3.12-rc.cola",
+  "version": "0.3.12-rc.cars",
   "main": "./dist/cjs/index.js",
   "module": "./dist/esm/index.js",
   "types": "./dist/esm/index.d.ts",
