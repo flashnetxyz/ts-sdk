@@ -598,6 +598,7 @@ export class FlashnetClient {
     assetBAddress: string;
     lpFeeRateBps: number;
     totalHostFeeRateBps: number;
+    poolOwnerPublicKey?: string;
     hostNamespace?: string;
     initialLiquidity?: {
       assetAAmount: bigint;
@@ -625,11 +626,13 @@ export class FlashnetClient {
       });
     }
 
+    const poolOwnerPublicKey = params.poolOwnerPublicKey ?? this.publicKey;
+
     // Generate intent
     const nonce = generateNonce();
     const intentMessage =
       generateConstantProductPoolInitializationIntentMessage({
-        poolOwnerPublicKey: this.publicKey,
+        poolOwnerPublicKey,
         assetAAddress: this.toHexTokenIdentifier(params.assetAAddress),
         assetBAddress: this.toHexTokenIdentifier(params.assetBAddress),
         lpFeeRateBps: params.lpFeeRateBps.toString(),
@@ -647,7 +650,7 @@ export class FlashnetClient {
 
     // Create pool
     const request: CreateConstantProductPoolRequest = {
-      poolOwnerPublicKey: this.publicKey,
+      poolOwnerPublicKey,
       assetAAddress: this.toHexTokenIdentifier(params.assetAAddress),
       assetBAddress: this.toHexTokenIdentifier(params.assetBAddress),
       lpFeeRateBps: params.lpFeeRateBps.toString(),
@@ -771,6 +774,7 @@ export class FlashnetClient {
     threshold: string;
     lpFeeRateBps: number;
     totalHostFeeRateBps: number;
+    poolOwnerPublicKey?: string;
     hostNamespace?: string;
     disableInitialDeposit?: boolean;
   }): Promise<CreatePoolResponse> {
@@ -803,10 +807,12 @@ export class FlashnetClient {
       errorPrefix: "Insufficient balance for pool creation: ",
     });
 
+    const poolOwnerPublicKey = params.poolOwnerPublicKey ?? this.publicKey;
+
     // Generate intent
     const nonce = generateNonce();
     const intentMessage = generatePoolInitializationIntentMessage({
-      poolOwnerPublicKey: this.publicKey,
+      poolOwnerPublicKey,
       assetAAddress: this.toHexTokenIdentifier(params.assetAAddress),
       assetBAddress: this.toHexTokenIdentifier(params.assetBAddress),
       assetAInitialReserve: clippedAssetAInitialReserve,
@@ -827,7 +833,7 @@ export class FlashnetClient {
 
     // Create pool
     const request: CreateSingleSidedPoolRequest = {
-      poolOwnerPublicKey: this.publicKey,
+      poolOwnerPublicKey,
       assetAAddress: this.toHexTokenIdentifier(params.assetAAddress),
       assetBAddress: this.toHexTokenIdentifier(params.assetBAddress),
       assetAInitialReserve: clippedAssetAInitialReserve,
@@ -862,7 +868,8 @@ export class FlashnetClient {
 
       const confirmResponse = await this.confirmInitialDeposit(
         createResponse.poolId,
-        assetATransferId
+        assetATransferId,
+        poolOwnerPublicKey
       );
 
       if (!confirmResponse.confirmed) {
@@ -892,13 +899,14 @@ export class FlashnetClient {
    */
   async confirmInitialDeposit(
     poolId: string,
-    assetASparkTransferId: string
+    assetASparkTransferId: string,
+    poolOwnerPublicKey?: string
   ): Promise<ConfirmDepositResponse> {
     await this.ensureInitialized();
 
     const nonce = generateNonce();
     const intentMessage = generatePoolConfirmInitialDepositIntentMessage({
-      poolOwnerPublicKey: this.publicKey,
+      poolOwnerPublicKey: poolOwnerPublicKey ?? this.publicKey,
       lpIdentityPublicKey: poolId,
       assetASparkTransferId,
       nonce,
@@ -916,7 +924,7 @@ export class FlashnetClient {
       assetASparkTransferId,
       nonce,
       signature: Buffer.from(signature).toString("hex"),
-      poolOwnerPublicKey: this.publicKey,
+      poolOwnerPublicKey: poolOwnerPublicKey ?? this.publicKey,
     };
 
     return this.typedApi.confirmInitialDeposit(request);
