@@ -1115,33 +1115,33 @@ export interface EscrowRecipientInput {
 export type Condition = LogicCondition | TimeCondition | AmmStateCondition;
 
 interface LogicCondition {
-  conditionType: 'and' | 'or';
+  conditionType: "and" | "or";
   data: {
     conditions: Condition[];
   };
 }
 
 interface TimeCondition {
-  conditionType: 'time';
+  conditionType: "time";
   data: {
-    comparison: 'after' | 'before';
+    comparison: "after" | "before";
     timestamp: string;
   };
 }
 
 interface AmmStateCondition {
-  conditionType: 'amm_state';
+  conditionType: "amm_state";
   data: {
     ammId: string;
     stateCheck:
       | {
-          type: 'minimum_reserve';
-          asset: 'A' | 'B';
+          type: "minimum_reserve";
+          asset: "A" | "B";
           min: string;
         }
       | {
-          type: 'phase';
-          phase: 'double_sided';
+          type: "phase";
+          phase: "double_sided";
         };
   };
 }
