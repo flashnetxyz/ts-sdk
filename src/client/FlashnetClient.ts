@@ -692,24 +692,20 @@ export class FlashnetClient {
    * @returns An object containing `virtualReserveA`, `virtualReserveB`, and `threshold`.
    */
   public static calculateVirtualReserves(params: {
-    initialTokenSupply: number | string;
+    initialTokenSupply: bigint;
     graduationThresholdPct: number;
-    targetRaise: number | string;
-  }): { virtualReserveA: number; virtualReserveB: number; threshold: number } {
-    const supply = Number(params.initialTokenSupply);
-    const targetB = Number(params.targetRaise);
-    const lpFrac = 1.0;
+    targetRaise: bigint;
+  }): { virtualReserveA: bigint; virtualReserveB: bigint; threshold: number } {
+    const supply = params.initialTokenSupply;
+    const targetB = params.targetRaise;
 
     // Validate inputs
-    if (supply <= 0) {
+    if (supply <= 0n) {
       throw new Error("Initial token supply must be positive");
     }
-    if (targetB <= 0) {
+    if (targetB <= 0n) {
       throw new Error("Target raise must be positive");
     }
-
-    const MIN_GRADUATION_THRESHOLD_PCT = 20;
-    const MAX_GRADUATION_THRESHOLD_PCT = 95;
 
     // Validate graduation threshold is a positive whole number
     if (
@@ -720,37 +716,40 @@ export class FlashnetClient {
         "Graduation threshold percentage must be a positive whole number"
       );
     }
+    const graduationThresholdPct = BigInt(params.graduationThresholdPct);
+
+    // Check feasibility: f - g*(1-f) > 0 where f is graduationThresholdPct/100 and g is 1
+    const MIN_GRADUATION_THRESHOLD_PCT = 50n;
+    const MAX_GRADUATION_THRESHOLD_PCT = 95n;
 
     if (
-      params.graduationThresholdPct < MIN_GRADUATION_THRESHOLD_PCT ||
-      params.graduationThresholdPct > MAX_GRADUATION_THRESHOLD_PCT
+      graduationThresholdPct <= MIN_GRADUATION_THRESHOLD_PCT ||
+      graduationThresholdPct > MAX_GRADUATION_THRESHOLD_PCT
     ) {
       throw new Error(
-        `Graduation threshold percentage must be between ${MIN_GRADUATION_THRESHOLD_PCT} and ${MAX_GRADUATION_THRESHOLD_PCT}`
+        `Graduation threshold percentage must be greater than ${MIN_GRADUATION_THRESHOLD_PCT} ` +
+          `and not greater than ${MAX_GRADUATION_THRESHOLD_PCT}`
       );
-    }
-
-    if (lpFrac <= 0 || lpFrac > 1) {
-      throw new Error("LP fraction must be between 0 and 1");
     }
 
     // Calculate graduation parameters
-    const f = params.graduationThresholdPct / 100;
-    const g = lpFrac;
+    const f = graduationThresholdPct / 100n;
 
-    // Check feasibility: f - g*(1-f) > 0
-    const denom = f - g * (1 - f);
-    if (denom <= 0) {
-      throw new Error(
-        `Invalid configuration: graduation threshold ${
-          f * 100
-        }% with LP fraction ${g} is infeasible. Need f > g/(1+g)`
-      );
-    }
+    // f       is graduationThresholdPct / 100n
+    // denom   is (2n * graduationThresholdPct / 100n) - 1n
+    //            (2n * graduationThresholdPct - 100n) / 100n
+    // 1/denom is 100n / (2n * graduationThresholdPct - 100n)
 
     // Calculate virtual reserves and round down to integers
-    const virtualA = Math.floor((supply * f * f) / denom);
-    const virtualB = Math.floor((targetB * g * (1 - f)) / denom);
+    // virtualA is (supply * f * f) / denom
+    const virtualA =
+      (supply * graduationThresholdPct ** 2n) /
+      (200n * graduationThresholdPct - 10000n);
+
+    // virtualB is (targetB * g * (1 - f)) / denom
+    const virtualB =
+      (targetB * (100n - graduationThresholdPct)) /
+      (2n * graduationThresholdPct - 100n);
 
     return {
       virtualReserveA: virtualA,
