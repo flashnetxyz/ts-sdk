@@ -29,8 +29,8 @@ export function generatePoolInitializationIntentMessage(params: {
 }): Uint8Array {
   const intentMessage: ValidateAmmInitializeSingleSidedPoolData = {
     poolOwnerPublicKey: params.poolOwnerPublicKey,
-    assetATokenPublicKey: params.assetAAddress,
-    assetBTokenPublicKey: params.assetBAddress,
+    assetAAddress: params.assetAAddress,
+    assetBAddress: params.assetBAddress,
     assetAInitialReserve: params.assetAInitialReserve,
     virtualReserveA: params.virtualReserveA,
     virtualReserveB: params.virtualReserveB,
@@ -58,8 +58,8 @@ export function generateConstantProductPoolInitializationIntentMessage(params: {
 }): Uint8Array {
   const intentMessage: ValidateAmmInitializeConstantProductPoolData = {
     poolOwnerPublicKey: params.poolOwnerPublicKey,
-    assetATokenPublicKey: params.assetAAddress,
-    assetBTokenPublicKey: params.assetBAddress,
+    assetAAddress: params.assetAAddress,
+    assetBAddress: params.assetBAddress,
     totalHostFeeRateBps: params.totalHostFeeRateBps,
     lpFeeRateBps: params.lpFeeRateBps,
     nonce: params.nonce,
@@ -97,8 +97,8 @@ export function generatePoolSwapIntentMessage(params: {
   userPublicKey: string;
   lpIdentityPublicKey: string;
   assetInSparkTransferId: string;
-  assetInTokenPublicKey: string;
-  assetOutTokenPublicKey: string;
+  assetInAddress: string;
+  assetOutAddress: string;
   amountIn: string;
   maxSlippageBps: string;
   minAmountOut: string;
@@ -109,8 +109,8 @@ export function generatePoolSwapIntentMessage(params: {
     userPublicKey: params.userPublicKey,
     lpIdentityPublicKey: params.lpIdentityPublicKey,
     assetInSparkTransferId: params.assetInSparkTransferId,
-    assetInTokenPublicKey: params.assetInTokenPublicKey,
-    assetOutTokenPublicKey: params.assetOutTokenPublicKey,
+    assetInAddress: params.assetInAddress,
+    assetOutAddress: params.assetOutAddress,
     amountIn: params.amountIn,
     minAmountOut: params.minAmountOut,
     maxSlippageBps: params.maxSlippageBps,

@@ -11,6 +11,7 @@ export {
 export {
   commonValidationRules,
   constantProductPoolValidationRules,
+  singleSidedPoolValidationRules,
   ValidationError,
   type ValidationRule,
   type ValidationRules,
@@ -32,6 +33,11 @@ export {
 // Export configuration (new and legacy)
 export * from "./src/config";
 export type * from "./src/types";
+export {
+  calculateThresholdPercentage,
+  validateSingleSidedPoolThreshold,
+  type ValidationResult,
+} from "./src/types";
 export { fromSmallestUnit, generateNonce, toSmallestUnit } from "./src/utils";
 export { AuthManager } from "./src/utils/auth";
 export {

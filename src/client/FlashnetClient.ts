@@ -715,7 +715,7 @@ export class FlashnetClient {
     return {
       virtualReserveA: virtualA,
       virtualReserveB: virtualB,
-      threshold: params.graduationThresholdPct,
+      threshold: supply * params.graduationThresholdPct / 100,
     };
   }
 
@@ -836,6 +836,7 @@ export class FlashnetClient {
           });
         }
 
+        
         // Confirm the initial deposit
         const confirmNonce = generateNonce();
         const confirmIntentMessage =
@@ -995,8 +996,8 @@ export class FlashnetClient {
       userPublicKey: this.publicKey,
       lpIdentityPublicKey: params.poolId,
       assetInSparkTransferId: transferId,
-      assetInTokenPublicKey: this.toHexTokenIdentifier(params.assetInAddress),
-      assetOutTokenPublicKey: this.toHexTokenIdentifier(params.assetOutAddress),
+      assetInAddress: this.toHexTokenIdentifier(params.assetInAddress),
+      assetOutAddress: this.toHexTokenIdentifier(params.assetOutAddress),
       amountIn: params.amountIn.toString(),
       maxSlippageBps: params.maxSlippageBps.toString(),
       minAmountOut: params.minAmountOut,
@@ -1127,8 +1128,8 @@ export class FlashnetClient {
     // Prepare hops for validation
     const hops: RouteHopValidation[] = params.hops.map((hop) => ({
       lpIdentityPublicKey: hop.poolId,
-      inputAssetPublicKey: this.toHexTokenIdentifier(hop.assetInAddress),
-      outputAssetPublicKey: this.toHexTokenIdentifier(hop.assetOutAddress),
+      assetInAddress: this.toHexTokenIdentifier(hop.assetInAddress),
+      assetOutAddress: this.toHexTokenIdentifier(hop.assetOutAddress),
       hopIntegratorFeeRateBps:
         hop.hopIntegratorFeeRateBps !== undefined &&
         hop.hopIntegratorFeeRateBps !== null
@@ -1154,8 +1155,8 @@ export class FlashnetClient {
       userPublicKey: this.publicKey,
       hops: hops.map((hop) => ({
         lpIdentityPublicKey: hop.lpIdentityPublicKey,
-        inputAssetPublicKey: hop.inputAssetPublicKey,
-        outputAssetPublicKey: hop.outputAssetPublicKey,
+        assetInAddress: hop.assetInAddress,
+        assetOutAddress: hop.assetOutAddress,
         hopIntegratorFeeRateBps: hop.hopIntegratorFeeRateBps,
       })),
       initialSparkTransferId: initialTransferId,
