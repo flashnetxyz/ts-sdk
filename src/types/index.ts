@@ -1190,7 +1190,7 @@ export interface CreateEscrowResponse {
 export interface FundEscrowRequest {
   escrowId: string;
   sparkTransferId: string;
-   nonce: string;
+  nonce: string;
   signature: string;
 }
 
@@ -1276,7 +1276,7 @@ export interface EscrowState {
   createdAt: string;
   updatedAt: string;
   totalClaimed: string;
- }
+}
 
 export interface ClawbackResponse {
   requestId: string;
@@ -1309,37 +1309,37 @@ export function validateSingleSidedPoolThreshold(
   try {
     const thresholdNum = BigInt(threshold);
     const initialReserveNum = BigInt(assetAInitialReserve);
-    
+
     if (thresholdNum <= 0n || initialReserveNum <= 0n) {
-      return { 
-        isValid: false, 
-        error: "Threshold and initial reserve must be positive values" 
+      return {
+        isValid: false,
+        error: "Threshold and initial reserve must be positive values",
       };
     }
-    
+
     // Calculate 20% and 90% thresholds
     const minThreshold = (initialReserveNum * BigInt(20)) / BigInt(100); // 20%
     const maxThreshold = (initialReserveNum * BigInt(90)) / BigInt(100); // 90%
-    
+
     if (thresholdNum < minThreshold) {
-      return { 
-        isValid: false, 
-        error: `Threshold must be at least 20% of initial reserve (minimum: ${minThreshold.toString()})` 
+      return {
+        isValid: false,
+        error: `Threshold must be at least 20% of initial reserve (minimum: ${minThreshold.toString()})`,
       };
     }
-    
+
     if (thresholdNum > maxThreshold) {
-      return { 
-        isValid: false, 
-        error: `Threshold must not exceed 90% of initial reserve (maximum: ${maxThreshold.toString()})` 
+      return {
+        isValid: false,
+        error: `Threshold must not exceed 90% of initial reserve (maximum: ${maxThreshold.toString()})`,
       };
     }
-    
+
     return { isValid: true };
   } catch (error) {
-    return { 
-      isValid: false, 
-      error: "Invalid number format for threshold or initial reserve" 
+    return {
+      isValid: false,
+      error: "Invalid number format for threshold or initial reserve",
     };
   }
 }
@@ -1357,11 +1357,11 @@ export function calculateThresholdPercentage(
   try {
     const thresholdNum = BigInt(threshold);
     const initialReserveNum = BigInt(assetAInitialReserve);
-    
+
     if (initialReserveNum === 0n) {
       return 0;
     }
-    
+
     // Calculate percentage with precision
     const percentage = (thresholdNum * BigInt(10000)) / initialReserveNum;
     return Number(percentage) / 100; // Convert back to percentage

@@ -12,7 +12,7 @@ describe("FlashnetClient", () => {
 
       expect(virtualReserveA).toBe(1_066_666_666_66666666n);
       expect(virtualReserveB).toBe(8_333_333n);
-      expect(threshold).toBe(80);
+      expect(threshold).toBe(800_000_000_00000000n);
     });
 
     it("works as intended round 2", () => {
@@ -25,7 +25,7 @@ describe("FlashnetClient", () => {
 
       expect(virtualReserveA).toBe(900_000_000_00000000n);
       expect(virtualReserveB).toBe(12_500_000n);
-      expect(threshold).toBe(75);
+      expect(threshold).toBe(600_000_000_00000000n);
     });
 
     it.each([[0], [25], [50], [96], [100]])(

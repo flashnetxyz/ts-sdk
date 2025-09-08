@@ -695,22 +695,20 @@ export class FlashnetClient {
    * @returns An object containing `virtualReserveA`, `virtualReserveB`, and `threshold`.
    */
   public static calculateVirtualReserves(params: {
-    initialTokenSupply: number | string;
+    initialTokenSupply: bigint;
     graduationThresholdPct: number;
-    targetRaise: number | string;
-  }): { virtualReserveA: number; virtualReserveB: number; threshold: number } {
-    const supply = Number(params.initialTokenSupply);
-    const targetB = Number(params.targetRaise);
-    const lpFrac = 1.0;
+    targetRaise: bigint;
+  }): { virtualReserveA: bigint; virtualReserveB: bigint; threshold: bigint } {
+    const supply = params.initialTokenSupply;
+    const targetB = params.targetRaise;
 
     // Validate inputs
-    if (supply <= 0) {
+    if (supply <= 0n) {
       throw new Error("Initial token supply must be positive");
     }
-    if (targetB <= 0) {
+    if (targetB <= 0n) {
       throw new Error("Target raise must be positive");
     }
-
 
     // Validate graduation threshold is a positive whole number
     if (
@@ -759,7 +757,7 @@ export class FlashnetClient {
     return {
       virtualReserveA: virtualA,
       virtualReserveB: virtualB,
-      threshold: supply * params.graduationThresholdPct / 100,
+      threshold: (supply * BigInt(params.graduationThresholdPct)) / 100n,
     };
   }
 
@@ -857,60 +855,26 @@ export class FlashnetClient {
       return createResponse;
     }
 
-        let assetATransferId: string;
-        if (params.assetAAddress === BTC_ASSET_PUBKEY) {
-          const transfer = await this._wallet.transfer({
-            amountSats: Number(clippedAssetAInitialReserve),
-            receiverSparkAddress: lpSparkAddress,
-          });
-          assetATransferId = transfer.id;
-        } else {
-          assetATransferId = await this._wallet.transferTokens({
-            tokenIdentifier: this.toHumanReadableTokenIdentifier(
-              params.assetAAddress
-            ) as any,
-            tokenAmount: BigInt(clippedAssetAInitialReserve),
-            receiverSparkAddress: lpSparkAddress,
-          });
-        }
+    try {
+      // Transfer initial reserve to the pool using new address encoding
+      const lpSparkAddress = encodeSparkAddressNew({
+        identityPublicKey: createResponse.poolId,
+        network: this.sparkNetwork,
+      });
 
-        
-        // Confirm the initial deposit
-        const confirmNonce = generateNonce();
-        const confirmIntentMessage =
-          generatePoolConfirmInitialDepositIntentMessage({
-            poolOwnerPublicKey: this.publicKey,
-            lpIdentityPublicKey: createResponse.poolId,
-            assetASparkTransferId: assetATransferId,
-            nonce: confirmNonce,
-          });
+      const assetATransferId = await this.transferAsset({
+        receiverSparkAddress: lpSparkAddress,
+        assetAddress: params.assetAAddress,
+        amount: clippedAssetAInitialReserve,
+      });
 
-        const confirmMessageHash = new Uint8Array(
-          await crypto.subtle.digest("SHA-256", confirmIntentMessage)
-        );
-        const confirmSignature = await (
-          this._wallet as any
-        ).config.signer.signMessageWithIdentityKey(confirmMessageHash, true);
+      const confirmResponse = await this.confirmInitialDeposit(
+        createResponse.poolId,
+        assetATransferId,
+        poolOwnerPublicKey
+      );
 
-        const confirmRequest: ConfirmInitialDepositRequest = {
-          poolId: createResponse.poolId,
-          assetASparkTransferId: assetATransferId,
-          nonce: confirmNonce,
-          signature: Buffer.from(confirmSignature).toString("hex"),
-          poolOwnerPublicKey: this.publicKey,
-        };
-
-        const confirmResponse = await this.typedApi.confirmInitialDeposit(
-          confirmRequest
-        );
-
-        if (!confirmResponse.confirmed) {
-          throw new Error(
-            `Failed to confirm initial deposit: ${confirmResponse.message}`
-          );
-        }
-      } catch (error) {
-        // If initial deposit fails, we should inform the user
+      if (!confirmResponse.confirmed) {
         throw new Error(
           `Failed to confirm initial deposit: ${confirmResponse.message}`
         );
@@ -1036,7 +1000,7 @@ export class FlashnetClient {
     const intentMessage = generatePoolSwapIntentMessage({
       userPublicKey: this.publicKey,
       lpIdentityPublicKey: params.poolId,
-      assetInSparkTransferId: transferId,
+      assetInSparkTransferId: params.transferId,
       assetInAddress: this.toHexTokenIdentifier(params.assetInAddress),
       assetOutAddress: this.toHexTokenIdentifier(params.assetOutAddress),
       amountIn: params.amountIn.toString(),
