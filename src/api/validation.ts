@@ -156,11 +156,33 @@ export const commonValidationRules = {
  */
 export const constantProductPoolValidationRules = {
   poolOwnerPublicKey: commonValidationRules.publicKey,
-  assetATokenPublicKey: commonValidationRules.publicKey,
-  assetBTokenPublicKey: commonValidationRules.publicKey,
+  assetAAddress: commonValidationRules.publicKey,
+  assetBAddress: commonValidationRules.publicKey,
   lpFeeRateBps: commonValidationRules.bps,
   hostNamespace: {
     required: true,
+    validator: validateNamespace,
+    message: "invalid namespace format",
+  },
+  nonce: commonValidationRules.nonce,
+  signature: commonValidationRules.signature,
+};
+
+/**
+ * Validation rules for CreateSingleSidedPoolRequest
+ */
+export const singleSidedPoolValidationRules = {
+  poolOwnerPublicKey: commonValidationRules.publicKey,
+  assetAAddress: commonValidationRules.publicKey,
+  assetBAddress: commonValidationRules.publicKey,
+  assetAInitialReserve: commonValidationRules.amount,
+  virtualReserveA: commonValidationRules.amount,
+  virtualReserveB: commonValidationRules.amount,
+  threshold: commonValidationRules.amount,
+  lpFeeRateBps: commonValidationRules.bps,
+  totalHostFeeRateBps: commonValidationRules.bps,
+  hostNamespace: {
+    required: false,
     validator: validateNamespace,
     message: "invalid namespace format",
   },

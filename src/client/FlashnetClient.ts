@@ -41,6 +41,8 @@ import {
   type GetHostResponse,
   type GetIntegratorFeesResponse,
   type GetPoolHostFeesResponse,
+  type ClawbackRequest,
+  type ClawbackResponse,
   getClientEnvironmentFromLegacy,
   getSparkNetworkFromLegacy,
   type ListGlobalSwapsQuery,
@@ -94,6 +96,7 @@ import {
   generateRouteSwapIntentMessage,
   generateWithdrawHostFeesIntentMessage,
   generateWithdrawIntegratorFeesIntentMessage,
+  generateClawbackIntentMessage,
 } from "../utils/intents";
 import { createWalletSigner } from "../utils/signer";
 import {
@@ -692,20 +695,22 @@ export class FlashnetClient {
    * @returns An object containing `virtualReserveA`, `virtualReserveB`, and `threshold`.
    */
   public static calculateVirtualReserves(params: {
-    initialTokenSupply: bigint;
+    initialTokenSupply: number | string;
     graduationThresholdPct: number;
-    targetRaise: bigint;
-  }): { virtualReserveA: bigint; virtualReserveB: bigint; threshold: number } {
-    const supply = params.initialTokenSupply;
-    const targetB = params.targetRaise;
+    targetRaise: number | string;
+  }): { virtualReserveA: number; virtualReserveB: number; threshold: number } {
+    const supply = Number(params.initialTokenSupply);
+    const targetB = Number(params.targetRaise);
+    const lpFrac = 1.0;
 
     // Validate inputs
-    if (supply <= 0n) {
+    if (supply <= 0) {
       throw new Error("Initial token supply must be positive");
     }
-    if (targetB <= 0n) {
+    if (targetB <= 0) {
       throw new Error("Target raise must be positive");
     }
+
 
     // Validate graduation threshold is a positive whole number
     if (
@@ -754,7 +759,7 @@ export class FlashnetClient {
     return {
       virtualReserveA: virtualA,
       virtualReserveB: virtualB,
-      threshold: params.graduationThresholdPct,
+      threshold: supply * params.graduationThresholdPct / 100,
     };
   }
 
@@ -852,26 +857,60 @@ export class FlashnetClient {
       return createResponse;
     }
 
-    try {
-      // Transfer initial reserve to the pool using new address encoding
-      const lpSparkAddress = encodeSparkAddressNew({
-        identityPublicKey: createResponse.poolId,
-        network: this.sparkNetwork,
-      });
+        let assetATransferId: string;
+        if (params.assetAAddress === BTC_ASSET_PUBKEY) {
+          const transfer = await this._wallet.transfer({
+            amountSats: Number(clippedAssetAInitialReserve),
+            receiverSparkAddress: lpSparkAddress,
+          });
+          assetATransferId = transfer.id;
+        } else {
+          assetATransferId = await this._wallet.transferTokens({
+            tokenIdentifier: this.toHumanReadableTokenIdentifier(
+              params.assetAAddress
+            ) as any,
+            tokenAmount: BigInt(clippedAssetAInitialReserve),
+            receiverSparkAddress: lpSparkAddress,
+          });
+        }
 
-      const assetATransferId = await this.transferAsset({
-        receiverSparkAddress: lpSparkAddress,
-        assetAddress: params.assetAAddress,
-        amount: clippedAssetAInitialReserve,
-      });
+        
+        // Confirm the initial deposit
+        const confirmNonce = generateNonce();
+        const confirmIntentMessage =
+          generatePoolConfirmInitialDepositIntentMessage({
+            poolOwnerPublicKey: this.publicKey,
+            lpIdentityPublicKey: createResponse.poolId,
+            assetASparkTransferId: assetATransferId,
+            nonce: confirmNonce,
+          });
 
-      const confirmResponse = await this.confirmInitialDeposit(
-        createResponse.poolId,
-        assetATransferId,
-        poolOwnerPublicKey
-      );
+        const confirmMessageHash = new Uint8Array(
+          await crypto.subtle.digest("SHA-256", confirmIntentMessage)
+        );
+        const confirmSignature = await (
+          this._wallet as any
+        ).config.signer.signMessageWithIdentityKey(confirmMessageHash, true);
 
-      if (!confirmResponse.confirmed) {
+        const confirmRequest: ConfirmInitialDepositRequest = {
+          poolId: createResponse.poolId,
+          assetASparkTransferId: assetATransferId,
+          nonce: confirmNonce,
+          signature: Buffer.from(confirmSignature).toString("hex"),
+          poolOwnerPublicKey: this.publicKey,
+        };
+
+        const confirmResponse = await this.typedApi.confirmInitialDeposit(
+          confirmRequest
+        );
+
+        if (!confirmResponse.confirmed) {
+          throw new Error(
+            `Failed to confirm initial deposit: ${confirmResponse.message}`
+          );
+        }
+      } catch (error) {
+        // If initial deposit fails, we should inform the user
         throw new Error(
           `Failed to confirm initial deposit: ${confirmResponse.message}`
         );
@@ -997,9 +1036,9 @@ export class FlashnetClient {
     const intentMessage = generatePoolSwapIntentMessage({
       userPublicKey: this.publicKey,
       lpIdentityPublicKey: params.poolId,
-      assetInSparkTransferId: params.transferId,
-      assetInTokenPublicKey: this.toHexTokenIdentifier(params.assetInAddress),
-      assetOutTokenPublicKey: this.toHexTokenIdentifier(params.assetOutAddress),
+      assetInSparkTransferId: transferId,
+      assetInAddress: this.toHexTokenIdentifier(params.assetInAddress),
+      assetOutAddress: this.toHexTokenIdentifier(params.assetOutAddress),
       amountIn: params.amountIn.toString(),
       maxSlippageBps: params.maxSlippageBps.toString(),
       minAmountOut: params.minAmountOut,
@@ -1101,8 +1140,8 @@ export class FlashnetClient {
     // Prepare hops for validation
     const hops: RouteHopValidation[] = params.hops.map((hop) => ({
       lpIdentityPublicKey: hop.poolId,
-      inputAssetPublicKey: this.toHexTokenIdentifier(hop.assetInAddress),
-      outputAssetPublicKey: this.toHexTokenIdentifier(hop.assetOutAddress),
+      assetInAddress: this.toHexTokenIdentifier(hop.assetInAddress),
+      assetOutAddress: this.toHexTokenIdentifier(hop.assetOutAddress),
       hopIntegratorFeeRateBps:
         hop.hopIntegratorFeeRateBps !== undefined &&
         hop.hopIntegratorFeeRateBps !== null
@@ -1128,8 +1167,8 @@ export class FlashnetClient {
       userPublicKey: this.publicKey,
       hops: hops.map((hop) => ({
         lpIdentityPublicKey: hop.lpIdentityPublicKey,
-        inputAssetPublicKey: hop.inputAssetPublicKey,
-        outputAssetPublicKey: hop.outputAssetPublicKey,
+        assetInAddress: hop.assetInAddress,
+        assetOutAddress: hop.assetOutAddress,
         hopIntegratorFeeRateBps: hop.hopIntegratorFeeRateBps,
       })),
       initialSparkTransferId: initialTransferId,
@@ -1738,6 +1777,49 @@ export class FlashnetClient {
     await this.ensureInitialized();
     const user = userPublicKey || this.publicKey;
     return this.typedApi.getUserSwaps(user, query);
+  }
+
+  // ===== Clawback =====
+  /**
+   * Request clawback of a stuck inbound transfer to an LP wallet
+   */
+  async clawback(params: {
+    sparkTransferId: string;
+    lpIdentityPublicKey: string;
+  }): Promise<ClawbackResponse> {
+    await this.ensureInitialized();
+
+    const nonce = generateNonce();
+    const intentMessage = generateClawbackIntentMessage({
+      senderPublicKey: this.publicKey,
+      sparkTransferId: params.sparkTransferId,
+      lpIdentityPublicKey: params.lpIdentityPublicKey,
+      nonce,
+    });
+
+    const messageHash = new Uint8Array(
+      await crypto.subtle.digest("SHA-256", intentMessage)
+    );
+    const signature = await (
+      this._wallet as any
+    ).config.signer.signMessageWithIdentityKey(messageHash, true);
+
+    const request: ClawbackRequest = {
+      senderPublicKey: this.publicKey,
+      sparkTransferId: params.sparkTransferId,
+      lpIdentityPublicKey: params.lpIdentityPublicKey,
+      nonce,
+      signature: Buffer.from(signature).toString("hex"),
+    };
+
+    const response = await this.typedApi.clawback(request);
+
+    if (!response.accepted) {
+      const errorMessage = response.error || "Clawback request was rejected";
+      throw new Error(errorMessage);
+    }
+
+    return response;
   }
 
   // ===== Token Address Operations =====

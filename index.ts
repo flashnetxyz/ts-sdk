@@ -11,6 +11,7 @@ export {
 export {
   commonValidationRules,
   constantProductPoolValidationRules,
+  singleSidedPoolValidationRules,
   ValidationError,
   type ValidationRule,
   type ValidationRules,
@@ -33,11 +34,11 @@ export {
 export * from "./src/config";
 export type * from "./src/types";
 export {
-  fromSmallestUnit,
-  generateNonce,
-  toSmallestUnit,
-  bigintTo16ByteArray,
-} from "./src/utils";
+  calculateThresholdPercentage,
+  validateSingleSidedPoolThreshold,
+  type ValidationResult,
+} from "./src/types";
+export { fromSmallestUnit, generateNonce, toSmallestUnit } from "./src/utils";
 export { AuthManager } from "./src/utils/auth";
 export {
   generateAddLiquidityIntentMessage,

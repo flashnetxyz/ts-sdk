@@ -247,13 +247,8 @@ export interface WithdrawHostFeesResponse {
   accepted: boolean;
   assetAWithdrawn?: string;
   assetBWithdrawn?: string;
-  transferIds?: WithdrawalTransferIds;
+  transferId?: string;
   error?: string;
-}
-
-export interface WithdrawalTransferIds {
-  assetA?: string;
-  assetB?: string;
 }
 
 // Host fee inquiry types
@@ -285,7 +280,7 @@ export interface WithdrawIntegratorFeesResponse {
   accepted: boolean;
   assetAWithdrawn?: string;
   assetBWithdrawn?: string;
-  transferIds?: WithdrawalTransferIds;
+  transferId?: string;
   error?: string;
 }
 
@@ -805,12 +800,12 @@ export interface Token {
 // Intent message types (preserved custom types)
 export interface ValidateAmmInitializeSingleSidedPoolData {
   poolOwnerPublicKey: string;
-  assetATokenPublicKey: string;
-  assetBTokenPublicKey: string;
+  assetAAddress: string;
+  assetBAddress: string;
   assetAInitialReserve: string;
   virtualReserveA: string;
   virtualReserveB: string;
-  threshold: string;
+  threshold: string; // Amount of asset A that must be sold to graduate to constant product
   totalHostFeeRateBps: string;
   lpFeeRateBps: string;
   nonce: string;
@@ -818,8 +813,8 @@ export interface ValidateAmmInitializeSingleSidedPoolData {
 
 export interface ValidateAmmInitializeConstantProductPoolData {
   poolOwnerPublicKey: string;
-  assetATokenPublicKey: string;
-  assetBTokenPublicKey: string;
+  assetAAddress: string;
+  assetBAddress: string;
   totalHostFeeRateBps: string;
   lpFeeRateBps: string;
   nonce: string;
@@ -836,8 +831,8 @@ export interface ValidateAmmSwapData {
   userPublicKey: string;
   lpIdentityPublicKey: string;
   assetInSparkTransferId: string;
-  assetInTokenPublicKey: string;
-  assetOutTokenPublicKey: string;
+  assetInAddress: string;
+  assetOutAddress: string;
   amountIn: string;
   minAmountOut: string;
   maxSlippageBps: string;
@@ -905,8 +900,8 @@ export interface ValidateAmmWithdrawHostFeesData {
 // Route swap validation types
 export interface RouteHopValidation {
   lpIdentityPublicKey: string;
-  inputAssetPublicKey: string;
-  outputAssetPublicKey: string;
+  assetInAddress: string;
+  assetOutAddress: string;
   hopIntegratorFeeRateBps?: string | null;
 }
 
@@ -921,11 +916,29 @@ export interface ValidateRouteSwapData {
   defaultIntegratorFeeRateBps?: string;
 }
 
+// Backward compatibility aliases (deprecated)
+/** @deprecated Use assetAAddress instead */
+export type AssetATokenPublicKey = string;
+/** @deprecated Use assetBAddress instead */
+export type AssetBTokenPublicKey = string;
+/** @deprecated Use assetInAddress instead */
+export type AssetInTokenPublicKey = string;
+/** @deprecated Use assetOutAddress instead */
+export type AssetOutTokenPublicKey = string;
+
 // Integrator fees validation types
 export interface ValidateAmmWithdrawIntegratorFeesData {
   integratorPublicKey: string;
   lpIdentityPublicKey: string;
   assetBAmount?: string;
+  nonce: string;
+}
+
+// Clawback validation data
+export interface ValidateClawbackData {
+  senderPublicKey: string;
+  sparkTransferId: string;
+  lpIdentityPublicKey: string;
   nonce: string;
 }
 
@@ -1177,6 +1190,16 @@ export interface CreateEscrowResponse {
 export interface FundEscrowRequest {
   escrowId: string;
   sparkTransferId: string;
+   nonce: string;
+  signature: string;
+}
+
+// ===== CLAWBACK TYPES =====
+
+export interface ClawbackRequest {
+  senderPublicKey: string;
+  sparkTransferId: string;
+  lpIdentityPublicKey: string;
   nonce: string;
   signature: string;
 }
@@ -1253,4 +1276,96 @@ export interface EscrowState {
   createdAt: string;
   updatedAt: string;
   totalClaimed: string;
+ }
+
+export interface ClawbackResponse {
+  requestId: string;
+  accepted: boolean;
+  internalRequestId: string;
+  sparkStatusTrackingId: string;
+  error?: string;
+}
+
+// ===== VALIDATION UTILITIES =====
+
+/**
+ * Validation result interface for client-side validations
+ */
+export interface ValidationResult {
+  isValid: boolean;
+  error?: string;
+}
+
+/**
+ * Validates that a single-sided pool threshold is within acceptable range (20%-90% of initial reserve)
+ * @param threshold - Amount of asset A that must be sold to graduate to constant product
+ * @param assetAInitialReserve - Initial reserve amount for asset A
+ * @returns Validation result with error message if invalid
+ */
+export function validateSingleSidedPoolThreshold(
+  threshold: string,
+  assetAInitialReserve: string
+): ValidationResult {
+  try {
+    const thresholdNum = BigInt(threshold);
+    const initialReserveNum = BigInt(assetAInitialReserve);
+    
+    if (thresholdNum <= 0n || initialReserveNum <= 0n) {
+      return { 
+        isValid: false, 
+        error: "Threshold and initial reserve must be positive values" 
+      };
+    }
+    
+    // Calculate 20% and 90% thresholds
+    const minThreshold = (initialReserveNum * BigInt(20)) / BigInt(100); // 20%
+    const maxThreshold = (initialReserveNum * BigInt(90)) / BigInt(100); // 90%
+    
+    if (thresholdNum < minThreshold) {
+      return { 
+        isValid: false, 
+        error: `Threshold must be at least 20% of initial reserve (minimum: ${minThreshold.toString()})` 
+      };
+    }
+    
+    if (thresholdNum > maxThreshold) {
+      return { 
+        isValid: false, 
+        error: `Threshold must not exceed 90% of initial reserve (maximum: ${maxThreshold.toString()})` 
+      };
+    }
+    
+    return { isValid: true };
+  } catch (error) {
+    return { 
+      isValid: false, 
+      error: "Invalid number format for threshold or initial reserve" 
+    };
+  }
+}
+
+/**
+ * Calculates the percentage that a threshold represents of the initial reserve
+ * @param threshold - Amount of asset A that must be sold
+ * @param assetAInitialReserve - Initial reserve amount for asset A
+ * @returns Percentage as a number (e.g., 25.5 for 25.5%)
+ */
+export function calculateThresholdPercentage(
+  threshold: string,
+  assetAInitialReserve: string
+): number {
+  try {
+    const thresholdNum = BigInt(threshold);
+    const initialReserveNum = BigInt(assetAInitialReserve);
+    
+    if (initialReserveNum === 0n) {
+      return 0;
+    }
+    
+    // Calculate percentage with precision
+    const percentage = (thresholdNum * BigInt(10000)) / initialReserveNum;
+    return Number(percentage) / 100; // Convert back to percentage
+  } catch (error) {
+    return 0;
+  }
 }

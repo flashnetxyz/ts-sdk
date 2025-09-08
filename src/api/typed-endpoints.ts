@@ -440,6 +440,16 @@ export class TypedAmmApi {
   async ping(): Promise<Types.SettlementPingResponse> {
     return this.client.ammGet<Types.SettlementPingResponse>("/v1/ping");
   }
+
+  // ===== Clawback Endpoint =====
+  /**
+   * Clawback stuck funds sent to an LP wallet
+   * @POST /v1/clawback
+   * @requires Bearer token
+   */
+  async clawback(request: Types.ClawbackRequest): Promise<Types.ClawbackResponse> {
+    return this.client.ammPost<Types.ClawbackResponse>("/v1/clawback", request);
+  }
 }
 
 /**
