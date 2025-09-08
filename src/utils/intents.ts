@@ -35,8 +35,8 @@ export function generatePoolInitializationIntentMessage(params: {
 }): Uint8Array {
   const intentMessage: ValidateAmmInitializeSingleSidedPoolData = {
     poolOwnerPublicKey: params.poolOwnerPublicKey.toString(),
-    assetATokenPublicKey: params.assetAAddress.toString(),
-    assetBTokenPublicKey: params.assetBAddress.toString(),
+    assetAAddress: params.assetAAddress.toString(),
+    assetBAddress: params.assetBAddress.toString(),
     assetAInitialReserve: params.assetAInitialReserve.toString(),
     virtualReserveA: params.virtualReserveA.toString(),
     virtualReserveB: params.virtualReserveB.toString(),
@@ -323,6 +323,7 @@ export function generateClaimEscrowIntentMessage(params: {
   return new TextEncoder().encode(JSON.stringify(intentMessage));
 }
 
+/**
  * Generate the intent message for clawback
  */
 export function generateClawbackIntentMessage(params: {

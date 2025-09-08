@@ -139,7 +139,7 @@ export interface FlashnetClientOptions {
 type Tuple<
   T,
   N extends number,
-  Acc extends readonly T[] = [],
+  Acc extends readonly T[] = []
 > = Acc["length"] extends N ? Acc : Tuple<T, N, [...Acc, T]>;
 
 /**
@@ -503,7 +503,7 @@ export class FlashnetClient {
     errorPrefix?: string;
     walletBalance?: WalletBalance;
   }): Promise<void> {
-    const balance = params.walletBalance ?? (await this.getBalance());
+    const balance = await this.getBalance();
 
     // Check balance
     const requirements: { btc?: bigint; tokens?: Map<string, bigint> } = {
@@ -698,9 +698,9 @@ export class FlashnetClient {
     initialTokenSupply: number | string;
     graduationThresholdPct: number;
     targetRaise: number | string;
-  }): { virtualReserveA: number; virtualReserveB: number; threshold: number } {
-    const supply = Number(params.initialTokenSupply);
-    const targetB = Number(params.targetRaise);
+  }): { virtualReserveA: bigint; virtualReserveB: bigint; threshold: number } {
+    const supply = Number(String(params.initialTokenSupply).replace(/_/g, ""));
+    const targetB = Number(String(params.targetRaise).replace(/_/g, ""));
     const lpFrac = 1.0;
 
     // Validate inputs
@@ -710,7 +710,6 @@ export class FlashnetClient {
     if (targetB <= 0) {
       throw new Error("Target raise must be positive");
     }
-
 
     // Validate graduation threshold is a positive whole number
     if (
@@ -747,19 +746,24 @@ export class FlashnetClient {
 
     // Calculate virtual reserves and round down to integers
     // virtualA is (supply * f * f) / denom
+    const virtualANumerator =
+      BigInt(supply) * graduationThresholdPct * graduationThresholdPct;
+    const virtualADenominator = 200n * graduationThresholdPct - 10000n;
+    const virtualARemainder = virtualANumerator % virtualADenominator;
     const virtualA =
-      (supply * graduationThresholdPct ** 2n) /
-      (200n * graduationThresholdPct - 10000n);
+      (virtualANumerator - virtualARemainder) / virtualADenominator;
 
     // virtualB is (targetB * g * (1 - f)) / denom
+    const virtualBNumerator = BigInt(targetB) * (100n - graduationThresholdPct);
+    const virtualBDenominator = 2n * graduationThresholdPct - 100n;
+    const virtualBRemainder = virtualBNumerator % virtualBDenominator;
     const virtualB =
-      (targetB * (100n - graduationThresholdPct)) /
-      (2n * graduationThresholdPct - 100n);
+      (virtualBNumerator - virtualBRemainder) / virtualBDenominator;
 
     return {
       virtualReserveA: virtualA,
       virtualReserveB: virtualB,
-      threshold: supply * params.graduationThresholdPct / 100,
+      threshold: params.graduationThresholdPct,
     };
   }
 
@@ -773,9 +777,9 @@ export class FlashnetClient {
     assetAAddress: string;
     assetBAddress: string;
     assetAInitialReserve: string;
-    virtualReserveA: string;
-    virtualReserveB: string;
-    threshold: string;
+    virtualReserveA: number | string;
+    virtualReserveB: number | string;
+    threshold: number | string;
     lpFeeRateBps: number;
     totalHostFeeRateBps: number;
     poolOwnerPublicKey?: string;
@@ -804,7 +808,7 @@ export class FlashnetClient {
     await this.checkBalance({
       balancesToCheck: [
         {
-          assetAddress: params.assetAInitialReserve,
+          assetAddress: params.assetAAddress,
           amount: clippedAssetAInitialReserve,
         },
       ],
@@ -822,7 +826,7 @@ export class FlashnetClient {
       assetAInitialReserve: clippedAssetAInitialReserve,
       virtualReserveA: clippedVirtualReserveA,
       virtualReserveB: clippedVirtualReserveB,
-      threshold: params.threshold,
+      threshold: params.threshold.toString(),
       lpFeeRateBps: params.lpFeeRateBps.toString(),
       totalHostFeeRateBps: params.totalHostFeeRateBps.toString(),
       nonce,
@@ -843,7 +847,7 @@ export class FlashnetClient {
       assetAInitialReserve: clippedAssetAInitialReserve,
       virtualReserveA: clippedVirtualReserveA,
       virtualReserveB: clippedVirtualReserveB,
-      threshold: params.threshold,
+      threshold: params.threshold.toString(),
       lpFeeRateBps: params.lpFeeRateBps.toString(),
       totalHostFeeRateBps: params.totalHostFeeRateBps.toString(),
       hostNamespace: params.hostNamespace,
@@ -857,72 +861,62 @@ export class FlashnetClient {
       return createResponse;
     }
 
-        let assetATransferId: string;
-        if (params.assetAAddress === BTC_ASSET_PUBKEY) {
-          const transfer = await this._wallet.transfer({
-            amountSats: Number(clippedAssetAInitialReserve),
-            receiverSparkAddress: lpSparkAddress,
-          });
-          assetATransferId = transfer.id;
-        } else {
-          assetATransferId = await this._wallet.transferTokens({
-            tokenIdentifier: this.toHumanReadableTokenIdentifier(
-              params.assetAAddress
-            ) as any,
-            tokenAmount: BigInt(clippedAssetAInitialReserve),
-            receiverSparkAddress: lpSparkAddress,
-          });
-        }
+    // Encode pool ID as Spark address for transfers
+    const poolSparkAddress = encodeSparkAddressNew({
+      identityPublicKey: createResponse.poolId,
+      network: this.sparkNetwork,
+    });
 
-        
-        // Confirm the initial deposit
-        const confirmNonce = generateNonce();
-        const confirmIntentMessage =
-          generatePoolConfirmInitialDepositIntentMessage({
-            poolOwnerPublicKey: this.publicKey,
-            lpIdentityPublicKey: createResponse.poolId,
-            assetASparkTransferId: assetATransferId,
-            nonce: confirmNonce,
-          });
+    let assetATransferId: string;
+    if (params.assetAAddress === BTC_ASSET_PUBKEY) {
+      const transfer = await this._wallet.transfer({
+        amountSats: Number(clippedAssetAInitialReserve),
+        receiverSparkAddress: poolSparkAddress,
+      });
+      assetATransferId = transfer.id;
+    } else {
+      assetATransferId = await this._wallet.transferTokens({
+        tokenIdentifier: this.toHumanReadableTokenIdentifier(
+          params.assetAAddress
+        ) as any,
+        tokenAmount: BigInt(clippedAssetAInitialReserve),
+        receiverSparkAddress: poolSparkAddress,
+      });
+    }
 
-        const confirmMessageHash = new Uint8Array(
-          await crypto.subtle.digest("SHA-256", confirmIntentMessage)
-        );
-        const confirmSignature = await (
-          this._wallet as any
-        ).config.signer.signMessageWithIdentityKey(confirmMessageHash, true);
-
-        const confirmRequest: ConfirmInitialDepositRequest = {
-          poolId: createResponse.poolId,
-          assetASparkTransferId: assetATransferId,
-          nonce: confirmNonce,
-          signature: Buffer.from(confirmSignature).toString("hex"),
-          poolOwnerPublicKey: this.publicKey,
-        };
-
-        const confirmResponse = await this.typedApi.confirmInitialDeposit(
-          confirmRequest
-        );
-
-        if (!confirmResponse.confirmed) {
-          throw new Error(
-            `Failed to confirm initial deposit: ${confirmResponse.message}`
-          );
-        }
-      } catch (error) {
-        // If initial deposit fails, we should inform the user
-        throw new Error(
-          `Failed to confirm initial deposit: ${confirmResponse.message}`
-        );
+    // Confirm the initial deposit
+    const confirmNonce = generateNonce();
+    const confirmIntentMessage = generatePoolConfirmInitialDepositIntentMessage(
+      {
+        poolOwnerPublicKey: this.publicKey,
+        lpIdentityPublicKey: createResponse.poolId,
+        assetASparkTransferId: assetATransferId,
+        nonce: confirmNonce,
       }
-    } catch (error) {
-      // If initial deposit fails, we should inform the user
+    );
+
+    const confirmMessageHash = new Uint8Array(
+      await crypto.subtle.digest("SHA-256", confirmIntentMessage)
+    );
+    const confirmSignature = await (
+      this._wallet as any
+    ).config.signer.signMessageWithIdentityKey(confirmMessageHash, true);
+
+    const confirmRequest: ConfirmInitialDepositRequest = {
+      poolId: createResponse.poolId,
+      assetASparkTransferId: assetATransferId,
+      nonce: confirmNonce,
+      signature: Buffer.from(confirmSignature).toString("hex"),
+      poolOwnerPublicKey: this.publicKey,
+    };
+
+    const confirmResponse = await this.typedApi.confirmInitialDeposit(
+      confirmRequest
+    );
+
+    if (!confirmResponse.confirmed) {
       throw new Error(
-        `Pool created with ID ${
-          createResponse.poolId
-        }, but initial deposit failed: ${
-          error instanceof Error ? error.message : String(error)
-        }`
+        `Failed to confirm initial deposit: ${confirmResponse.message}`
       );
     }
 
@@ -1036,7 +1030,7 @@ export class FlashnetClient {
     const intentMessage = generatePoolSwapIntentMessage({
       userPublicKey: this.publicKey,
       lpIdentityPublicKey: params.poolId,
-      assetInSparkTransferId: transferId,
+      assetInSparkTransferId: params.transferId,
       assetInAddress: this.toHexTokenIdentifier(params.assetInAddress),
       assetOutAddress: this.toHexTokenIdentifier(params.assetOutAddress),
       amountIn: params.amountIn.toString(),
