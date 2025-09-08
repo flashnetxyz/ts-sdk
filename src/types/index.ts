@@ -934,6 +934,14 @@ export interface ValidateAmmWithdrawIntegratorFeesData {
   nonce: string;
 }
 
+// Clawback validation data
+export interface ValidateClawbackData {
+  senderPublicKey: string;
+  sparkTransferId: string;
+  lpIdentityPublicKey: string;
+  nonce: string;
+}
+
 // Host fees for all pools types
 export interface GetHostFeesRequest {
   hostNamespace: string;
@@ -974,6 +982,24 @@ export interface GetPoolIntegratorFeesResponse {
   poolId: string;
   integratorPublicKey: string;
   assetBFees: string;
+}
+
+// ===== CLAWBACK TYPES =====
+
+export interface ClawbackRequest {
+  senderPublicKey: string;
+  sparkTransferId: string;
+  lpIdentityPublicKey: string;
+  nonce: string;
+  signature: string;
+}
+
+export interface ClawbackResponse {
+  requestId: string;
+  accepted: boolean;
+  internalRequestId: string;
+  sparkStatusTrackingId: string;
+  error?: string;
 }
 
 // ===== VALIDATION UTILITIES =====

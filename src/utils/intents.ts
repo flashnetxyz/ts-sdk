@@ -2,6 +2,7 @@ import type {
   AmmAddLiquiditySettlementRequest,
   AmmRemoveLiquiditySettlementRequest,
   RouteHopValidation,
+  ValidateClawbackData,
   ValidateAmmConfirmInitialDepositData,
   ValidateAmmInitializeConstantProductPoolData,
   ValidateAmmInitializeSingleSidedPoolData,
@@ -246,6 +247,25 @@ export function generateRouteSwapIntentMessage(params: {
     maxRouteSlippageBps: params.maxRouteSlippageBps,
     nonce: params.nonce,
     defaultIntegratorFeeRateBps: params.defaultIntegratorFeeRateBps ?? "0",
+  };
+
+  return new TextEncoder().encode(JSON.stringify(signingPayload));
+}
+
+/**
+ * Generate the intent message for clawback
+ */
+export function generateClawbackIntentMessage(params: {
+  senderPublicKey: string;
+  sparkTransferId: string;
+  lpIdentityPublicKey: string;
+  nonce: string;
+}): Uint8Array {
+  const signingPayload: ValidateClawbackData = {
+    senderPublicKey: params.senderPublicKey,
+    sparkTransferId: params.sparkTransferId,
+    lpIdentityPublicKey: params.lpIdentityPublicKey,
+    nonce: params.nonce,
   };
 
   return new TextEncoder().encode(JSON.stringify(signingPayload));

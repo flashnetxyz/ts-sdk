@@ -31,6 +31,8 @@ import {
   type GetHostResponse,
   type GetIntegratorFeesResponse,
   type GetPoolHostFeesResponse,
+  type ClawbackRequest,
+  type ClawbackResponse,
   getClientEnvironmentFromLegacy,
   getSparkNetworkFromLegacy,
   type ListGlobalSwapsQuery,
@@ -80,6 +82,7 @@ import {
   generateRouteSwapIntentMessage,
   generateWithdrawHostFeesIntentMessage,
   generateWithdrawIntegratorFeesIntentMessage,
+  generateClawbackIntentMessage,
 } from "../utils/intents";
 import { createWalletSigner } from "../utils/signer";
 import {
@@ -1618,6 +1621,49 @@ export class FlashnetClient {
     await this.ensureInitialized();
     const user = userPublicKey || this.publicKey;
     return this.typedApi.getUserSwaps(user, query);
+  }
+
+  // ===== Clawback =====
+  /**
+   * Request clawback of a stuck inbound transfer to an LP wallet
+   */
+  async clawback(params: {
+    sparkTransferId: string;
+    lpIdentityPublicKey: string;
+  }): Promise<ClawbackResponse> {
+    await this.ensureInitialized();
+
+    const nonce = generateNonce();
+    const intentMessage = generateClawbackIntentMessage({
+      senderPublicKey: this.publicKey,
+      sparkTransferId: params.sparkTransferId,
+      lpIdentityPublicKey: params.lpIdentityPublicKey,
+      nonce,
+    });
+
+    const messageHash = new Uint8Array(
+      await crypto.subtle.digest("SHA-256", intentMessage)
+    );
+    const signature = await (
+      this._wallet as any
+    ).config.signer.signMessageWithIdentityKey(messageHash, true);
+
+    const request: ClawbackRequest = {
+      senderPublicKey: this.publicKey,
+      sparkTransferId: params.sparkTransferId,
+      lpIdentityPublicKey: params.lpIdentityPublicKey,
+      nonce,
+      signature: Buffer.from(signature).toString("hex"),
+    };
+
+    const response = await this.typedApi.clawback(request);
+
+    if (!response.accepted) {
+      const errorMessage = response.error || "Clawback request was rejected";
+      throw new Error(errorMessage);
+    }
+
+    return response;
   }
 
   // ===== Token Address Operations =====
