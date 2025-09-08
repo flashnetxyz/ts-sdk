@@ -1,6 +1,8 @@
 import type {
   AmmAddLiquiditySettlementRequest,
   AmmRemoveLiquiditySettlementRequest,
+  EscrowCondition,
+  EscrowRecipient,
   RouteHopValidation,
   ValidateClawbackData,
   ValidateAmmConfirmInitialDepositData,
@@ -8,6 +10,9 @@ import type {
   ValidateAmmInitializeSingleSidedPoolData,
   ValidateAmmSwapData,
   ValidateAmmWithdrawIntegratorFeesData,
+  ValidateEscrowClaimData,
+  ValidateEscrowCreateData,
+  ValidateEscrowFundData,
   ValidateRouteSwapData,
 } from "../types";
 
@@ -29,16 +34,16 @@ export function generatePoolInitializationIntentMessage(params: {
   nonce: string;
 }): Uint8Array {
   const intentMessage: ValidateAmmInitializeSingleSidedPoolData = {
-    poolOwnerPublicKey: params.poolOwnerPublicKey,
-    assetAAddress: params.assetAAddress,
-    assetBAddress: params.assetBAddress,
-    assetAInitialReserve: params.assetAInitialReserve,
-    virtualReserveA: params.virtualReserveA,
-    virtualReserveB: params.virtualReserveB,
-    threshold: params.threshold,
-    totalHostFeeRateBps: params.totalHostFeeRateBps,
-    lpFeeRateBps: params.lpFeeRateBps,
-    nonce: params.nonce,
+    poolOwnerPublicKey: params.poolOwnerPublicKey.toString(),
+    assetATokenPublicKey: params.assetAAddress.toString(),
+    assetBTokenPublicKey: params.assetBAddress.toString(),
+    assetAInitialReserve: params.assetAInitialReserve.toString(),
+    virtualReserveA: params.virtualReserveA.toString(),
+    virtualReserveB: params.virtualReserveB.toString(),
+    threshold: params.threshold.toString(),
+    totalHostFeeRateBps: params.totalHostFeeRateBps.toString(),
+    lpFeeRateBps: params.lpFeeRateBps.toString(),
+    nonce: params.nonce.toString(),
   };
 
   return new TextEncoder().encode(JSON.stringify(intentMessage));
@@ -253,6 +258,71 @@ export function generateRouteSwapIntentMessage(params: {
 }
 
 /**
+ * Generates an escrow creation intent message.
+ * @param params Parameters for creating an escrow.
+ * @returns The serialized intent message.
+ */
+export function generateCreateEscrowIntentMessage(params: {
+  creatorPublicKey: string;
+  assetId: string;
+  assetAmount: string;
+  recipients: EscrowRecipient[];
+  claimConditions: EscrowCondition[];
+  abandonHost?: string;
+  abandonConditions?: EscrowCondition[];
+  nonce: string;
+}): Uint8Array {
+  const intentMessage: ValidateEscrowCreateData = {
+    creatorPublicKey: params.creatorPublicKey,
+    assetId: params.assetId,
+    assetAmount: params.assetAmount,
+    recipients: params.recipients,
+    claimConditions: params.claimConditions,
+    abandonHost: params.abandonHost,
+    abandonConditions: params.abandonConditions,
+    nonce: params.nonce,
+  };
+  return new TextEncoder().encode(JSON.stringify(intentMessage));
+}
+
+/**
+ * Generates an escrow funding intent message.
+ * @param params Parameters for funding an escrow.
+ * @returns The serialized intent message.
+ */
+export function generateFundEscrowIntentMessage(params: {
+  escrowId: string;
+  creatorPublicKey: string;
+  sparkTransferId: string;
+  nonce: string;
+}): Uint8Array {
+  const intentMessage: ValidateEscrowFundData = {
+    escrowId: params.escrowId,
+    creatorPublicKey: params.creatorPublicKey,
+    sparkTransferId: params.sparkTransferId,
+    nonce: params.nonce,
+  };
+  return new TextEncoder().encode(JSON.stringify(intentMessage));
+}
+
+/**
+ * Generates an escrow claim intent message.
+ * @param params Parameters for claiming from an escrow.
+ * @returns The serialized intent message.
+ */
+export function generateClaimEscrowIntentMessage(params: {
+  escrowId: string;
+  recipientPublicKey: string;
+  nonce: string;
+}): Uint8Array {
+  const intentMessage: ValidateEscrowClaimData = {
+    escrowId: params.escrowId,
+    recipientPublicKey: params.recipientPublicKey,
+    nonce: params.nonce,
+  };
+  return new TextEncoder().encode(JSON.stringify(intentMessage));
+}
+
  * Generate the intent message for clawback
  */
 export function generateClawbackIntentMessage(params: {
