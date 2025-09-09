@@ -698,7 +698,7 @@ export class FlashnetClient {
     initialTokenSupply: number | string;
     graduationThresholdPct: number;
     targetRaise: number | string;
-  }): { virtualReserveA: bigint; virtualReserveB: bigint; threshold: number } {
+  }): { virtualReserveA: bigint; virtualReserveB: bigint; threshold: bigint } {
     const supply = Number(String(params.initialTokenSupply).replace(/_/g, ""));
     const targetB = Number(String(params.targetRaise).replace(/_/g, ""));
     const lpFrac = 1.0;
@@ -760,10 +760,13 @@ export class FlashnetClient {
     const virtualB =
       (virtualBNumerator - virtualBRemainder) / virtualBDenominator;
 
+    // Calculate threshold as amount of asset A (not percentage)
+    const threshold = (BigInt(supply) * graduationThresholdPct) / 100n;
+
     return {
       virtualReserveA: virtualA,
       virtualReserveB: virtualB,
-      threshold: params.graduationThresholdPct,
+      threshold: threshold,
     };
   }
 
