@@ -1,13 +1,30 @@
-import { randomUUID } from "crypto";
-
 export * from "./auth";
 export * from "./intents";
 export * from "./spark-address";
 export * from "./tokenAddress";
 
-// Helper function to generate UUID (nonce)
+// Helper function to generate random nonce (browser-compatible)
 export function generateNonce(): string {
-  return randomUUID();
+  // Generate a random string using crypto.getRandomValues (works in both Node.js and browsers)
+  const array = new Uint8Array(16);
+  if (typeof crypto !== "undefined" && crypto.getRandomValues) {
+    crypto.getRandomValues(array);
+  } else if (
+    typeof globalThis !== "undefined" &&
+    globalThis.crypto?.getRandomValues
+  ) {
+    globalThis.crypto.getRandomValues(array);
+  } else {
+    // Fallback for environments without crypto.getRandomValues
+    for (let i = 0; i < array.length; i++) {
+      array[i] = Math.floor(Math.random() * 256);
+    }
+  }
+
+  // Convert to hex string
+  return Array.from(array, (byte) => byte.toString(16).padStart(2, "0")).join(
+    ""
+  );
 }
 
 // Helper function to convert decimal amounts to smallest units
