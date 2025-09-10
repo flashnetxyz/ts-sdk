@@ -139,7 +139,7 @@ export interface FlashnetClientOptions {
 type Tuple<
   T,
   N extends number,
-  Acc extends readonly T[] = [],
+  Acc extends readonly T[] = []
 > = Acc["length"] extends N ? Acc : Tuple<T, N, [...Acc, T]>;
 
 /**
@@ -699,23 +699,37 @@ export class FlashnetClient {
     graduationThresholdPct: number;
     targetRaise: bigint | number | string;
   }): { virtualReserveA: bigint; virtualReserveB: bigint; threshold: bigint } {
-    // Validate inputs
-    if (
-      !Number.isSafeInteger(params.initialTokenSupply) ||
-      Number(params.initialTokenSupply) <= 0
-    ) {
-      throw new Error("Initial token supply must be positive integer");
-    }
+    // Validate and normalize inputs to bigint
+    const parsePositiveIntegerToBigInt = (
+      value: bigint | number | string,
+      name: string
+    ): bigint => {
+      if (typeof value === "bigint") {
+        if (value <= 0n) {
+          throw new Error(`${name} must be positive integer`);
+        }
+        return value;
+      }
+      if (typeof value === "number") {
+        if (!Number.isFinite(value) || !Number.isInteger(value) || value <= 0) {
+          throw new Error(`${name} must be positive integer`);
+        }
+        return BigInt(value);
+      }
+      try {
+        const v = BigInt(value);
+        if (v <= 0n) {
+          throw new Error(`${name} must be positive integer`);
+        }
+        return v;
+      } catch {
+        throw new Error(`${name} must be positive integer`);
+      }
+    };
 
     if (
-      !Number.isSafeInteger(params.targetRaise) ||
-      Number(params.targetRaise) <= 0
-    ) {
-      throw new Error("Target raise must be positive integer");
-    }
-
-    if (
-      !Number.isSafeInteger(params.graduationThresholdPct) ||
+      !Number.isFinite(params.graduationThresholdPct) ||
+      !Number.isInteger(params.graduationThresholdPct) ||
       params.graduationThresholdPct <= 0
     ) {
       throw new Error(
@@ -723,9 +737,15 @@ export class FlashnetClient {
       );
     }
 
-    const supply = BigInt(params.initialTokenSupply);
+    const supply = parsePositiveIntegerToBigInt(
+      params.initialTokenSupply,
+      "Initial token supply"
+    );
+    const targetB = parsePositiveIntegerToBigInt(
+      params.targetRaise,
+      "Target raise"
+    );
     const graduationThresholdPct = BigInt(params.graduationThresholdPct);
-    const targetB = BigInt(params.targetRaise);
 
     // Check feasibility: f - g*(1-f) > 0 where f is graduationThresholdPct/100 and g is 1
     const MIN_GRADUATION_THRESHOLD_PCT = 50n;
