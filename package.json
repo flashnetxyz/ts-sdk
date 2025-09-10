@@ -1,6 +1,6 @@
 {
   "name": "@flashnet/sdk",
-  "version": "0.3.18",
+  "version": "0.3.19",
   "main": "./dist/cjs/index.js",
   "module": "./dist/esm/index.js",
   "types": "./dist/esm/index.d.ts",
