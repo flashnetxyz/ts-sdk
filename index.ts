@@ -42,13 +42,19 @@ export { fromSmallestUnit, generateNonce, toSmallestUnit } from "./src/utils";
 export { AuthManager } from "./src/utils/auth";
 export {
   generateAddLiquidityIntentMessage,
+  generateCreateEscrowIntentMessage,
+  generateClaimEscrowIntentMessage,
+  generateClawbackIntentMessage,
   generateConstantProductPoolInitializationIntentMessage,
+  generateFundEscrowIntentMessage,
   generatePoolConfirmInitialDepositIntentMessage,
   generatePoolInitializationIntentMessage,
   generatePoolSwapIntentMessage,
   generateRegisterHostIntentMessage,
   generateRemoveLiquidityIntentMessage,
+  generateRouteSwapIntentMessage,
   generateWithdrawHostFeesIntentMessage,
+  generateWithdrawIntegratorFeesIntentMessage,
 } from "./src/utils/intents";
 export { createWalletSigner } from "./src/utils/signer";
 
