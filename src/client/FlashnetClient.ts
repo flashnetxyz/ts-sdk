@@ -1076,6 +1076,9 @@ export class FlashnetClient {
   async simulateRouteSwap(
     params: SimulateRouteSwapRequest
   ): Promise<SimulateRouteSwapResponse> {
+    if (params.hops.length > 4) {
+      throw new Error("Route swap cannot have more than 4 hops");
+    }
     await this.ensureInitialized();
     return this.typedApi.simulateRouteSwap(params);
   }
@@ -1100,6 +1103,9 @@ export class FlashnetClient {
     await this.ensureInitialized();
 
     // Validate hops array
+    if (params.hops.length > 4) {
+      throw new Error("Route swap cannot have more than 4 hops");
+    }
     if (!params.hops.length) {
       throw new Error("Route swap requires at least one hop");
     }
