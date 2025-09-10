@@ -695,31 +695,37 @@ export class FlashnetClient {
    * @returns An object containing `virtualReserveA`, `virtualReserveB`, and `threshold`.
    */
   public static calculateVirtualReserves(params: {
-    initialTokenSupply: bigint;
+    initialTokenSupply: bigint | number | string;
     graduationThresholdPct: number;
-    targetRaise: bigint;
+    targetRaise: bigint | number | string;
   }): { virtualReserveA: bigint; virtualReserveB: bigint; threshold: bigint } {
-    const supply = params.initialTokenSupply;
-    const targetB = params.targetRaise;
-
     // Validate inputs
-    if (supply <= 0n) {
-      throw new Error("Initial token supply must be positive");
-    }
-    if (targetB <= 0n) {
-      throw new Error("Target raise must be positive");
+    if (
+      !Number.isSafeInteger(params.initialTokenSupply) ||
+      Number(params.initialTokenSupply) <= 0
+    ) {
+      throw new Error("Initial token supply must be positive integer");
     }
 
-    // Validate graduation threshold is a positive whole number
     if (
-      !Number.isInteger(params.graduationThresholdPct) ||
+      !Number.isSafeInteger(params.targetRaise) ||
+      Number(params.targetRaise) <= 0
+    ) {
+      throw new Error("Target raise must be positive integer");
+    }
+
+    if (
+      !Number.isSafeInteger(params.graduationThresholdPct) ||
       params.graduationThresholdPct <= 0
     ) {
       throw new Error(
-        "Graduation threshold percentage must be a positive whole number"
+        "Graduation threshold percentage must be a positive integer"
       );
     }
+
+    const supply = BigInt(params.initialTokenSupply);
     const graduationThresholdPct = BigInt(params.graduationThresholdPct);
+    const targetB = BigInt(params.targetRaise);
 
     // Check feasibility: f - g*(1-f) > 0 where f is graduationThresholdPct/100 and g is 1
     const MIN_GRADUATION_THRESHOLD_PCT = 50n;
