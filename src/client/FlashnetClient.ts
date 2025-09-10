@@ -139,7 +139,7 @@ export interface FlashnetClientOptions {
 type Tuple<
   T,
   N extends number,
-  Acc extends readonly T[] = [],
+  Acc extends readonly T[] = []
 > = Acc["length"] extends N ? Acc : Tuple<T, N, [...Acc, T]>;
 
 /**
@@ -503,7 +503,7 @@ export class FlashnetClient {
     errorPrefix?: string;
     walletBalance?: WalletBalance;
   }): Promise<void> {
-    const balance = params.walletBalance ?? (await this.getBalance());
+    const balance = await this.getBalance();
 
     // Check balance
     const requirements: { btc?: bigint; tokens?: Map<string, bigint> } = {
@@ -745,19 +745,27 @@ export class FlashnetClient {
 
     // Calculate virtual reserves and round down to integers
     // virtualA is (supply * f * f) / denom
+    const virtualANumerator =
+      BigInt(supply) * graduationThresholdPct * graduationThresholdPct;
+    const virtualADenominator = 200n * graduationThresholdPct - 10000n;
+    const virtualARemainder = virtualANumerator % virtualADenominator;
     const virtualA =
-      (supply * graduationThresholdPct ** 2n) /
-      (200n * graduationThresholdPct - 10000n);
+      (virtualANumerator - virtualARemainder) / virtualADenominator;
 
     // virtualB is (targetB * g * (1 - f)) / denom
+    const virtualBNumerator = BigInt(targetB) * (100n - graduationThresholdPct);
+    const virtualBDenominator = 2n * graduationThresholdPct - 100n;
+    const virtualBRemainder = virtualBNumerator % virtualBDenominator;
     const virtualB =
-      (targetB * (100n - graduationThresholdPct)) /
-      (2n * graduationThresholdPct - 100n);
+      (virtualBNumerator - virtualBRemainder) / virtualBDenominator;
+
+    // Calculate threshold as amount of asset A (not percentage)
+    const threshold = (BigInt(supply) * graduationThresholdPct) / 100n;
 
     return {
       virtualReserveA: virtualA,
       virtualReserveB: virtualB,
-      threshold: (supply * BigInt(params.graduationThresholdPct)) / 100n,
+      threshold: threshold,
     };
   }
 
@@ -771,9 +779,9 @@ export class FlashnetClient {
     assetAAddress: string;
     assetBAddress: string;
     assetAInitialReserve: string;
-    virtualReserveA: string;
-    virtualReserveB: string;
-    threshold: string;
+    virtualReserveA: number | string;
+    virtualReserveB: number | string;
+    threshold: number | string;
     lpFeeRateBps: number;
     totalHostFeeRateBps: number;
     poolOwnerPublicKey?: string;
@@ -802,7 +810,7 @@ export class FlashnetClient {
     await this.checkBalance({
       balancesToCheck: [
         {
-          assetAddress: params.assetAInitialReserve,
+          assetAddress: params.assetAAddress,
           amount: clippedAssetAInitialReserve,
         },
       ],
@@ -820,7 +828,7 @@ export class FlashnetClient {
       assetAInitialReserve: clippedAssetAInitialReserve,
       virtualReserveA: clippedVirtualReserveA,
       virtualReserveB: clippedVirtualReserveB,
-      threshold: params.threshold,
+      threshold: params.threshold.toString(),
       lpFeeRateBps: params.lpFeeRateBps.toString(),
       totalHostFeeRateBps: params.totalHostFeeRateBps.toString(),
       nonce,
@@ -841,7 +849,7 @@ export class FlashnetClient {
       assetAInitialReserve: clippedAssetAInitialReserve,
       virtualReserveA: clippedVirtualReserveA,
       virtualReserveB: clippedVirtualReserveB,
-      threshold: params.threshold,
+      threshold: params.threshold.toString(),
       lpFeeRateBps: params.lpFeeRateBps.toString(),
       totalHostFeeRateBps: params.totalHostFeeRateBps.toString(),
       hostNamespace: params.hostNamespace,
@@ -879,14 +887,30 @@ export class FlashnetClient {
           `Failed to confirm initial deposit: ${confirmResponse.message}`
         );
       }
-    } catch (error) {
-      // If initial deposit fails, we should inform the user
+    );
+
+    const confirmMessageHash = new Uint8Array(
+      await crypto.subtle.digest("SHA-256", confirmIntentMessage)
+    );
+    const confirmSignature = await (
+      this._wallet as any
+    ).config.signer.signMessageWithIdentityKey(confirmMessageHash, true);
+
+    const confirmRequest: ConfirmInitialDepositRequest = {
+      poolId: createResponse.poolId,
+      assetASparkTransferId: assetATransferId,
+      nonce: confirmNonce,
+      signature: Buffer.from(confirmSignature).toString("hex"),
+      poolOwnerPublicKey: this.publicKey,
+    };
+
+    const confirmResponse = await this.typedApi.confirmInitialDeposit(
+      confirmRequest
+    );
+
+    if (!confirmResponse.confirmed) {
       throw new Error(
-        `Pool created with ID ${
-          createResponse.poolId
-        }, but initial deposit failed: ${
-          error instanceof Error ? error.message : String(error)
-        }`
+        `Failed to confirm initial deposit: ${confirmResponse.message}`
       );
     }
 
