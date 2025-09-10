@@ -2,7 +2,6 @@ import { bytesToHex, hexToBytes } from "@noble/hashes/utils";
 import { bech32m } from "@scure/base";
 import type { NetworkType, SparkNetworkType } from "../types";
 import { sha256 } from "@noble/hashes/sha2.js";
-import { bigintTo16ByteArray } from ".";
 
 const SparkHumanReadableTokenIdentifierNetworkPrefix: Record<
   SparkNetworkType,
@@ -254,6 +253,16 @@ export function getTokenIdentifierHashes(token: {
     networkHash,
     creationEntityPublicKeyHash,
   };
+}
+
+function bigintTo16ByteArray(value: bigint) {
+  let valueToTrack = value;
+  const buffer = new Uint8Array(16);
+  for (let i = 15; i >= 0 && valueToTrack > 0n; i--) {
+    buffer[i] = Number(valueToTrack & 255n);
+    valueToTrack >>= 8n;
+  }
+  return buffer;
 }
 
 export function getTokenIdentifierWithHashes(hashes: TokenIdentifierHashes) {

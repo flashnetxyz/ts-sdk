@@ -139,7 +139,7 @@ export interface FlashnetClientOptions {
 type Tuple<
   T,
   N extends number,
-  Acc extends readonly T[] = []
+  Acc extends readonly T[] = [],
 > = Acc["length"] extends N ? Acc : Tuple<T, N, [...Acc, T]>;
 
 /**
@@ -695,32 +695,37 @@ export class FlashnetClient {
    * @returns An object containing `virtualReserveA`, `virtualReserveB`, and `threshold`.
    */
   public static calculateVirtualReserves(params: {
-    initialTokenSupply: number | string;
+    initialTokenSupply: bigint | number | string;
     graduationThresholdPct: number;
-    targetRaise: number | string;
+    targetRaise: bigint | number | string;
   }): { virtualReserveA: bigint; virtualReserveB: bigint; threshold: bigint } {
-    const supply = Number(String(params.initialTokenSupply).replace(/_/g, ""));
-    const targetB = Number(String(params.targetRaise).replace(/_/g, ""));
-    const lpFrac = 1.0;
-
     // Validate inputs
-    if (supply <= 0) {
-      throw new Error("Initial token supply must be positive");
-    }
-    if (targetB <= 0) {
-      throw new Error("Target raise must be positive");
+    if (
+      !Number.isSafeInteger(params.initialTokenSupply) ||
+      Number(params.initialTokenSupply) <= 0
+    ) {
+      throw new Error("Initial token supply must be positive integer");
     }
 
-    // Validate graduation threshold is a positive whole number
     if (
-      !Number.isInteger(params.graduationThresholdPct) ||
+      !Number.isSafeInteger(params.targetRaise) ||
+      Number(params.targetRaise) <= 0
+    ) {
+      throw new Error("Target raise must be positive integer");
+    }
+
+    if (
+      !Number.isSafeInteger(params.graduationThresholdPct) ||
       params.graduationThresholdPct <= 0
     ) {
       throw new Error(
-        "Graduation threshold percentage must be a positive whole number"
+        "Graduation threshold percentage must be a positive integer"
       );
     }
+
+    const supply = BigInt(params.initialTokenSupply);
     const graduationThresholdPct = BigInt(params.graduationThresholdPct);
+    const targetB = BigInt(params.targetRaise);
 
     // Check feasibility: f - g*(1-f) > 0 where f is graduationThresholdPct/100 and g is 1
     const MIN_GRADUATION_THRESHOLD_PCT = 50n;
@@ -864,57 +869,22 @@ export class FlashnetClient {
       return createResponse;
     }
 
-    // Encode pool ID as Spark address for transfers
-    const poolSparkAddress = encodeSparkAddressNew({
+    // Transfer initial reserve to the pool using new address encoding
+    const lpSparkAddress = encodeSparkAddressNew({
       identityPublicKey: createResponse.poolId,
       network: this.sparkNetwork,
     });
 
-    let assetATransferId: string;
-    if (params.assetAAddress === BTC_ASSET_PUBKEY) {
-      const transfer = await this._wallet.transfer({
-        amountSats: Number(clippedAssetAInitialReserve),
-        receiverSparkAddress: poolSparkAddress,
-      });
-      assetATransferId = transfer.id;
-    } else {
-      assetATransferId = await this._wallet.transferTokens({
-        tokenIdentifier: this.toHumanReadableTokenIdentifier(
-          params.assetAAddress
-        ) as any,
-        tokenAmount: BigInt(clippedAssetAInitialReserve),
-        receiverSparkAddress: poolSparkAddress,
-      });
-    }
+    const assetATransferId = await this.transferAsset({
+      receiverSparkAddress: lpSparkAddress,
+      assetAddress: params.assetAAddress,
+      amount: clippedAssetAInitialReserve,
+    });
 
-    // Confirm the initial deposit
-    const confirmNonce = generateNonce();
-    const confirmIntentMessage = generatePoolConfirmInitialDepositIntentMessage(
-      {
-        poolOwnerPublicKey: this.publicKey,
-        lpIdentityPublicKey: createResponse.poolId,
-        assetASparkTransferId: assetATransferId,
-        nonce: confirmNonce,
-      }
-    );
-
-    const confirmMessageHash = new Uint8Array(
-      await crypto.subtle.digest("SHA-256", confirmIntentMessage)
-    );
-    const confirmSignature = await (
-      this._wallet as any
-    ).config.signer.signMessageWithIdentityKey(confirmMessageHash, true);
-
-    const confirmRequest: ConfirmInitialDepositRequest = {
-      poolId: createResponse.poolId,
-      assetASparkTransferId: assetATransferId,
-      nonce: confirmNonce,
-      signature: Buffer.from(confirmSignature).toString("hex"),
-      poolOwnerPublicKey: this.publicKey,
-    };
-
-    const confirmResponse = await this.typedApi.confirmInitialDeposit(
-      confirmRequest
+    const confirmResponse = await this.confirmInitialDeposit(
+      createResponse.poolId,
+      assetATransferId,
+      poolOwnerPublicKey
     );
 
     if (!confirmResponse.confirmed) {

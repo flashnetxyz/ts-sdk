@@ -447,7 +447,9 @@ export class TypedAmmApi {
    * @POST /v1/clawback
    * @requires Bearer token
    */
-  async clawback(request: Types.ClawbackRequest): Promise<Types.ClawbackResponse> {
+  async clawback(
+    request: Types.ClawbackRequest
+  ): Promise<Types.ClawbackResponse> {
     return this.client.ammPost<Types.ClawbackResponse>("/v1/clawback", request);
   }
 }
