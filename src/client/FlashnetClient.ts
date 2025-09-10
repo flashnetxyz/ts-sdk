@@ -139,7 +139,7 @@ export interface FlashnetClientOptions {
 type Tuple<
   T,
   N extends number,
-  Acc extends readonly T[] = []
+  Acc extends readonly T[] = [],
 > = Acc["length"] extends N ? Acc : Tuple<T, N, [...Acc, T]>;
 
 /**
@@ -863,49 +863,22 @@ export class FlashnetClient {
       return createResponse;
     }
 
-    try {
-      // Transfer initial reserve to the pool using new address encoding
-      const lpSparkAddress = encodeSparkAddressNew({
-        identityPublicKey: createResponse.poolId,
-        network: this.sparkNetwork,
-      });
+    // Transfer initial reserve to the pool using new address encoding
+    const lpSparkAddress = encodeSparkAddressNew({
+      identityPublicKey: createResponse.poolId,
+      network: this.sparkNetwork,
+    });
 
-      const assetATransferId = await this.transferAsset({
-        receiverSparkAddress: lpSparkAddress,
-        assetAddress: params.assetAAddress,
-        amount: clippedAssetAInitialReserve,
-      });
+    const assetATransferId = await this.transferAsset({
+      receiverSparkAddress: lpSparkAddress,
+      assetAddress: params.assetAAddress,
+      amount: clippedAssetAInitialReserve,
+    });
 
-      const confirmResponse = await this.confirmInitialDeposit(
-        createResponse.poolId,
-        assetATransferId,
-        poolOwnerPublicKey
-      );
-
-      if (!confirmResponse.confirmed) {
-        throw new Error(
-          `Failed to confirm initial deposit: ${confirmResponse.message}`
-        );
-      }
-    );
-
-    const confirmMessageHash = new Uint8Array(
-      await crypto.subtle.digest("SHA-256", confirmIntentMessage)
-    );
-    const confirmSignature = await (
-      this._wallet as any
-    ).config.signer.signMessageWithIdentityKey(confirmMessageHash, true);
-
-    const confirmRequest: ConfirmInitialDepositRequest = {
-      poolId: createResponse.poolId,
-      assetASparkTransferId: assetATransferId,
-      nonce: confirmNonce,
-      signature: Buffer.from(confirmSignature).toString("hex"),
-      poolOwnerPublicKey: this.publicKey,
-    };
-
-    const confirmResponse = await this.typedApi.confirmInitialDeposit(
-      confirmRequest
+    const confirmResponse = await this.confirmInitialDeposit(
+      createResponse.poolId,
+      assetATransferId,
+      poolOwnerPublicKey
     );
 
     if (!confirmResponse.confirmed) {

@@ -5,8 +5,8 @@ describe("FlashnetClient", () => {
     it("works as intended", () => {
       const { virtualReserveA, virtualReserveB, threshold } =
         FlashnetClient.calculateVirtualReserves({
-          initialTokenSupply: "1_000_000_000_00000000",
-          targetRaise: "25_000_000",
+          initialTokenSupply: 1_000_000_000_00000000n,
+          targetRaise: 25_000_000n,
           graduationThresholdPct: 80,
         });
 
@@ -18,8 +18,8 @@ describe("FlashnetClient", () => {
     it("works as intended round 2", () => {
       const { virtualReserveA, virtualReserveB, threshold } =
         FlashnetClient.calculateVirtualReserves({
-          initialTokenSupply: "800_000_000_00000000",
-          targetRaise: "25_000_000",
+          initialTokenSupply: 800_000_000_00000000n,
+          targetRaise: 25_000_000n,
           graduationThresholdPct: 75,
         });
 
@@ -33,8 +33,8 @@ describe("FlashnetClient", () => {
       (graduationThresholdPct) => {
         expect(() =>
           FlashnetClient.calculateVirtualReserves({
-            initialTokenSupply: "800_000_000_00000000",
-            targetRaise: "25_000_000",
+            initialTokenSupply: 800_000_000_00000000n,
+            targetRaise: 25_000_000n,
             graduationThresholdPct: graduationThresholdPct,
           })
         ).toThrow();
@@ -44,8 +44,8 @@ describe("FlashnetClient", () => {
     it("nonnegative initialTokenSupply does not work", () => {
       expect(() =>
         FlashnetClient.calculateVirtualReserves({
-          initialTokenSupply: "0",
-          targetRaise: "25_000_000",
+          initialTokenSupply: 0n,
+          targetRaise: 25_000_000n,
           graduationThresholdPct: 80,
         })
       ).toThrow();
@@ -54,8 +54,8 @@ describe("FlashnetClient", () => {
     it("nonnegative targetRaise does not work", () => {
       expect(() =>
         FlashnetClient.calculateVirtualReserves({
-          initialTokenSupply: "800_000_000_00000000",
-          targetRaise: "0",
+          initialTokenSupply: 800_000_000_00000000n,
+          targetRaise: 0n,
           graduationThresholdPct: 80,
         })
       ).toThrow();
