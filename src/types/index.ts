@@ -526,7 +526,6 @@ export interface HopResult {
   priceImpactPct: string;
 }
 
-// Pool listing types
 export interface AmmPool {
   lpPublicKey: string;
   hostName?: string;
@@ -536,6 +535,9 @@ export interface AmmPool {
   assetBAddress: string;
   assetAReserve?: string;
   assetBReserve?: string;
+  virtualReserveA?: string;
+  virtualReserveB?: string;
+  thresholdPct?: number;
   currentPriceAInB?: string;
   tvlAssetB?: string;
   volume24hAssetB?: string;
@@ -543,7 +545,9 @@ export interface AmmPool {
   curveType?: string;
   initialReserveA?: string;
   bondingProgressPercent?: string;
+  graduationThresholdAmount?: string;
   createdAt: string;
+  updatedAt: string;
 }
 
 export interface ListPoolsQuery {
@@ -556,7 +560,7 @@ export interface ListPoolsQuery {
   sort?: PoolSortOrder;
   limit?: number;
   offset?: number;
-  /** ISO8601 timestamp to filter pools updated after the given date */
+  /** RFC3339 timestamp to filter pools updated after the given date */
   afterUpdatedAt?: string;
 }
 
@@ -582,6 +586,9 @@ export interface PoolDetailsResponse {
   assetBAddress: string;
   assetAReserve: string;
   assetBReserve: string;
+  virtualReserveA?: string;
+  virtualReserveB?: string;
+  thresholdPct?: number;
   currentPriceAInB?: string;
   tvlAssetB: string;
   volume24hAssetB: string;
@@ -589,6 +596,7 @@ export interface PoolDetailsResponse {
   curveType: string;
   initialReserveA?: string;
   bondingProgressPercent?: string;
+  graduationThresholdAmount?: string;
   createdAt: string;
   status: string;
 }
