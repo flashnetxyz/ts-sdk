@@ -14,6 +14,8 @@ import {
   type AllLpPositionsResponse,
   type ClaimEscrowRequest,
   type ClaimEscrowResponse,
+  type ClawbackRequest,
+  type ClawbackResponse,
   type ClientEnvironment,
   type ClientNetworkConfig,
   type Condition,
@@ -30,6 +32,8 @@ import {
   type ExecuteRouteSwapRequest,
   type ExecuteRouteSwapResponse,
   type ExecuteSwapRequest,
+  type FeeWithdrawalHistoryQuery,
+  type FeeWithdrawalHistoryResponse,
   type FlashnetClientConfig,
   type FlashnetClientCustomConfig,
   type FlashnetClientEnvironmentConfig,
@@ -41,8 +45,7 @@ import {
   type GetHostResponse,
   type GetIntegratorFeesResponse,
   type GetPoolHostFeesResponse,
-  type ClawbackRequest,
-  type ClawbackResponse,
+  type GetPoolIntegratorFeesResponse,
   getClientEnvironmentFromLegacy,
   getSparkNetworkFromLegacy,
   type ListGlobalSwapsQuery,
@@ -85,6 +88,7 @@ import { AuthManager } from "../utils/auth";
 import {
   generateAddLiquidityIntentMessage,
   generateClaimEscrowIntentMessage,
+  generateClawbackIntentMessage,
   generateConstantProductPoolInitializationIntentMessage,
   generateCreateEscrowIntentMessage,
   generateFundEscrowIntentMessage,
@@ -96,7 +100,6 @@ import {
   generateRouteSwapIntentMessage,
   generateWithdrawHostFeesIntentMessage,
   generateWithdrawIntegratorFeesIntentMessage,
-  generateClawbackIntentMessage,
 } from "../utils/intents";
 import { createWalletSigner } from "../utils/signer";
 import {
@@ -762,7 +765,7 @@ export class FlashnetClient {
     }
 
     // Calculate graduation parameters
-    const f = graduationThresholdPct / 100n;
+    const _f = graduationThresholdPct / 100n;
 
     // f       is graduationThresholdPct / 100n
     // denom   is (2n * graduationThresholdPct / 100n) - 1n
@@ -1437,6 +1440,16 @@ export class FlashnetClient {
   }
 
   /**
+   * Get host fee withdrawal history
+   */
+  async getHostFeeWithdrawalHistory(
+    query?: FeeWithdrawalHistoryQuery
+  ): Promise<FeeWithdrawalHistoryResponse> {
+    await this.ensureInitialized();
+    return this.typedApi.getHostFeeWithdrawalHistory(query);
+  }
+
+  /**
    * Withdraw host fees
    */
   async withdrawHostFees(params: {
@@ -1491,6 +1504,26 @@ export class FlashnetClient {
     };
 
     return this.typedApi.getHostFees(request);
+  }
+
+  /**
+   * Get integrator fee withdrawal history
+   */
+  async getIntegratorFeeWithdrawalHistory(
+    query?: FeeWithdrawalHistoryQuery
+  ): Promise<FeeWithdrawalHistoryResponse> {
+    await this.ensureInitialized();
+    return this.typedApi.getIntegratorFeeWithdrawalHistory(query);
+  }
+
+  /**
+   * Get fees for a specific pool for an integrator
+   */
+  async getPoolIntegratorFees(
+    poolId: string
+  ): Promise<GetPoolIntegratorFeesResponse> {
+    await this.ensureInitialized();
+    return this.typedApi.getPoolIntegratorFees({ poolId });
   }
 
   /**

@@ -94,8 +94,22 @@ export class TypedAmmApi {
     request: Types.GetHostFeesRequest
   ): Promise<Types.GetHostFeesResponse> {
     return this.client.ammPost<Types.GetHostFeesResponse>(
-      "/v1/hosts/host-fees",
+      "/v1/hosts/fees",
       request
+    );
+  }
+
+  /**
+   * Get host fee withdrawal history
+   * @GET /v1/hosts/fee-withdrawal-history
+   * @requires Bearer token
+   */
+  async getHostFeeWithdrawalHistory(
+    query?: Types.FeeWithdrawalHistoryQuery
+  ): Promise<Types.FeeWithdrawalHistoryResponse> {
+    return this.client.ammGet<Types.FeeWithdrawalHistoryResponse>(
+      "/v1/hosts/fee-withdrawal-history",
+      { params: query as any }
     );
   }
 
@@ -343,25 +357,40 @@ export class TypedAmmApi {
 
   /**
    * Get integrator fees across all pools
-   * @GET /v1/hosts/integrator-fees
+   * @GET /v1/integrators/fees
    * @requires Bearer token
    */
   async getIntegratorFees(): Promise<Types.GetIntegratorFeesResponse> {
     return this.client.ammGet<Types.GetIntegratorFeesResponse>(
-      "/v1/hosts/integrator-fees"
+      "/v1/integrators/fees"
+    );
+  }
+
+  /**
+   * Get integrator fee withdrawal history
+   * @GET /v1/integrators/fee-withdrawal-history
+   * @requires Bearer token
+   */
+  async getIntegratorFeeWithdrawalHistory(
+    query?: Types.FeeWithdrawalHistoryQuery
+  ): Promise<Types.FeeWithdrawalHistoryResponse> {
+    return this.client.ammGet<Types.FeeWithdrawalHistoryResponse>(
+      "/v1/integrators/fee-withdrawal-history",
+      { params: query as any }
     );
   }
 
   /**
    * Get pool integrator fees
-   * @GET /v1/integrators/pool-fees/{poolId}
+   * @POST /v1/integrators/pool-fees
    * @requires Bearer token
    */
   async getPoolIntegratorFees(
-    poolId: string
+    request: Types.GetPoolIntegratorFeesRequest
   ): Promise<Types.GetPoolIntegratorFeesResponse> {
-    return this.client.ammGet<Types.GetPoolIntegratorFeesResponse>(
-      `/v1/hosts/pool-integrator-fees/${poolId}`
+    return this.client.ammPost<Types.GetPoolIntegratorFeesResponse>(
+      "/v1/integrators/pool-fees",
+      request
     );
   }
 

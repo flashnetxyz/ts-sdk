@@ -992,6 +992,32 @@ export interface GetPoolIntegratorFeesResponse {
   assetBFees: string;
 }
 
+export interface FeeWithdrawalRecord {
+  lpPubkey: string;
+  asset: string;
+  amount: string;
+  transferId: string;
+  timestamp: string;
+}
+
+export interface FeeWithdrawalHistoryResponse {
+  withdrawals: FeeWithdrawalRecord[];
+  totalCount: number;
+  page: number;
+  pageSize: number;
+  totalWithdrawn?: string;
+}
+
+export interface FeeWithdrawalHistoryQuery {
+  page?: number;
+  pageSize?: number;
+  lpPubkey?: string;
+  assetB?: string;
+  fromDate?: string;
+  toDate?: string;
+  sortOrder?: "desc" | "asc";
+}
+
 export interface TransferAssetRecipient {
   receiverSparkAddress: string;
   assetAddress: string;
@@ -1344,7 +1370,7 @@ export function validateSingleSidedPoolThreshold(
     }
 
     return { isValid: true };
-  } catch (error) {
+  } catch (_error) {
     return {
       isValid: false,
       error: "Invalid number format for threshold or initial reserve",
@@ -1373,7 +1399,7 @@ export function calculateThresholdPercentage(
     // Calculate percentage with precision
     const percentage = (thresholdNum * BigInt(10000)) / initialReserveNum;
     return Number(percentage) / 100; // Convert back to percentage
-  } catch (error) {
+  } catch (_error) {
     return 0;
   }
 }
