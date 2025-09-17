@@ -1136,8 +1136,8 @@ export class FlashnetClient {
     // Prepare hops for validation
     const hops: RouteHopValidation[] = params.hops.map((hop) => ({
       lpIdentityPublicKey: hop.poolId,
-      assetInAddress: this.toHexTokenIdentifier(hop.assetInAddress),
-      assetOutAddress: this.toHexTokenIdentifier(hop.assetOutAddress),
+      inputAssetAddress: this.toHexTokenIdentifier(hop.assetInAddress),
+      outputAssetAddress: this.toHexTokenIdentifier(hop.assetOutAddress),
       hopIntegratorFeeRateBps:
         hop.hopIntegratorFeeRateBps !== undefined &&
         hop.hopIntegratorFeeRateBps !== null
@@ -1163,8 +1163,8 @@ export class FlashnetClient {
       userPublicKey: this.publicKey,
       hops: hops.map((hop) => ({
         lpIdentityPublicKey: hop.lpIdentityPublicKey,
-        assetInAddress: hop.assetInAddress,
-        assetOutAddress: hop.assetOutAddress,
+        inputAssetAddress: hop.inputAssetAddress,
+        outputAssetAddress: hop.outputAssetAddress,
         hopIntegratorFeeRateBps: hop.hopIntegratorFeeRateBps,
       })),
       initialSparkTransferId: initialTransferId,

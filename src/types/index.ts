@@ -908,8 +908,8 @@ export interface ValidateAmmWithdrawHostFeesData {
 // Route swap validation types
 export interface RouteHopValidation {
   lpIdentityPublicKey: string;
-  assetInAddress: string;
-  assetOutAddress: string;
+  inputAssetAddress: string;
+  outputAssetAddress: string;
   hopIntegratorFeeRateBps?: string | null;
 }
 
