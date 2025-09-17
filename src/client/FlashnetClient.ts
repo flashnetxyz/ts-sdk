@@ -615,6 +615,12 @@ export class FlashnetClient {
   }): Promise<CreatePoolResponse> {
     await this.ensureInitialized();
 
+    if (this.toHexTokenIdentifier(params.assetBAddress) !== BTC_ASSET_PUBKEY) {
+      throw new Error(
+        "Asset B must be Bitcoin (BTC) for constant product pools."
+      );
+    }
+
     // Check if we need to add initial liquidity
     if (params.initialLiquidity) {
       await this.checkBalance({
@@ -818,6 +824,10 @@ export class FlashnetClient {
     disableInitialDeposit?: boolean;
   }): Promise<CreatePoolResponse> {
     await this.ensureInitialized();
+
+    if (this.toHexTokenIdentifier(params.assetBAddress) !== BTC_ASSET_PUBKEY) {
+      throw new Error("Asset B must be Bitcoin (BTC) for single-sided pools.");
+    }
 
     if (!params.hostNamespace && params.totalHostFeeRateBps < 10) {
       throw new Error(
