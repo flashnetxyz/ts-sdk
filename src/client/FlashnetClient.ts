@@ -690,6 +690,34 @@ export class FlashnetClient {
     return response;
   }
 
+  // Validate and normalize inputs to bigint
+  private static parsePositiveIntegerToBigInt(
+    value: bigint | number | string,
+    name: string
+  ): bigint {
+    if (typeof value === "bigint") {
+      if (value <= 0n) {
+        throw new Error(`${name} must be positive integer`);
+      }
+      return value;
+    }
+    if (typeof value === "number") {
+      if (!Number.isFinite(value) || !Number.isInteger(value) || value <= 0) {
+        throw new Error(`${name} must be positive integer`);
+      }
+      return BigInt(value);
+    }
+    try {
+      const v = BigInt(value);
+      if (v <= 0n) {
+        throw new Error(`${name} must be positive integer`);
+      }
+      return v;
+    } catch {
+      throw new Error(`${name} must be positive integer`);
+    }
+  }
+
   /**
    * Calculates virtual reserves for a bonding curve AMM.
    *
@@ -708,34 +736,6 @@ export class FlashnetClient {
     graduationThresholdPct: number;
     targetRaise: bigint | number | string;
   }): { virtualReserveA: bigint; virtualReserveB: bigint; threshold: bigint } {
-    // Validate and normalize inputs to bigint
-    const parsePositiveIntegerToBigInt = (
-      value: bigint | number | string,
-      name: string
-    ): bigint => {
-      if (typeof value === "bigint") {
-        if (value <= 0n) {
-          throw new Error(`${name} must be positive integer`);
-        }
-        return value;
-      }
-      if (typeof value === "number") {
-        if (!Number.isFinite(value) || !Number.isInteger(value) || value <= 0) {
-          throw new Error(`${name} must be positive integer`);
-        }
-        return BigInt(value);
-      }
-      try {
-        const v = BigInt(value);
-        if (v <= 0n) {
-          throw new Error(`${name} must be positive integer`);
-        }
-        return v;
-      } catch {
-        throw new Error(`${name} must be positive integer`);
-      }
-    };
-
     if (
       !Number.isFinite(params.graduationThresholdPct) ||
       !Number.isInteger(params.graduationThresholdPct) ||
@@ -746,11 +746,11 @@ export class FlashnetClient {
       );
     }
 
-    const supply = parsePositiveIntegerToBigInt(
+    const supply = this.parsePositiveIntegerToBigInt(
       params.initialTokenSupply,
       "Initial token supply"
     );
-    const targetB = parsePositiveIntegerToBigInt(
+    const targetB = this.parsePositiveIntegerToBigInt(
       params.targetRaise,
       "Target raise"
     );
@@ -779,20 +779,26 @@ export class FlashnetClient {
     // 1/denom is 100n / (2n * graduationThresholdPct - 100n)
 
     // Calculate virtual reserves and round down to integers
-    // virtualA is (supply * f * f) / denom
-    const virtualANumerator =
+    // totalA is (supply * f * f) / denom
+    const totalANumerator =
       BigInt(supply) * graduationThresholdPct * graduationThresholdPct;
-    const virtualADenominator = 200n * graduationThresholdPct - 10000n;
-    const virtualARemainder = virtualANumerator % virtualADenominator;
-    const virtualA =
-      (virtualANumerator - virtualARemainder) / virtualADenominator;
+    const totalADenominator = 200n * graduationThresholdPct - 10000n;
+    const totalARemainder = totalANumerator % totalADenominator;
+    const totalA = (totalANumerator - totalARemainder) / totalADenominator;
 
-    // virtualB is (targetB * g * (1 - f)) / denom
-    const virtualBNumerator = BigInt(targetB) * (100n - graduationThresholdPct);
-    const virtualBDenominator = 2n * graduationThresholdPct - 100n;
-    const virtualBRemainder = virtualBNumerator % virtualBDenominator;
-    const virtualB =
-      (virtualBNumerator - virtualBRemainder) / virtualBDenominator;
+    // Since there is an initial supply of tokens, we subtract that amount
+    // to get the remaining "virtual" amount for pricing
+    const virtualA = totalA - supply;
+
+    // totalB is (targetB * g * (1 - f)) / denom
+    const totalBNumerator = BigInt(targetB) * (100n - graduationThresholdPct);
+    const totalBDenominator = 2n * graduationThresholdPct - 100n;
+    const totalBRemainder = totalBNumerator % totalBDenominator;
+    const totalB = (totalBNumerator - totalBRemainder) / totalBDenominator;
+
+    // Bonding curve starts with no deposited amount of asset B,
+    // so virtualB is all of totalB
+    const virtualB = totalB;
 
     // Calculate threshold as amount of asset A (not percentage)
     const threshold = (BigInt(supply) * graduationThresholdPct) / 100n;
@@ -835,22 +841,25 @@ export class FlashnetClient {
       );
     }
 
-    // Clip decimals off reserves before any operations
-    const clippedAssetAInitialReserve = Math.floor(
-      Number(params.assetAInitialReserve)
+    // Validate reserves are valid positive integers before any operations
+    const assetAInitialReserve = FlashnetClient.parsePositiveIntegerToBigInt(
+      params.assetAInitialReserve,
+      "Asset A Initial Reserve"
     ).toString();
-    const clippedVirtualReserveA = Math.floor(
-      Number(params.virtualReserveA)
+    const virtualReserveA = FlashnetClient.parsePositiveIntegerToBigInt(
+      params.virtualReserveA,
+      "Virtual Reserve A"
     ).toString();
-    const clippedVirtualReserveB = Math.floor(
-      Number(params.virtualReserveB)
+    const virtualReserveB = FlashnetClient.parsePositiveIntegerToBigInt(
+      params.virtualReserveB,
+      "Virtual Reserve B"
     ).toString();
 
     await this.checkBalance({
       balancesToCheck: [
         {
           assetAddress: params.assetAAddress,
-          amount: clippedAssetAInitialReserve,
+          amount: assetAInitialReserve,
         },
       ],
       errorPrefix: "Insufficient balance for pool creation: ",
@@ -864,9 +873,9 @@ export class FlashnetClient {
       poolOwnerPublicKey,
       assetAAddress: this.toHexTokenIdentifier(params.assetAAddress),
       assetBAddress: this.toHexTokenIdentifier(params.assetBAddress),
-      assetAInitialReserve: clippedAssetAInitialReserve,
-      virtualReserveA: clippedVirtualReserveA,
-      virtualReserveB: clippedVirtualReserveB,
+      assetAInitialReserve,
+      virtualReserveA,
+      virtualReserveB,
       threshold: params.threshold.toString(),
       lpFeeRateBps: params.lpFeeRateBps.toString(),
       totalHostFeeRateBps: params.totalHostFeeRateBps.toString(),
@@ -885,9 +894,9 @@ export class FlashnetClient {
       poolOwnerPublicKey,
       assetAAddress: this.toHexTokenIdentifier(params.assetAAddress),
       assetBAddress: this.toHexTokenIdentifier(params.assetBAddress),
-      assetAInitialReserve: clippedAssetAInitialReserve,
-      virtualReserveA: clippedVirtualReserveA,
-      virtualReserveB: clippedVirtualReserveB,
+      assetAInitialReserve,
+      virtualReserveA,
+      virtualReserveB,
       threshold: params.threshold.toString(),
       lpFeeRateBps: params.lpFeeRateBps.toString(),
       totalHostFeeRateBps: params.totalHostFeeRateBps.toString(),
@@ -911,7 +920,7 @@ export class FlashnetClient {
     const assetATransferId = await this.transferAsset({
       receiverSparkAddress: lpSparkAddress,
       assetAddress: params.assetAAddress,
-      amount: clippedAssetAInitialReserve,
+      amount: assetAInitialReserve,
     });
 
     const confirmResponse = await this.confirmInitialDeposit(
