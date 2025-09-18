@@ -6,7 +6,6 @@ import {
   getTokenIdentifierHashes,
   getTokenIdentifierWithHashes,
   encodeSparkHumanReadableTokenIdentifier,
-  bigintTo16ByteArray,
 } from "@flashnet/sdk";
 import { ApiClient } from "@flashnet/sdk/api";
 // Test modular imports without wallet dependencies
@@ -79,6 +78,16 @@ if (
 }
 
 {
+  function bigintTo16ByteArray(value) {
+    let valueToTrack = value;
+    const buffer = new Uint8Array(16);
+    for (let i = 15; i >= 0 && valueToTrack > 0n; i--) {
+      buffer[i] = Number(valueToTrack & 255n);
+      valueToTrack >>= 8n;
+    }
+    return buffer;
+  }
+
   const issuerPrivateKey = secp256k1.utils.randomSecretKey();
   const issuerPublicKey = secp256k1.getPublicKey(issuerPrivateKey);
 
@@ -97,12 +106,16 @@ if (
   });
 
   let humanReadableTokenIdentifier = "";
-  while (!humanReadableTokenIdentifier.endsWith("d0g")) {
+  while (true) {
     const tokenIdentifier = getTokenIdentifierWithHashes(hashes);
     humanReadableTokenIdentifier = encodeSparkHumanReadableTokenIdentifier(
       tokenIdentifier,
       "MAINNET"
     );
+
+    if (humanReadableTokenIdentifier.endsWith("d0g")) {
+      break;
+    }
 
     hashes.maxSupplyHash = sha256(bigintTo16ByteArray(++maxSupply));
   }
