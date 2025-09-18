@@ -111,6 +111,7 @@ import {
   encodeSparkHumanReadableTokenIdentifier,
   type SparkHumanReadableTokenIdentifier,
 } from "../utils/tokenAddress";
+import { getHexFromUint8Array } from "../utils/hex";
 
 export interface TokenBalance {
   balance: bigint;
@@ -142,7 +143,7 @@ export interface FlashnetClientOptions {
 type Tuple<
   T,
   N extends number,
-  Acc extends readonly T[] = []
+  Acc extends readonly T[] = [],
 > = Acc["length"] extends N ? Acc : Tuple<T, N, [...Acc, T]>;
 
 /**
@@ -467,9 +468,9 @@ export class FlashnetClient {
         const info = tokenData.tokenMetadata;
 
         // Convert raw token identifier to hex and human-readable forms
-        const tokenIdentifierHex = Buffer.from(
+        const tokenIdentifierHex = getHexFromUint8Array(
           info.rawTokenIdentifier
-        ).toString("hex");
+        );
         const tokenAddress = encodeSparkHumanReadableTokenIdentifier(
           info.rawTokenIdentifier,
           this.sparkNetwork
@@ -669,7 +670,7 @@ export class FlashnetClient {
       totalHostFeeRateBps: params.totalHostFeeRateBps.toString(),
       hostNamespace: params.hostNamespace || "",
       nonce,
-      signature: Buffer.from(signature).toString("hex"),
+      signature: getHexFromUint8Array(signature),
     };
 
     const response = await this.typedApi.createConstantProductPool(request);
@@ -902,7 +903,7 @@ export class FlashnetClient {
       totalHostFeeRateBps: params.totalHostFeeRateBps.toString(),
       hostNamespace: params.hostNamespace,
       nonce,
-      signature: Buffer.from(signature).toString("hex"),
+      signature: getHexFromUint8Array(signature),
     };
 
     const createResponse = await this.typedApi.createSingleSidedPool(request);
@@ -970,7 +971,7 @@ export class FlashnetClient {
       poolId,
       assetASparkTransferId,
       nonce,
-      signature: Buffer.from(signature).toString("hex"),
+      signature: getHexFromUint8Array(signature),
       poolOwnerPublicKey: poolOwnerPublicKey ?? this.publicKey,
     };
 
@@ -1075,7 +1076,7 @@ export class FlashnetClient {
       totalIntegratorFeeRateBps: params.integratorFeeRateBps?.toString() || "0",
       integratorPublicKey: params.integratorPublicKey || "",
       nonce,
-      signature: Buffer.from(signature).toString("hex"),
+      signature: getHexFromUint8Array(signature),
     };
 
     const response = await this.typedApi.executeSwap(request);
@@ -1210,7 +1211,7 @@ export class FlashnetClient {
       maxRouteSlippageBps: params.maxRouteSlippageBps.toString(),
       minAmountOut: params.minAmountOut,
       nonce,
-      signature: Buffer.from(signature).toString("hex"),
+      signature: getHexFromUint8Array(signature),
       integratorFeeRateBps: params.integratorFeeRateBps?.toString() || "0",
       integratorPublicKey: params.integratorPublicKey || "",
     };
@@ -1310,7 +1311,7 @@ export class FlashnetClient {
       assetAMinAmountIn: params.assetAMinAmountIn.toString(),
       assetBMinAmountIn: params.assetBMinAmountIn.toString(),
       nonce,
-      signature: Buffer.from(signature).toString("hex"),
+      signature: getHexFromUint8Array(signature),
     };
 
     const response = await this.typedApi.addLiquidity(request);
@@ -1382,7 +1383,7 @@ export class FlashnetClient {
       poolId: params.poolId,
       lpTokensToRemove: params.lpTokensToRemove,
       nonce,
-      signature: Buffer.from(signature).toString("hex"),
+      signature: getHexFromUint8Array(signature),
     };
 
     const response = await this.typedApi.removeLiquidity(request);
@@ -1433,7 +1434,7 @@ export class FlashnetClient {
       minFeeBps: params.minFeeBps,
       feeRecipientPublicKey: feeRecipient,
       nonce,
-      signature: Buffer.from(signature).toString("hex"),
+      signature: getHexFromUint8Array(signature),
     };
 
     return this.typedApi.registerHost(request);
@@ -1497,7 +1498,7 @@ export class FlashnetClient {
       lpIdentityPublicKey: params.lpIdentityPublicKey,
       assetBAmount: params.assetBAmount,
       nonce,
-      signature: Buffer.from(signature).toString("hex"),
+      signature: getHexFromUint8Array(signature),
     };
 
     const response = await this.typedApi.withdrawHostFees(request);
@@ -1575,7 +1576,7 @@ export class FlashnetClient {
       lpIdentityPublicKey: params.lpIdentityPublicKey,
       assetBAmount: params.assetBAmount,
       nonce,
-      signature: Buffer.from(signature).toString("hex"),
+      signature: getHexFromUint8Array(signature),
     };
 
     const response = await this.typedApi.withdrawIntegratorFees(request);
@@ -1653,7 +1654,7 @@ export class FlashnetClient {
       abandonHost: params.abandonHost,
       abandonConditions: params.abandonConditions,
       nonce,
-      signature: Buffer.from(signature).toString("hex"),
+      signature: getHexFromUint8Array(signature),
     };
 
     const createResponse = await this.typedApi.createEscrow(request);
@@ -1738,7 +1739,7 @@ export class FlashnetClient {
     const request: FundEscrowRequest = {
       ...params,
       nonce,
-      signature: Buffer.from(signature).toString("hex"),
+      signature: getHexFromUint8Array(signature),
     };
 
     return this.typedApi.fundEscrow(request);
@@ -1772,7 +1773,7 @@ export class FlashnetClient {
     const request: ClaimEscrowRequest = {
       escrowId: params.escrowId,
       nonce,
-      signature: Buffer.from(signature).toString("hex"),
+      signature: getHexFromUint8Array(signature),
     };
 
     return this.typedApi.claimEscrow(request);
@@ -1854,7 +1855,7 @@ export class FlashnetClient {
       sparkTransferId: params.sparkTransferId,
       lpIdentityPublicKey: params.lpIdentityPublicKey,
       nonce,
-      signature: Buffer.from(signature).toString("hex"),
+      signature: getHexFromUint8Array(signature),
     };
 
     const response = await this.typedApi.clawback(request);
@@ -2048,7 +2049,7 @@ export class FlashnetClient {
       assetAMinAmountIn: assetAMinAmountIn.toString(),
       assetBMinAmountIn: assetBMinAmountIn.toString(),
       nonce,
-      signature: Buffer.from(signature).toString("hex"),
+      signature: getHexFromUint8Array(signature),
     };
 
     const response = await this.typedApi.addLiquidity(request);
