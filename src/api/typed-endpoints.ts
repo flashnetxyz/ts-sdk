@@ -470,6 +470,38 @@ export class TypedAmmApi {
     return this.client.ammGet<Types.SettlementPingResponse>("/v1/ping");
   }
 
+  // ===== Config Endpoints =====
+
+  /**
+   * Get feature status flags
+   * @GET /v1/config/feature-status
+   */
+  async getFeatureStatus(): Promise<Types.FeatureStatusResponse> {
+    return this.client.ammGet<Types.FeatureStatusResponse>(
+      "/v1/config/feature-status"
+    );
+  }
+
+  /**
+   * Get min amount configuration per asset
+   * @GET /v1/config/min-amounts
+   */
+  async getMinAmounts(): Promise<Types.MinAmountsResponse> {
+    return this.client.ammGet<Types.MinAmountsResponse>(
+      "/v1/config/min-amounts"
+    );
+  }
+
+  /**
+   * Get allowed Asset B list for pool creation
+   * @GET /v1/config/allowed-assets
+   */
+  async getAllowedAssets(): Promise<Types.AllowedAssetsResponse> {
+    return this.client.ammGet<Types.AllowedAssetsResponse>(
+      "/v1/config/allowed-assets"
+    );
+  }
+
   // ===== Clawback Endpoint =====
   /**
    * Clawback stuck funds sent to an LP wallet

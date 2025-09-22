@@ -1,11 +1,11 @@
 #!/usr/bin/env node
 
 import {
+  encodeSparkHumanReadableTokenIdentifier,
   getHumanReadableTokenIdentifier,
-  SPARK_TOKEN_CREATION_ENTITY_PUBLIC_KEY,
   getTokenIdentifierHashes,
   getTokenIdentifierWithHashes,
-  encodeSparkHumanReadableTokenIdentifier,
+  SPARK_TOKEN_CREATION_ENTITY_PUBLIC_KEY,
 } from "@flashnet/sdk";
 import { ApiClient } from "@flashnet/sdk/api";
 // Test modular imports without wallet dependencies

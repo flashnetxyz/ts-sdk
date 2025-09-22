@@ -735,6 +735,41 @@ export interface SettlementPingResponse {
   gatewayTimestamp: string;
 }
 
+// ===== Config Endpoints Types =====
+
+export type FeatureName =
+  | "master_kill_switch"
+  | "allow_withdraw_fees"
+  | "allow_pool_creation"
+  | "allow_swaps"
+  | "allow_add_liquidity"
+  | "allow_route_swaps"
+  | "allow_withdraw_liquidity";
+
+export interface FeatureStatusItem {
+  feature_name: FeatureName;
+  enabled: boolean;
+  reason: string | null;
+}
+
+export type FeatureStatusResponse = FeatureStatusItem[];
+
+export interface MinAmountItem {
+  asset_identifier: string;
+  min_amount: string | number;
+  enabled: boolean;
+}
+
+export type MinAmountsResponse = MinAmountItem[];
+
+export interface AllowedAssetItem {
+  asset_identifier: string;
+  asset_name: string | null;
+  enabled: boolean;
+}
+
+export type AllowedAssetsResponse = AllowedAssetItem[];
+
 // Define Network enum locally to avoid spark-sdk dependency
 export enum Network {
   MAINNET = 0,

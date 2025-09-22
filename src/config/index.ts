@@ -21,7 +21,7 @@ export const CLIENT_NETWORK_CONFIGS: Record<
   ClientNetworkConfig
 > = {
   mainnet: {
-    ammGatewayUrl: "https://api.amm.flashnet.xyz",
+    ammGatewayUrl: "https://api.flashnet.xyz",
     mempoolApiUrl: "https://mempool.space",
     explorerUrl: "https://mempool.space",
     sparkScanUrl: "https://api.sparkscan.io",
@@ -205,7 +205,7 @@ export function getClientEnvironmentName(
  */
 export const NETWORK_CONFIGS: Record<NetworkType, NetworkConfig> = {
   MAINNET: {
-    ammGatewayUrl: "https://api.amm.flashnet.xyz",
+    ammGatewayUrl: "https://api.flashnet.xyz",
     mempoolApiUrl: "https://mempool.space",
     explorerUrl: "https://mempool.space",
     sparkScanUrl: "https://api.sparkscan.io",

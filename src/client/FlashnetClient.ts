@@ -12,6 +12,7 @@ import {
   type AddLiquidityRequest,
   type AddLiquidityResponse,
   type AllLpPositionsResponse,
+  type AllowedAssetsResponse,
   type ClaimEscrowRequest,
   type ClaimEscrowResponse,
   type ClawbackRequest,
@@ -32,6 +33,8 @@ import {
   type ExecuteRouteSwapRequest,
   type ExecuteRouteSwapResponse,
   type ExecuteSwapRequest,
+  type FeatureName,
+  type FeatureStatusResponse,
   type FeeWithdrawalHistoryQuery,
   type FeeWithdrawalHistoryResponse,
   type FlashnetClientConfig,
@@ -85,6 +88,7 @@ import {
 } from "../types";
 import { compareDecimalStrings, generateNonce } from "../utils";
 import { AuthManager } from "../utils/auth";
+import { getHexFromUint8Array } from "../utils/hex";
 import {
   generateAddLiquidityIntentMessage,
   generateClaimEscrowIntentMessage,
@@ -111,7 +115,6 @@ import {
   encodeSparkHumanReadableTokenIdentifier,
   type SparkHumanReadableTokenIdentifier,
 } from "../utils/tokenAddress";
-import { getHexFromUint8Array } from "../utils/hex";
 
 export interface TokenBalance {
   balance: bigint;
@@ -143,7 +146,7 @@ export interface FlashnetClientOptions {
 type Tuple<
   T,
   N extends number,
-  Acc extends readonly T[] = [],
+  Acc extends readonly T[] = []
 > = Acc["length"] extends N ? Acc : Tuple<T, N, [...Acc, T]>;
 
 /**
@@ -173,6 +176,24 @@ export class FlashnetClient {
   private publicKey: string = "";
   private sparkAddress: string = "";
   private isAuthenticated: boolean = false;
+
+  // Ephemeral caches for config endpoints and ping
+  private featureStatusCache?: {
+    data: FeatureStatusResponse;
+    expiryMs: number;
+  };
+  private minAmountsCache?: { map: Map<string, bigint>; expiryMs: number };
+  private allowedAssetsCache?: {
+    data: AllowedAssetsResponse;
+    expiryMs: number;
+  };
+  private pingCache?: { ok: boolean; expiryMs: number };
+
+  // TTLs (milliseconds)
+  private static readonly FEATURE_STATUS_TTL_MS = 5000; // 5s
+  private static readonly MIN_AMOUNTS_TTL_MS = 5000; // 5s
+  private static readonly ALLOWED_ASSETS_TTL_MS = 60000; // 60s
+  private static readonly PING_TTL_MS = 2000; // 2s
 
   /**
    * Get the underlying wallet instance for direct wallet operations
@@ -616,11 +637,10 @@ export class FlashnetClient {
   }): Promise<CreatePoolResponse> {
     await this.ensureInitialized();
 
-    if (this.toHexTokenIdentifier(params.assetBAddress) !== BTC_ASSET_PUBKEY) {
-      throw new Error(
-        "Asset B must be Bitcoin (BTC) for constant product pools."
-      );
-    }
+    await this.ensureAmmOperationAllowed("allow_pool_creation");
+    await this.assertAllowedAssetBForPoolCreation(
+      this.toHexTokenIdentifier(params.assetBAddress)
+    );
 
     // Check if we need to add initial liquidity
     if (params.initialLiquidity) {
@@ -747,11 +767,11 @@ export class FlashnetClient {
       );
     }
 
-    const supply = this.parsePositiveIntegerToBigInt(
+    const supply = FlashnetClient.parsePositiveIntegerToBigInt(
       params.initialTokenSupply,
       "Initial token supply"
     );
-    const targetB = this.parsePositiveIntegerToBigInt(
+    const targetB = FlashnetClient.parsePositiveIntegerToBigInt(
       params.targetRaise,
       "Target raise"
     );
@@ -832,9 +852,10 @@ export class FlashnetClient {
   }): Promise<CreatePoolResponse> {
     await this.ensureInitialized();
 
-    if (this.toHexTokenIdentifier(params.assetBAddress) !== BTC_ASSET_PUBKEY) {
-      throw new Error("Asset B must be Bitcoin (BTC) for single-sided pools.");
-    }
+    await this.ensureAmmOperationAllowed("allow_pool_creation");
+    await this.assertAllowedAssetBForPoolCreation(
+      this.toHexTokenIdentifier(params.assetBAddress)
+    );
 
     if (!params.hostNamespace && params.totalHostFeeRateBps < 10) {
       throw new Error(
@@ -987,6 +1008,7 @@ export class FlashnetClient {
     params: SimulateSwapRequest
   ): Promise<SimulateSwapResponse> {
     await this.ensureInitialized();
+    await this.ensurePingOk();
     return this.typedApi.simulateSwap(params);
   }
 
@@ -1004,6 +1026,15 @@ export class FlashnetClient {
     integratorPublicKey?: string;
   }): Promise<SwapResponse> {
     await this.ensureInitialized();
+
+    // Gate by feature flags and ping, and enforce min-amount policy before transfers
+    await this.ensureAmmOperationAllowed("allow_swaps");
+    await this.assertSwapMeetsMinAmounts({
+      assetInAddress: params.assetInAddress,
+      assetOutAddress: params.assetOutAddress,
+      amountIn: params.amountIn,
+      minAmountOut: params.minAmountOut,
+    });
 
     // Transfer assets to pool using new address encoding
     const lpSparkAddress = encodeSparkAddressNew({
@@ -1040,6 +1071,15 @@ export class FlashnetClient {
     integratorPublicKey?: string;
   }) {
     await this.ensureInitialized();
+
+    // Also enforce gating and min amounts for direct intent usage
+    await this.ensureAmmOperationAllowed("allow_swaps");
+    await this.assertSwapMeetsMinAmounts({
+      assetInAddress: params.assetInAddress,
+      assetOutAddress: params.assetOutAddress,
+      amountIn: params.amountIn,
+      minAmountOut: params.minAmountOut,
+    });
 
     // Generate swap intent
     const nonce = generateNonce();
@@ -1103,6 +1143,7 @@ export class FlashnetClient {
       throw new Error("Route swap cannot have more than 4 hops");
     }
     await this.ensureInitialized();
+    await this.ensurePingOk();
     return this.typedApi.simulateRouteSwap(params);
   }
 
@@ -1124,6 +1165,20 @@ export class FlashnetClient {
     integratorPublicKey?: string;
   }): Promise<ExecuteRouteSwapResponse> {
     await this.ensureInitialized();
+
+    await this.ensureAmmOperationAllowed("allow_route_swaps");
+    // Validate min-amount policy for route: check initial input and final output asset
+    const finalOutputAsset =
+      params.hops[params.hops.length - 1]?.assetOutAddress;
+    if (!finalOutputAsset) {
+      throw new Error("Route swap requires at least one hop with output asset");
+    }
+    await this.assertSwapMeetsMinAmounts({
+      assetInAddress: params.initialAssetAddress,
+      assetOutAddress: finalOutputAsset,
+      amountIn: params.inputAmount,
+      minAmountOut: params.minAmountOut,
+    });
 
     // Validate hops array
     if (params.hops.length > 4) {
@@ -1239,6 +1294,7 @@ export class FlashnetClient {
     params: SimulateAddLiquidityRequest
   ): Promise<SimulateAddLiquidityResponse> {
     await this.ensureInitialized();
+    await this.ensurePingOk();
     return this.typedApi.simulateAddLiquidity(params);
   }
 
@@ -1254,8 +1310,17 @@ export class FlashnetClient {
   }): Promise<AddLiquidityResponse> {
     await this.ensureInitialized();
 
+    await this.ensureAmmOperationAllowed("allow_add_liquidity");
+
     // Get pool details to know which assets we're dealing with
     const pool = await this.getPool(params.poolId);
+
+    // Enforce min-amount policy for inputs based on pool assets
+    await this.assertAddLiquidityMeetsMinAmounts({
+      poolId: params.poolId,
+      assetAAmount: params.assetAAmount,
+      assetBAmount: params.assetBAmount,
+    });
 
     // Transfer assets to pool using new address encoding
     const lpSparkAddress = encodeSparkAddressNew({
@@ -1338,6 +1403,7 @@ export class FlashnetClient {
     params: SimulateRemoveLiquidityRequest
   ): Promise<SimulateRemoveLiquidityResponse> {
     await this.ensureInitialized();
+    await this.ensurePingOk();
     return this.typedApi.simulateRemoveLiquidity(params);
   }
 
@@ -1350,6 +1416,8 @@ export class FlashnetClient {
   }): Promise<RemoveLiquidityResponse> {
     await this.ensureInitialized();
 
+    await this.ensureAmmOperationAllowed("allow_withdraw_liquidity");
+
     // Check LP token balance
     const position = await this.getLpPosition(params.poolId);
     const lpTokensOwned = position.lpTokensOwned;
@@ -1360,6 +1428,12 @@ export class FlashnetClient {
         `Insufficient LP tokens. Owned: ${lpTokensOwned}, Requested: ${tokensToRemove}`
       );
     }
+
+    // Pre-simulate and enforce min-amount policy for outputs
+    await this.assertRemoveLiquidityMeetsMinAmounts({
+      poolId: params.poolId,
+      lpTokensToRemove: params.lpTokensToRemove,
+    });
 
     // Generate remove liquidity intent
     const nonce = generateNonce();
@@ -1409,6 +1483,7 @@ export class FlashnetClient {
     feeRecipientPublicKey?: string;
   }): Promise<RegisterHostResponse> {
     await this.ensureInitialized();
+    await this.ensurePingOk();
 
     const feeRecipient = params.feeRecipientPublicKey || this.publicKey;
     const nonce = generateNonce();
@@ -1456,6 +1531,7 @@ export class FlashnetClient {
     poolId: string
   ): Promise<GetPoolHostFeesResponse> {
     await this.ensureInitialized();
+    await this.ensurePingOk();
     return this.typedApi.getPoolHostFees({ hostNamespace, poolId });
   }
 
@@ -1477,6 +1553,8 @@ export class FlashnetClient {
     assetBAmount?: string;
   }): Promise<WithdrawHostFeesResponse> {
     await this.ensureInitialized();
+
+    await this.ensureAmmOperationAllowed("allow_withdraw_fees");
 
     const nonce = generateNonce();
     const intentMessage = generateWithdrawHostFeesIntentMessage({
@@ -1518,6 +1596,7 @@ export class FlashnetClient {
    */
   async getHostFees(hostNamespace: string): Promise<GetHostFeesResponse> {
     await this.ensureInitialized();
+    await this.ensurePingOk();
 
     const request: GetHostFeesRequest = {
       hostNamespace,
@@ -1543,6 +1622,7 @@ export class FlashnetClient {
     poolId: string
   ): Promise<GetPoolIntegratorFeesResponse> {
     await this.ensureInitialized();
+    await this.ensurePingOk();
     return this.typedApi.getPoolIntegratorFees({ poolId });
   }
 
@@ -1554,6 +1634,8 @@ export class FlashnetClient {
     assetBAmount?: string;
   }): Promise<WithdrawIntegratorFeesResponse> {
     await this.ensureInitialized();
+
+    await this.ensureAmmOperationAllowed("allow_withdraw_fees");
 
     const nonce = generateNonce();
     const intentMessage = generateWithdrawIntegratorFeesIntentMessage({
@@ -1617,6 +1699,7 @@ export class FlashnetClient {
     autoFund?: boolean;
   }): Promise<CreateEscrowResponse | FundEscrowResponse> {
     await this.ensureInitialized();
+    await this.ensurePingOk();
 
     const nonce = generateNonce();
     // The intent message requires a different structure for recipients and conditions
@@ -1687,6 +1770,7 @@ export class FlashnetClient {
     assetAmount: string;
   }): Promise<FundEscrowResponse> {
     await this.ensureInitialized();
+    await this.ensurePingOk();
 
     // 1. Balance check
     await this.checkBalance({
@@ -1719,6 +1803,7 @@ export class FlashnetClient {
     escrowId: string;
     sparkTransferId: string;
   }): Promise<FundEscrowResponse> {
+    await this.ensurePingOk();
     // Generate intent
     const nonce = generateNonce();
     const intentMessage = generateFundEscrowIntentMessage({
@@ -1755,6 +1840,7 @@ export class FlashnetClient {
     escrowId: string;
   }): Promise<ClaimEscrowResponse> {
     await this.ensureInitialized();
+    await this.ensurePingOk();
 
     const nonce = generateNonce();
     const intentMessage = generateClaimEscrowIntentMessage({
@@ -1834,6 +1920,7 @@ export class FlashnetClient {
     lpIdentityPublicKey: string;
   }): Promise<ClawbackResponse> {
     await this.ensureInitialized();
+    await this.ensurePingOk();
 
     const nonce = generateNonce();
     const intentMessage = generateClawbackIntentMessage({
@@ -2000,6 +2087,14 @@ export class FlashnetClient {
     assetAMinAmountIn: string,
     assetBMinAmountIn: string
   ): Promise<void> {
+    // Enforce gating and min-amount policy for initial liquidity
+    await this.ensureAmmOperationAllowed("allow_add_liquidity");
+    await this.assertAddLiquidityMeetsMinAmounts({
+      poolId,
+      assetAAmount,
+      assetBAmount,
+    });
+
     const lpSparkAddress = encodeSparkAddressNew({
       identityPublicKey: poolId,
       network: this.sparkNetwork,
@@ -2067,5 +2162,252 @@ export class FlashnetClient {
    */
   async cleanup(): Promise<void> {
     await this._wallet.cleanupConnections();
+  }
+
+  // ===== Config and Policy Enforcement Helpers =====
+
+  private async ensureAmmOperationAllowed(
+    requiredFeature: FeatureName
+  ): Promise<void> {
+    await this.ensurePingOk();
+    const featureMap = await this.getFeatureStatusMap();
+
+    if (featureMap.get("master_kill_switch")) {
+      throw new Error("Service is temporarily disabled by master kill switch");
+    }
+
+    if (!featureMap.get(requiredFeature)) {
+      throw new Error(
+        `Operation not allowed: feature '${requiredFeature}' is disabled`
+      );
+    }
+  }
+
+  private async ensurePingOk(): Promise<void> {
+    const now = Date.now();
+    if (this.pingCache && this.pingCache.expiryMs > now) {
+      if (!this.pingCache.ok) {
+        throw new Error(
+          "Settlement service unavailable. Only read (GET) operations are allowed right now."
+        );
+      }
+      return;
+    }
+    const ping = await this.typedApi.ping();
+    const ok =
+      !!ping &&
+      typeof ping.status === "string" &&
+      ping.status.toLowerCase() === "ok";
+    this.pingCache = { ok, expiryMs: now + FlashnetClient.PING_TTL_MS };
+    if (!ok) {
+      throw new Error(
+        "Settlement service unavailable. Only read (GET) operations are allowed right now."
+      );
+    }
+  }
+
+  private async getFeatureStatusMap(): Promise<Map<FeatureName, boolean>> {
+    const now = Date.now();
+    if (this.featureStatusCache && this.featureStatusCache.expiryMs > now) {
+      const map = new Map<FeatureName, boolean>();
+      for (const item of this.featureStatusCache.data) {
+        map.set(item.feature_name as FeatureName, Boolean(item.enabled));
+      }
+      return map;
+    }
+
+    const data = await this.typedApi.getFeatureStatus();
+    this.featureStatusCache = {
+      data,
+      expiryMs: now + FlashnetClient.FEATURE_STATUS_TTL_MS,
+    };
+    const map = new Map<FeatureName, boolean>();
+    for (const item of data) {
+      map.set(item.feature_name as FeatureName, Boolean(item.enabled));
+    }
+    return map;
+  }
+
+  private async getEnabledMinAmountsMap(): Promise<Map<string, bigint>> {
+    const now = Date.now();
+    if (this.minAmountsCache && this.minAmountsCache.expiryMs > now) {
+      return this.minAmountsCache.map;
+    }
+
+    const config = await this.typedApi.getMinAmounts();
+    const map = new Map<string, bigint>();
+    for (const item of config) {
+      if (item.enabled) {
+        const key = item.asset_identifier.toLowerCase();
+        const value = BigInt(String(item.min_amount));
+        map.set(key, value);
+      }
+    }
+    this.minAmountsCache = {
+      map,
+      expiryMs: now + FlashnetClient.MIN_AMOUNTS_TTL_MS,
+    };
+    return map;
+  }
+
+  private getHexAddress(addr: string): string {
+    return this.toHexTokenIdentifier(addr).toLowerCase();
+  }
+
+  private async assertSwapMeetsMinAmounts(params: {
+    assetInAddress: string;
+    assetOutAddress: string;
+    amountIn: string | bigint | number;
+    minAmountOut: string | bigint | number;
+  }): Promise<void> {
+    const minMap = await this.getEnabledMinAmountsMap();
+    if (minMap.size === 0) {
+      return;
+    }
+
+    const inHex = this.getHexAddress(params.assetInAddress);
+    const outHex = this.getHexAddress(params.assetOutAddress);
+    const minIn = minMap.get(inHex);
+    const minOut = minMap.get(outHex);
+
+    const amountIn = BigInt(String(params.amountIn));
+    const minAmountOut = BigInt(String(params.minAmountOut));
+
+    if (minIn && minOut) {
+      if (amountIn < minIn) {
+        throw new Error(
+          `Minimum amount not met for input asset. Required \
+${minIn.toString()}, provided ${amountIn.toString()}`
+        );
+      }
+      return;
+    }
+
+    if (minIn) {
+      if (amountIn < minIn) {
+        throw new Error(
+          `Minimum amount not met for input asset. Required \
+${minIn.toString()}, provided ${amountIn.toString()}`
+        );
+      }
+      return;
+    }
+
+    if (minOut) {
+      const relaxed = minOut / 2n; // 50% relaxation for slippage
+      if (minAmountOut < relaxed) {
+        throw new Error(
+          `Minimum amount not met for output asset. Required at least \
+${relaxed.toString()} (50% relaxed), provided minAmountOut ${minAmountOut.toString()}`
+        );
+      }
+    }
+  }
+
+  private async assertAddLiquidityMeetsMinAmounts(params: {
+    poolId: string;
+    assetAAmount: string | bigint | number;
+    assetBAmount: string | bigint | number;
+  }): Promise<void> {
+    const minMap = await this.getEnabledMinAmountsMap();
+    if (minMap.size === 0) {
+      return;
+    }
+
+    const pool = await this.getPool(params.poolId);
+    const aHex = pool.assetAAddress.toLowerCase();
+    const bHex = pool.assetBAddress.toLowerCase();
+    const aMin = minMap.get(aHex);
+    const bMin = minMap.get(bHex);
+
+    if (aMin) {
+      const aAmt = BigInt(String(params.assetAAmount));
+      if (aAmt < aMin) {
+        throw new Error(
+          `Minimum amount not met for Asset A. Required ${aMin.toString()}, provided ${aAmt.toString()}`
+        );
+      }
+    }
+
+    if (bMin) {
+      const bAmt = BigInt(String(params.assetBAmount));
+      if (bAmt < bMin) {
+        throw new Error(
+          `Minimum amount not met for Asset B. Required ${bMin.toString()}, provided ${bAmt.toString()}`
+        );
+      }
+    }
+  }
+
+  private async assertRemoveLiquidityMeetsMinAmounts(params: {
+    poolId: string;
+    lpTokensToRemove: string | bigint | number;
+  }): Promise<void> {
+    const minMap = await this.getEnabledMinAmountsMap();
+    if (minMap.size === 0) {
+      return;
+    }
+
+    const simulation = await this.simulateRemoveLiquidity({
+      poolId: params.poolId,
+      providerPublicKey: this.publicKey,
+      lpTokensToRemove: String(params.lpTokensToRemove),
+    });
+
+    const pool = await this.getPool(params.poolId);
+    const aHex = pool.assetAAddress.toLowerCase();
+    const bHex = pool.assetBAddress.toLowerCase();
+    const aMin = minMap.get(aHex);
+    const bMin = minMap.get(bHex);
+
+    if (aMin) {
+      const predictedAOut = BigInt(String(simulation.assetAAmount));
+      const relaxedA = aMin / 2n; // apply 50% relaxation for outputs
+      if (predictedAOut < relaxedA) {
+        throw new Error(
+          `Minimum amount not met for Asset A on withdrawal. Required at least ${relaxedA.toString()} (50% relaxed), predicted ${predictedAOut.toString()}`
+        );
+      }
+    }
+
+    if (bMin) {
+      const predictedBOut = BigInt(String(simulation.assetBAmount));
+      const relaxedB = bMin / 2n;
+      if (predictedBOut < relaxedB) {
+        throw new Error(
+          `Minimum amount not met for Asset B on withdrawal. Required at least ${relaxedB.toString()} (50% relaxed), predicted ${predictedBOut.toString()}`
+        );
+      }
+    }
+  }
+
+  private async assertAllowedAssetBForPoolCreation(
+    assetBHex: string
+  ): Promise<void> {
+    const now = Date.now();
+    let allowed: AllowedAssetsResponse;
+    if (this.allowedAssetsCache && this.allowedAssetsCache.expiryMs > now) {
+      allowed = this.allowedAssetsCache.data;
+    } else {
+      allowed = await this.typedApi.getAllowedAssets();
+      this.allowedAssetsCache = {
+        data: allowed,
+        expiryMs: now + FlashnetClient.ALLOWED_ASSETS_TTL_MS,
+      };
+    }
+    if (!allowed || allowed.length === 0) {
+      // Wildcard allowance
+      return;
+    }
+
+    const isAllowed = allowed.some(
+      (it) =>
+        it.enabled &&
+        it.asset_identifier.toLowerCase() === assetBHex.toLowerCase()
+    );
+
+    if (!isAllowed) {
+      throw new Error(`Asset B is not allowed for pool creation: ${assetBHex}`);
+    }
   }
 }

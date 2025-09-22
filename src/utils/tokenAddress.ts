@@ -1,7 +1,7 @@
+import { sha256 } from "@noble/hashes/sha2.js";
 import { bytesToHex, hexToBytes } from "@noble/hashes/utils";
 import { bech32m } from "@scure/base";
 import type { NetworkType, SparkNetworkType } from "../types";
-import { sha256 } from "@noble/hashes/sha2.js";
 
 const SparkHumanReadableTokenIdentifierNetworkPrefix: Record<
   SparkNetworkType,
