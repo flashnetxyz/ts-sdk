@@ -1,12 +1,13 @@
 {
   "compilerOptions": {
-    "lib": ["ESNext"],
+    "lib": ["ESNext", "DOM", "DOM.Iterable", "ES2022"],
     "target": "ES2022",
     "module": "ESNext",
     "moduleDetection": "force",
     "jsx": "react-jsx",
     "allowJs": true,
     "moduleResolution": "bundler",
+    "typeRoots": ["./node_modules/@types"],
     "allowImportingTsExtensions": false,
     "verbatimModuleSyntax": true,
     "strict": true,

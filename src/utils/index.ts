@@ -8,6 +8,11 @@ export function generateNonce(): string {
   return crypto.randomUUID();
 }
 
+// Helper function to hash data with SHA-256
+export async function sha256(data: Uint8Array): Promise<Uint8Array> {
+  return new Uint8Array(await crypto.subtle.digest("SHA-256", data as BufferSource));
+}
+
 // Helper function to convert decimal amounts to smallest units
 export function toSmallestUnit(amount: number, decimals: number): bigint {
   return BigInt(Math.floor(amount * 10 ** decimals));

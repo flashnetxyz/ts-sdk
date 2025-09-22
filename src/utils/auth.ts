@@ -47,7 +47,7 @@ export class AuthManager {
         : Buffer.from(message, "hex");
 
       const messageHash = new Uint8Array(
-        await crypto.subtle.digest("SHA-256", messageBytes)
+        await crypto.subtle.digest("SHA-256", messageBytes as BufferSource)
       );
 
       let signature: Uint8Array;

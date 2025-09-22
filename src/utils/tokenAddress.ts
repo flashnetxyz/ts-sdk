@@ -178,7 +178,7 @@ export function decodeHumanReadableTokenIdentifier(
 }
 
 async function sha256(buffer: Uint8Array): Promise<Uint8Array> {
-  return new Uint8Array(await crypto.subtle.digest("SHA-256", buffer));
+  return new Uint8Array(await crypto.subtle.digest("SHA-256", buffer as BufferSource));
 }
 
 function bigintTo16ByteArray(value: bigint) {
