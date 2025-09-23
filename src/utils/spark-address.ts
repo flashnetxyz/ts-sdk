@@ -55,6 +55,20 @@ const PrefixToNetwork: Record<string, NetworkType> = Object.fromEntries(
   ])
 );
 
+// Map legacy prefixes to SparkNetworkType and combine with modern prefixes
+const LegacySparkPrefixToNetwork: Record<string, SparkNetworkType> =
+  Object.fromEntries(
+    Object.entries(AddressNetworkPrefix).map(([network, prefix]) => [
+      prefix,
+      network as SparkNetworkType,
+    ])
+  );
+
+const AllSparkPrefixToNetwork: Record<string, SparkNetworkType> = {
+  ...SparkPrefixToNetwork,
+  ...LegacySparkPrefixToNetwork,
+};
+
 export interface SparkAddressData {
   identityPublicKey: string;
   /** @deprecated Use SparkNetworkType instead */
@@ -154,9 +168,14 @@ export function decodeSparkAddressNew(
   address: string,
   network: SparkNetworkType
 ): string {
-  const prefix = SparkAddressNetworkPrefix[network];
-  if (!address?.startsWith(prefix)) {
-    throw new Error(`Invalid Spark address: expected prefix ${prefix}`);
+  const modernPrefix = SparkAddressNetworkPrefix[network];
+  const legacyPrefix = AddressNetworkPrefix[network as unknown as NetworkType];
+  const hasAllowedPrefix =
+    !!address?.startsWith(modernPrefix) || !!address?.startsWith(legacyPrefix);
+  if (!hasAllowedPrefix) {
+    throw new Error(
+      `Invalid Spark address: expected prefix ${modernPrefix} or ${legacyPrefix}`
+    );
   }
 
   // Decode the bech32m address
@@ -194,7 +213,7 @@ export function getSparkNetworkFromAddress(
     return null; // Missing separator '1'
   }
   const prefix = parts[0] ?? "";
-  return SparkPrefixToNetwork[prefix] || null; // Return SparkNetworkType or null
+  return AllSparkPrefixToNetwork[prefix] || null; // Return SparkNetworkType or null
 }
 
 /**
@@ -218,7 +237,7 @@ export function isValidSparkAddressNew(
     const prefix = decoded.prefix;
 
     // Check if prefix is known
-    const networkFromPrefix = SparkPrefixToNetwork[prefix];
+    const networkFromPrefix = AllSparkPrefixToNetwork[prefix];
     if (!networkFromPrefix) {
       return false; // Unknown prefix
     }
