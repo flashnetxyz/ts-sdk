@@ -11,8 +11,8 @@
       },
       "devDependencies": {
         "@biomejs/biome": "2.0.5",
-        "@buildonspark/issuer-sdk": "^0.0.91",
-        "@buildonspark/spark-sdk": "^0.2.12",
+        "@buildonspark/issuer-sdk": "^0.0.99",
+        "@buildonspark/spark-sdk": "^0.3.6",
         "@rollup/plugin-typescript": "^12.1.4",
         "@types/bun": "latest",
         "@types/jest": "^30.0.0",
