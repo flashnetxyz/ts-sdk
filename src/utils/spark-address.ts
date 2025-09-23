@@ -1,5 +1,5 @@
 import { secp256k1 } from "@noble/curves/secp256k1";
-import { bytesToHex, hexToBytes } from "@noble/hashes/utils";
+import { bytesToHex, hexToBytes } from "@noble/hashes/utils.js";
 import { bech32m } from "@scure/base";
 import type { NetworkType, SparkNetworkType } from "../types";
 

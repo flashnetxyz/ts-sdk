@@ -6,6 +6,7 @@
 
 - **Peer dependency compatibility** - Updated `@buildonspark/issuer-sdk` peer dependency from `^0.0.84` to `^0.0.88` to support newer versions
 - **@noble/curves compatibility** - Ensured compatibility with `@noble/curves@1.9.0+` which includes the `./utils` export required by Spark SDK packages
+- **@noble/hashes compatibility** - Updated `@noble/hashes` from `^1.8.0` to `^2.0.1` and fixed import paths to use `@noble/hashes/utils.js` for the latest version
 - **TypeScript build issues** - Fixed Uint8Array type compatibility with `crypto.subtle.digest` by adding proper type casting
 - **Build configuration** - Updated TypeScript configuration to include DOM types for browser compatibility
 
