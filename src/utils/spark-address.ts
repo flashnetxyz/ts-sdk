@@ -69,6 +69,20 @@ const AllSparkPrefixToNetwork: Record<string, SparkNetworkType> = {
   ...LegacySparkPrefixToNetwork,
 };
 
+// Map modern prefixes back to legacy NetworkType and combine with legacy prefixes
+const ModernPrefixToLegacyNetwork: Record<string, NetworkType> =
+  Object.fromEntries(
+    Object.entries(SparkAddressNetworkPrefix).map(([network, prefix]) => [
+      prefix,
+      network as NetworkType,
+    ])
+  );
+
+const AllPrefixToLegacyNetwork: Record<string, NetworkType> = {
+  ...PrefixToNetwork,
+  ...ModernPrefixToLegacyNetwork,
+};
+
 export interface SparkAddressData {
   identityPublicKey: string;
   /** @deprecated Use SparkNetworkType instead */
@@ -346,9 +360,15 @@ export function decodeSparkAddress(
   address: string,
   network: NetworkType
 ): string {
-  const prefix = AddressNetworkPrefix[network];
-  if (!address?.startsWith(prefix)) {
-    throw new Error(`Invalid Spark address: expected prefix ${prefix}`);
+  const legacyPrefix = AddressNetworkPrefix[network];
+  const modernPrefix =
+    SparkAddressNetworkPrefix[network as unknown as SparkNetworkType];
+  const hasAllowedPrefix =
+    !!address?.startsWith(legacyPrefix) || !!address?.startsWith(modernPrefix);
+  if (!hasAllowedPrefix) {
+    throw new Error(
+      `Invalid Spark address: expected prefix ${legacyPrefix} or ${modernPrefix}`
+    );
   }
 
   // Decode the bech32m address
@@ -385,7 +405,7 @@ export function getNetworkFromAddress(address: string): NetworkType | null {
     return null; // Missing separator '1'
   }
   const prefix = parts[0] ?? "";
-  return PrefixToNetwork[prefix] || null; // Return NetworkType or null
+  return AllPrefixToLegacyNetwork[prefix] || null; // Return NetworkType or null
 }
 
 /**
@@ -410,7 +430,7 @@ export function isValidSparkAddress(
     const prefix = decoded.prefix;
 
     // Check if prefix is known
-    const networkFromPrefix = PrefixToNetwork[prefix];
+    const networkFromPrefix = AllPrefixToLegacyNetwork[prefix];
     if (!networkFromPrefix) {
       return false; // Unknown prefix
     }
