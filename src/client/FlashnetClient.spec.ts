@@ -10,7 +10,7 @@ describe("FlashnetClient", () => {
           graduationThresholdPct: 80,
         });
 
-      expect(virtualReserveA).toBe(66_666_666_66666666n);
+      expect(virtualReserveA).toBe(106_666_666_666666666n);
       expect(virtualReserveB).toBe(8_333_333n);
       expect(threshold).toBe(800_000_000_00000000n);
     });
@@ -23,7 +23,7 @@ describe("FlashnetClient", () => {
           graduationThresholdPct: 75,
         });
 
-      expect(virtualReserveA).toBe(100_000_000_00000000n);
+      expect(virtualReserveA).toBe(90_000_000_000000000n);
       expect(virtualReserveB).toBe(12_500_000n);
       expect(threshold).toBe(600_000_000_00000000n);
     });

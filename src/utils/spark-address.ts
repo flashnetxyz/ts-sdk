@@ -1,5 +1,5 @@
-import { secp256k1 } from "@noble/curves/secp256k1";
-import { bytesToHex, hexToBytes } from "@noble/hashes/utils";
+import { secp256k1 } from "@noble/curves/secp256k1.js";
+import { bytesToHex, hexToBytes } from "@noble/hashes/utils.js";
 import { bech32m } from "@scure/base";
 import type { NetworkType, SparkNetworkType } from "../types";
 
@@ -9,11 +9,11 @@ interface SparkAddress {
 }
 
 const SparkAddressNetworkPrefix: Record<SparkNetworkType, string> = {
-  MAINNET: "sp",
-  TESTNET: "spt",
-  REGTEST: "sprt",
-  SIGNET: "sps",
-  LOCAL: "spl",
+  MAINNET: "spark",
+  TESTNET: "sparkt",
+  REGTEST: "sparkrt",
+  SIGNET: "sparks",
+  LOCAL: "sparkl",
 } as const;
 
 const SparkPrefixToNetwork: Record<string, SparkNetworkType> =
@@ -487,7 +487,7 @@ export function isValidPublicKey(publicKey: string) {
     throw new Error("Invalid public key format/length.");
   }
   try {
-    const point = secp256k1.ProjectivePoint.fromHex(publicKey);
+    const point = secp256k1.Point.fromHex(publicKey);
     point.assertValidity();
   } catch (error: unknown) {
     const errorMessage =

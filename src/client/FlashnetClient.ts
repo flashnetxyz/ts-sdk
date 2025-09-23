@@ -146,7 +146,7 @@ export interface FlashnetClientOptions {
 type Tuple<
   T,
   N extends number,
-  Acc extends readonly T[] = []
+  Acc extends readonly T[] = [],
 > = Acc["length"] extends N ? Acc : Tuple<T, N, [...Acc, T]>;
 
 /**
@@ -759,11 +759,10 @@ export class FlashnetClient {
   }): { virtualReserveA: bigint; virtualReserveB: bigint; threshold: bigint } {
     if (
       !Number.isFinite(params.graduationThresholdPct) ||
-      !Number.isInteger(params.graduationThresholdPct) ||
-      params.graduationThresholdPct <= 0
+      !Number.isInteger(params.graduationThresholdPct)
     ) {
       throw new Error(
-        "Graduation threshold percentage must be a positive integer"
+        "Graduation threshold percentage must be an integer number of percent"
       );
     }
 
@@ -777,58 +776,39 @@ export class FlashnetClient {
     );
     const graduationThresholdPct = BigInt(params.graduationThresholdPct);
 
-    // Check feasibility: f - g*(1-f) > 0 where f is graduationThresholdPct/100 and g is 1
-    const MIN_GRADUATION_THRESHOLD_PCT = 50n;
-    const MAX_GRADUATION_THRESHOLD_PCT = 95n;
-
-    if (
-      graduationThresholdPct <= MIN_GRADUATION_THRESHOLD_PCT ||
-      graduationThresholdPct > MAX_GRADUATION_THRESHOLD_PCT
-    ) {
+    // Align bounds with Rust AMM (20%..95%), then check feasibility for g=1 (requires >50%).
+    const MIN_PCT = 20n;
+    const MAX_PCT = 95n;
+    if (graduationThresholdPct < MIN_PCT || graduationThresholdPct > MAX_PCT) {
       throw new Error(
-        `Graduation threshold percentage must be greater than ${MIN_GRADUATION_THRESHOLD_PCT} ` +
-          `and not greater than ${MAX_GRADUATION_THRESHOLD_PCT}`
+        `Graduation threshold percentage must be between ${MIN_PCT} and ${MAX_PCT}`
       );
     }
 
-    // Calculate graduation parameters
-    const _f = graduationThresholdPct / 100n;
+    // Feasibility: denom = f - g*(1-f) > 0 with g=1 -> 2f - 1 > 0 -> pct > 50
+    const denomNormalized = 2n * graduationThresholdPct - 100n; // equals 100*(f - (1-f))
+    if (denomNormalized <= 0n) {
+      throw new Error(
+        "Invalid configuration: threshold must be greater than 50% when LP fraction is 1.0"
+      );
+    }
 
-    // f       is graduationThresholdPct / 100n
-    // denom   is (2n * graduationThresholdPct / 100n) - 1n
-    //            (2n * graduationThresholdPct - 100n) / 100n
-    // 1/denom is 100n / (2n * graduationThresholdPct - 100n)
+    // v_A = S * f^2 / (f - (1-f)) ; using integer math with pct where
+    // v_A = S * p^2 / (100 * (2p - 100))
+    const vANumerator =
+      supply * graduationThresholdPct * graduationThresholdPct;
+    const vADenominator = 100n * denomNormalized;
+    const virtualA = vANumerator / vADenominator; // floor
 
-    // Calculate virtual reserves and round down to integers
-    // totalA is (supply * f * f) / denom
-    const totalANumerator =
-      BigInt(supply) * graduationThresholdPct * graduationThresholdPct;
-    const totalADenominator = 200n * graduationThresholdPct - 10000n;
-    const totalARemainder = totalANumerator % totalADenominator;
-    const totalA = (totalANumerator - totalARemainder) / totalADenominator;
+    // v_B = T * (1 - f) / (f - (1-f)) ; with pct => T * (100 - p) / (2p - 100)
+    const vBNumerator = targetB * (100n - graduationThresholdPct);
+    const vBDenominator = denomNormalized;
+    const virtualB = vBNumerator / vBDenominator; // floor
 
-    // Since there is an initial supply of tokens, we subtract that amount
-    // to get the remaining "virtual" amount for pricing
-    const virtualA = totalA - supply;
+    // Threshold amount in A
+    const threshold = (supply * graduationThresholdPct) / 100n;
 
-    // totalB is (targetB * g * (1 - f)) / denom
-    const totalBNumerator = BigInt(targetB) * (100n - graduationThresholdPct);
-    const totalBDenominator = 2n * graduationThresholdPct - 100n;
-    const totalBRemainder = totalBNumerator % totalBDenominator;
-    const totalB = (totalBNumerator - totalBRemainder) / totalBDenominator;
-
-    // Bonding curve starts with no deposited amount of asset B,
-    // so virtualB is all of totalB
-    const virtualB = totalB;
-
-    // Calculate threshold as amount of asset A (not percentage)
-    const threshold = (BigInt(supply) * graduationThresholdPct) / 100n;
-
-    return {
-      virtualReserveA: virtualA,
-      virtualReserveB: virtualB,
-      threshold: threshold,
-    };
+    return { virtualReserveA: virtualA, virtualReserveB: virtualB, threshold };
   }
 
   /**
