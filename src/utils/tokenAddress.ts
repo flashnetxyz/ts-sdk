@@ -1,7 +1,7 @@
-import { sha256 } from "@noble/hashes/sha2.js";
-import { bytesToHex, hexToBytes } from "@noble/hashes/utils.js";
-import { bech32m } from "@scure/base";
+import sha256 from "fast-sha256";
+import { bech32m } from "bech32";
 import type { NetworkType, SparkNetworkType } from "../types";
+import { getHexFromUint8Array, getUint8ArrayFromHex } from "./hex";
 
 const SparkHumanReadableTokenIdentifierNetworkPrefix: Record<
   SparkNetworkType,
@@ -57,7 +57,7 @@ export function encodeSparkHumanReadableTokenIdentifier(
     // Convert hex string to bytes if needed
     const tokenIdentifierBytes =
       typeof tokenIdentifier === "string"
-        ? hexToBytes(tokenIdentifier)
+        ? getUint8ArrayFromHex(tokenIdentifier)
         : tokenIdentifier;
 
     const words = bech32m.toWords(tokenIdentifierBytes);
@@ -98,7 +98,7 @@ export function decodeSparkHumanReadableTokenIdentifier(
     const tokenIdentifier = bech32m.fromWords(decoded.words);
 
     return {
-      tokenIdentifier: bytesToHex(tokenIdentifier),
+      tokenIdentifier: getHexFromUint8Array(new Uint8Array(tokenIdentifier)),
       network,
     };
   } catch (error) {
@@ -143,7 +143,7 @@ export function encodeHumanReadableTokenIdentifier(
     // Convert hex string to bytes if needed
     const tokenIdentifierBytes =
       typeof tokenIdentifier === "string"
-        ? hexToBytes(tokenIdentifier)
+        ? getUint8ArrayFromHex(tokenIdentifier)
         : tokenIdentifier;
 
     const words = bech32m.toWords(tokenIdentifierBytes);
@@ -179,7 +179,7 @@ export function decodeHumanReadableTokenIdentifier(
     const tokenIdentifier = bech32m.fromWords(decoded.words);
 
     return {
-      tokenIdentifier: bytesToHex(tokenIdentifier),
+      tokenIdentifier: getHexFromUint8Array(new Uint8Array(tokenIdentifier)),
       network,
     };
   } catch (error) {
@@ -217,7 +217,7 @@ export function getTokenIdentifierHashes(token: {
 
   const creationEntityBytes =
     typeof token.creationEntityPublicKey === "string"
-      ? hexToBytes(token.creationEntityPublicKey)
+      ? getUint8ArrayFromHex(token.creationEntityPublicKey)
       : token.creationEntityPublicKey;
   const isL1 =
     !creationEntityBytes ||
@@ -235,7 +235,7 @@ export function getTokenIdentifierHashes(token: {
 
   const issuerPublicKeyHash = sha256(
     typeof token.issuerPublicKey === "string"
-      ? hexToBytes(token.issuerPublicKey)
+      ? getUint8ArrayFromHex(token.issuerPublicKey)
       : token.issuerPublicKey
   );
 
