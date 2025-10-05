@@ -1,7 +1,10 @@
 #!/usr/bin/env node
 
 import {
+  encodeSparkHumanReadableTokenIdentifier,
   getHumanReadableTokenIdentifier,
+  getTokenIdentifierHashes,
+  getTokenIdentifierWithHashes,
   SPARK_TOKEN_CREATION_ENTITY_PUBLIC_KEY,
 } from "@flashnet/sdk";
 import { ApiClient } from "@flashnet/sdk/api";
@@ -9,6 +12,7 @@ import { ApiClient } from "@flashnet/sdk/api";
 import { AuthManager } from "@flashnet/sdk/auth";
 import { getNetworkConfig } from "@flashnet/sdk/config";
 import { encodeSparkAddress, generateNonce } from "@flashnet/sdk/utils";
+import sha256 from "fast-sha256";
 
 console.log("Testing modular imports...\n");
 
@@ -49,7 +53,7 @@ console.log(`  AuthManager created with custom signer`);
 
 // Test 5: getHumanReadableTokenIdentifier
 console.log("✓ Testing getHumanReadableTokenIdentifier");
-const generatedTokenAddress = await getHumanReadableTokenIdentifier({
+const generatedTokenAddress = getHumanReadableTokenIdentifier({
   issuerPublicKey:
     "029e4d50f931c170e100c1b7129e353cddd69c8ae50bf274e7a68b05144ef8b55e",
   decimals: 8,
@@ -70,6 +74,58 @@ if (
     `  Calculated token address does not match expected btkn1daywtenlww42njymqzyegvcwuy3p9f26zknme0srxa7tagewvuys86h553`
   );
   process.exit(1);
+}
+
+{
+  function bigintTo16ByteArray(value) {
+    let valueToTrack = value;
+    const buffer = new Uint8Array(16);
+    for (let i = 15; i >= 0 && valueToTrack > 0n; i--) {
+      buffer[i] = Number(valueToTrack & 255n);
+      valueToTrack >>= 8n;
+    }
+    return buffer;
+  }
+
+  const issuerPublicKey = Buffer.from(
+    "031111111111111111111111111111111111111111111111111111111111111111",
+    "hex"
+  );
+
+  const start = Date.now();
+
+  let maxSupply = 100_000_000_000_000_000n;
+  const hashes = getTokenIdentifierHashes({
+    issuerPublicKey,
+    decimals: 8,
+    isFreezable: false,
+    name: "FlashSparks",
+    ticker: "FSPKS",
+    maxSupply,
+    network: "MAINNET",
+    creationEntityPublicKey: SPARK_TOKEN_CREATION_ENTITY_PUBLIC_KEY,
+  });
+
+  let humanReadableTokenIdentifier = "";
+  while (true) {
+    const tokenIdentifier = getTokenIdentifierWithHashes(hashes);
+    humanReadableTokenIdentifier = encodeSparkHumanReadableTokenIdentifier(
+      tokenIdentifier,
+      "MAINNET"
+    );
+
+    if (humanReadableTokenIdentifier.endsWith("d0g")) {
+      break;
+    }
+
+    hashes.maxSupplyHash = sha256(bigintTo16ByteArray(++maxSupply));
+  }
+
+  const end = Date.now();
+  console.log(`  Time elapsed: ${(end - start) / 1000} seconds`);
+  console.log(
+    `  Token identifier with d0g suffix: ${humanReadableTokenIdentifier}`
+  );
 }
 
 console.log("\n✅ All modular imports working correctly!");

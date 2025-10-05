@@ -12,25 +12,43 @@ import {
   type AddLiquidityRequest,
   type AddLiquidityResponse,
   type AllLpPositionsResponse,
+  type AllowedAssetsResponse,
+  type ClaimEscrowRequest,
+  type ClaimEscrowResponse,
+  type ClawbackRequest,
+  type ClawbackResponse,
   type ClientEnvironment,
   type ClientNetworkConfig,
+  type Condition,
   type ConfirmDepositResponse,
   type ConfirmInitialDepositRequest,
   type CreateConstantProductPoolRequest,
+  type CreateEscrowRequest,
+  type CreateEscrowResponse,
   type CreatePoolResponse,
   type CreateSingleSidedPoolRequest,
+  type EscrowCondition,
+  type EscrowRecipient,
+  type EscrowState,
   type ExecuteRouteSwapRequest,
   type ExecuteRouteSwapResponse,
   type ExecuteSwapRequest,
+  type FeatureName,
+  type FeatureStatusResponse,
+  type FeeWithdrawalHistoryQuery,
+  type FeeWithdrawalHistoryResponse,
   type FlashnetClientConfig,
   type FlashnetClientCustomConfig,
   type FlashnetClientEnvironmentConfig,
   type FlashnetClientLegacyConfig,
+  type FundEscrowRequest,
+  type FundEscrowResponse,
   type GetHostFeesRequest,
   type GetHostFeesResponse,
   type GetHostResponse,
   type GetIntegratorFeesResponse,
   type GetPoolHostFeesResponse,
+  type GetPoolIntegratorFeesResponse,
   getClientEnvironmentFromLegacy,
   getSparkNetworkFromLegacy,
   type ListGlobalSwapsQuery,
@@ -70,9 +88,14 @@ import {
 } from "../types";
 import { compareDecimalStrings, generateNonce } from "../utils";
 import { AuthManager } from "../utils/auth";
+import { getHexFromUint8Array } from "../utils/hex";
 import {
   generateAddLiquidityIntentMessage,
+  generateClaimEscrowIntentMessage,
+  generateClawbackIntentMessage,
   generateConstantProductPoolInitializationIntentMessage,
+  generateCreateEscrowIntentMessage,
+  generateFundEscrowIntentMessage,
   generatePoolConfirmInitialDepositIntentMessage,
   generatePoolInitializationIntentMessage,
   generatePoolSwapIntentMessage,
@@ -153,6 +176,24 @@ export class FlashnetClient {
   private publicKey: string = "";
   private sparkAddress: string = "";
   private isAuthenticated: boolean = false;
+
+  // Ephemeral caches for config endpoints and ping
+  private featureStatusCache?: {
+    data: FeatureStatusResponse;
+    expiryMs: number;
+  };
+  private minAmountsCache?: { map: Map<string, bigint>; expiryMs: number };
+  private allowedAssetsCache?: {
+    data: AllowedAssetsResponse;
+    expiryMs: number;
+  };
+  private pingCache?: { ok: boolean; expiryMs: number };
+
+  // TTLs (milliseconds)
+  private static readonly FEATURE_STATUS_TTL_MS = 5000; // 5s
+  private static readonly MIN_AMOUNTS_TTL_MS = 5000; // 5s
+  private static readonly ALLOWED_ASSETS_TTL_MS = 60000; // 60s
+  private static readonly PING_TTL_MS = 2000; // 2s
 
   /**
    * Get the underlying wallet instance for direct wallet operations
@@ -448,9 +489,9 @@ export class FlashnetClient {
         const info = tokenData.tokenMetadata;
 
         // Convert raw token identifier to hex and human-readable forms
-        const tokenIdentifierHex = Buffer.from(
+        const tokenIdentifierHex = getHexFromUint8Array(
           info.rawTokenIdentifier
-        ).toString("hex");
+        );
         const tokenAddress = encodeSparkHumanReadableTokenIdentifier(
           info.rawTokenIdentifier,
           this.sparkNetwork
@@ -487,7 +528,7 @@ export class FlashnetClient {
     errorPrefix?: string;
     walletBalance?: WalletBalance;
   }): Promise<void> {
-    const balance = params.walletBalance ?? (await this.getBalance());
+    const balance = await this.getBalance();
 
     // Check balance
     const requirements: { btc?: bigint; tokens?: Map<string, bigint> } = {
@@ -585,13 +626,21 @@ export class FlashnetClient {
     assetBAddress: string;
     lpFeeRateBps: number;
     totalHostFeeRateBps: number;
+    poolOwnerPublicKey?: string;
     hostNamespace?: string;
     initialLiquidity?: {
       assetAAmount: bigint;
       assetBAmount: bigint;
+      assetAMinAmountIn: bigint;
+      assetBMinAmountIn: bigint;
     };
   }): Promise<CreatePoolResponse> {
     await this.ensureInitialized();
+
+    await this.ensureAmmOperationAllowed("allow_pool_creation");
+    await this.assertAllowedAssetBForPoolCreation(
+      this.toHexTokenIdentifier(params.assetBAddress)
+    );
 
     // Check if we need to add initial liquidity
     if (params.initialLiquidity) {
@@ -610,11 +659,13 @@ export class FlashnetClient {
       });
     }
 
+    const poolOwnerPublicKey = params.poolOwnerPublicKey ?? this.publicKey;
+
     // Generate intent
     const nonce = generateNonce();
     const intentMessage =
       generateConstantProductPoolInitializationIntentMessage({
-        poolOwnerPublicKey: this.publicKey,
+        poolOwnerPublicKey,
         assetAAddress: this.toHexTokenIdentifier(params.assetAAddress),
         assetBAddress: this.toHexTokenIdentifier(params.assetBAddress),
         lpFeeRateBps: params.lpFeeRateBps.toString(),
@@ -632,14 +683,14 @@ export class FlashnetClient {
 
     // Create pool
     const request: CreateConstantProductPoolRequest = {
-      poolOwnerPublicKey: this.publicKey,
+      poolOwnerPublicKey,
       assetAAddress: this.toHexTokenIdentifier(params.assetAAddress),
       assetBAddress: this.toHexTokenIdentifier(params.assetBAddress),
       lpFeeRateBps: params.lpFeeRateBps.toString(),
       totalHostFeeRateBps: params.totalHostFeeRateBps.toString(),
       hostNamespace: params.hostNamespace || "",
       nonce,
-      signature: Buffer.from(signature).toString("hex"),
+      signature: getHexFromUint8Array(signature),
     };
 
     const response = await this.typedApi.createConstantProductPool(request);
@@ -651,11 +702,113 @@ export class FlashnetClient {
         params.assetAAddress,
         params.assetBAddress,
         params.initialLiquidity.assetAAmount.toString(),
-        params.initialLiquidity.assetBAmount.toString()
+        params.initialLiquidity.assetBAmount.toString(),
+        params.initialLiquidity.assetAMinAmountIn.toString(),
+        params.initialLiquidity.assetBMinAmountIn.toString()
       );
     }
 
     return response;
+  }
+
+  // Validate and normalize inputs to bigint
+  private static parsePositiveIntegerToBigInt(
+    value: bigint | number | string,
+    name: string
+  ): bigint {
+    if (typeof value === "bigint") {
+      if (value <= 0n) {
+        throw new Error(`${name} must be positive integer`);
+      }
+      return value;
+    }
+    if (typeof value === "number") {
+      if (!Number.isFinite(value) || !Number.isInteger(value) || value <= 0) {
+        throw new Error(`${name} must be positive integer`);
+      }
+      return BigInt(value);
+    }
+    try {
+      const v = BigInt(value);
+      if (v <= 0n) {
+        throw new Error(`${name} must be positive integer`);
+      }
+      return v;
+    } catch {
+      throw new Error(`${name} must be positive integer`);
+    }
+  }
+
+  /**
+   * Calculates virtual reserves for a bonding curve AMM.
+   *
+   * This helper function calculates the initial virtual reserves (`v_A^0`, `v_B^0`)
+   * based on the bonding curve parameters. These virtual reserves ensure smooth
+   * pricing and price continuity during graduation to the double-sided phase.
+   *
+   * @param params - The parameters for the calculation.
+   * @param params.initialTokenSupply - The initial supply of Asset A (tokens to be sold).
+   * @param params.graduationThresholdPct - The percentage of tokens that need to be sold for graduation (20-95%).
+   * @param params.targetRaise - The target amount of Asset B to raise at graduation.
+   * @returns An object containing `virtualReserveA`, `virtualReserveB`, and `threshold`.
+   */
+  public static calculateVirtualReserves(params: {
+    initialTokenSupply: bigint | number | string;
+    graduationThresholdPct: number;
+    targetRaise: bigint | number | string;
+  }): { virtualReserveA: bigint; virtualReserveB: bigint; threshold: bigint } {
+    if (
+      !Number.isFinite(params.graduationThresholdPct) ||
+      !Number.isInteger(params.graduationThresholdPct)
+    ) {
+      throw new Error(
+        "Graduation threshold percentage must be an integer number of percent"
+      );
+    }
+
+    const supply = FlashnetClient.parsePositiveIntegerToBigInt(
+      params.initialTokenSupply,
+      "Initial token supply"
+    );
+    const targetB = FlashnetClient.parsePositiveIntegerToBigInt(
+      params.targetRaise,
+      "Target raise"
+    );
+    const graduationThresholdPct = BigInt(params.graduationThresholdPct);
+
+    // Align bounds with Rust AMM (20%..95%), then check feasibility for g=1 (requires >50%).
+    const MIN_PCT = 20n;
+    const MAX_PCT = 95n;
+    if (graduationThresholdPct < MIN_PCT || graduationThresholdPct > MAX_PCT) {
+      throw new Error(
+        `Graduation threshold percentage must be between ${MIN_PCT} and ${MAX_PCT}`
+      );
+    }
+
+    // Feasibility: denom = f - g*(1-f) > 0 with g=1 -> 2f - 1 > 0 -> pct > 50
+    const denomNormalized = 2n * graduationThresholdPct - 100n; // equals 100*(f - (1-f))
+    if (denomNormalized <= 0n) {
+      throw new Error(
+        "Invalid configuration: threshold must be greater than 50% when LP fraction is 1.0"
+      );
+    }
+
+    // v_A = S * f^2 / (f - (1-f)) ; using integer math with pct where
+    // v_A = S * p^2 / (100 * (2p - 100))
+    const vANumerator =
+      supply * graduationThresholdPct * graduationThresholdPct;
+    const vADenominator = 100n * denomNormalized;
+    const virtualA = vANumerator / vADenominator; // floor
+
+    // v_B = T * (1 - f) / (f - (1-f)) ; with pct => T * (100 - p) / (2p - 100)
+    const vBNumerator = targetB * (100n - graduationThresholdPct);
+    const vBDenominator = denomNormalized;
+    const virtualB = vBNumerator / vBDenominator; // floor
+
+    // Threshold amount in A
+    const threshold = (supply * graduationThresholdPct) / 100n;
+
+    return { virtualReserveA: virtualA, virtualReserveB: virtualB, threshold };
   }
 
   /**
@@ -668,22 +821,21 @@ export class FlashnetClient {
     assetAAddress: string;
     assetBAddress: string;
     assetAInitialReserve: string;
-    assetAPctSoldAtGraduation: number;
-    targetBRaisedAtGraduation: string;
+    virtualReserveA: number | string;
+    virtualReserveB: number | string;
+    threshold: number | string;
     lpFeeRateBps: number;
     totalHostFeeRateBps: number;
+    poolOwnerPublicKey?: string;
     hostNamespace?: string;
     disableInitialDeposit?: boolean;
   }): Promise<CreatePoolResponse> {
     await this.ensureInitialized();
 
-    // check that assetAPctSoldAtGraduation is between 0 and 100 - no decimals
-    if (
-      params.assetAPctSoldAtGraduation < 0 ||
-      params.assetAPctSoldAtGraduation > 100
-    ) {
-      throw new Error(`assetAPctSoldAtGraduation must be between 0 and 100`);
-    }
+    await this.ensureAmmOperationAllowed("allow_pool_creation");
+    await this.assertAllowedAssetBForPoolCreation(
+      this.toHexTokenIdentifier(params.assetBAddress)
+    );
 
     if (!params.hostNamespace && params.totalHostFeeRateBps < 10) {
       throw new Error(
@@ -691,25 +843,42 @@ export class FlashnetClient {
       );
     }
 
+    // Validate reserves are valid positive integers before any operations
+    const assetAInitialReserve = FlashnetClient.parsePositiveIntegerToBigInt(
+      params.assetAInitialReserve,
+      "Asset A Initial Reserve"
+    ).toString();
+    const virtualReserveA = FlashnetClient.parsePositiveIntegerToBigInt(
+      params.virtualReserveA,
+      "Virtual Reserve A"
+    ).toString();
+    const virtualReserveB = FlashnetClient.parsePositiveIntegerToBigInt(
+      params.virtualReserveB,
+      "Virtual Reserve B"
+    ).toString();
+
     await this.checkBalance({
       balancesToCheck: [
         {
-          assetAddress: params.assetAInitialReserve,
-          amount: params.assetAInitialReserve,
+          assetAddress: params.assetAAddress,
+          amount: assetAInitialReserve,
         },
       ],
       errorPrefix: "Insufficient balance for pool creation: ",
     });
 
+    const poolOwnerPublicKey = params.poolOwnerPublicKey ?? this.publicKey;
+
     // Generate intent
     const nonce = generateNonce();
     const intentMessage = generatePoolInitializationIntentMessage({
-      poolOwnerPublicKey: this.publicKey,
+      poolOwnerPublicKey,
       assetAAddress: this.toHexTokenIdentifier(params.assetAAddress),
       assetBAddress: this.toHexTokenIdentifier(params.assetBAddress),
-      assetAInitialReserve: params.assetAInitialReserve,
-      graduationThresholdPct: params.assetAPctSoldAtGraduation.toString(),
-      targetBRaisedAtGraduation: params.targetBRaisedAtGraduation,
+      assetAInitialReserve,
+      virtualReserveA,
+      virtualReserveB,
+      threshold: params.threshold.toString(),
       lpFeeRateBps: params.lpFeeRateBps.toString(),
       totalHostFeeRateBps: params.totalHostFeeRateBps.toString(),
       nonce,
@@ -724,17 +893,18 @@ export class FlashnetClient {
 
     // Create pool
     const request: CreateSingleSidedPoolRequest = {
-      poolOwnerPublicKey: this.publicKey,
+      poolOwnerPublicKey,
       assetAAddress: this.toHexTokenIdentifier(params.assetAAddress),
       assetBAddress: this.toHexTokenIdentifier(params.assetBAddress),
-      assetAInitialReserve: params.assetAInitialReserve,
-      graduationThresholdPct: params.assetAPctSoldAtGraduation,
-      targetBRaisedAtGraduation: params.targetBRaisedAtGraduation,
+      assetAInitialReserve,
+      virtualReserveA,
+      virtualReserveB,
+      threshold: params.threshold.toString(),
       lpFeeRateBps: params.lpFeeRateBps.toString(),
       totalHostFeeRateBps: params.totalHostFeeRateBps.toString(),
       hostNamespace: params.hostNamespace,
       nonce,
-      signature: Buffer.from(signature).toString("hex"),
+      signature: getHexFromUint8Array(signature),
     };
 
     const createResponse = await this.typedApi.createSingleSidedPool(request);
@@ -743,37 +913,27 @@ export class FlashnetClient {
       return createResponse;
     }
 
-    try {
-      // Transfer initial reserve to the pool using new address encoding
-      const lpSparkAddress = encodeSparkAddressNew({
-        identityPublicKey: createResponse.poolId,
-        network: this.sparkNetwork,
-      });
+    // Transfer initial reserve to the pool using new address encoding
+    const lpSparkAddress = encodeSparkAddressNew({
+      identityPublicKey: createResponse.poolId,
+      network: this.sparkNetwork,
+    });
 
-      const assetATransferId = await this.transferAsset({
-        receiverSparkAddress: lpSparkAddress,
-        assetAddress: params.assetAAddress,
-        amount: params.assetAInitialReserve,
-      });
+    const assetATransferId = await this.transferAsset({
+      receiverSparkAddress: lpSparkAddress,
+      assetAddress: params.assetAAddress,
+      amount: assetAInitialReserve,
+    });
 
-      const confirmResponse = await this.confirmInitialDeposit(
-        createResponse.poolId,
-        assetATransferId
-      );
+    const confirmResponse = await this.confirmInitialDeposit(
+      createResponse.poolId,
+      assetATransferId,
+      poolOwnerPublicKey
+    );
 
-      if (!confirmResponse.confirmed) {
-        throw new Error(
-          `Failed to confirm initial deposit: ${confirmResponse.message}`
-        );
-      }
-    } catch (error) {
-      // If initial deposit fails, we should inform the user
+    if (!confirmResponse.confirmed) {
       throw new Error(
-        `Pool created with ID ${
-          createResponse.poolId
-        }, but initial deposit failed: ${
-          error instanceof Error ? error.message : String(error)
-        }`
+        `Failed to confirm initial deposit: ${confirmResponse.message}`
       );
     }
 
@@ -788,13 +948,14 @@ export class FlashnetClient {
    */
   async confirmInitialDeposit(
     poolId: string,
-    assetASparkTransferId: string
+    assetASparkTransferId: string,
+    poolOwnerPublicKey?: string
   ): Promise<ConfirmDepositResponse> {
     await this.ensureInitialized();
 
     const nonce = generateNonce();
     const intentMessage = generatePoolConfirmInitialDepositIntentMessage({
-      poolOwnerPublicKey: this.publicKey,
+      poolOwnerPublicKey: poolOwnerPublicKey ?? this.publicKey,
       lpIdentityPublicKey: poolId,
       assetASparkTransferId,
       nonce,
@@ -811,8 +972,8 @@ export class FlashnetClient {
       poolId,
       assetASparkTransferId,
       nonce,
-      signature: Buffer.from(signature).toString("hex"),
-      poolOwnerPublicKey: this.publicKey,
+      signature: getHexFromUint8Array(signature),
+      poolOwnerPublicKey: poolOwnerPublicKey ?? this.publicKey,
     };
 
     return this.typedApi.confirmInitialDeposit(request);
@@ -827,6 +988,7 @@ export class FlashnetClient {
     params: SimulateSwapRequest
   ): Promise<SimulateSwapResponse> {
     await this.ensureInitialized();
+    await this.ensurePingOk();
     return this.typedApi.simulateSwap(params);
   }
 
@@ -844,6 +1006,15 @@ export class FlashnetClient {
     integratorPublicKey?: string;
   }): Promise<SwapResponse> {
     await this.ensureInitialized();
+
+    // Gate by feature flags and ping, and enforce min-amount policy before transfers
+    await this.ensureAmmOperationAllowed("allow_swaps");
+    await this.assertSwapMeetsMinAmounts({
+      assetInAddress: params.assetInAddress,
+      assetOutAddress: params.assetOutAddress,
+      amountIn: params.amountIn,
+      minAmountOut: params.minAmountOut,
+    });
 
     // Transfer assets to pool using new address encoding
     const lpSparkAddress = encodeSparkAddressNew({
@@ -881,14 +1052,23 @@ export class FlashnetClient {
   }) {
     await this.ensureInitialized();
 
+    // Also enforce gating and min amounts for direct intent usage
+    await this.ensureAmmOperationAllowed("allow_swaps");
+    await this.assertSwapMeetsMinAmounts({
+      assetInAddress: params.assetInAddress,
+      assetOutAddress: params.assetOutAddress,
+      amountIn: params.amountIn,
+      minAmountOut: params.minAmountOut,
+    });
+
     // Generate swap intent
     const nonce = generateNonce();
     const intentMessage = generatePoolSwapIntentMessage({
       userPublicKey: this.publicKey,
       lpIdentityPublicKey: params.poolId,
       assetInSparkTransferId: params.transferId,
-      assetInTokenPublicKey: this.toHexTokenIdentifier(params.assetInAddress),
-      assetOutTokenPublicKey: this.toHexTokenIdentifier(params.assetOutAddress),
+      assetInAddress: this.toHexTokenIdentifier(params.assetInAddress),
+      assetOutAddress: this.toHexTokenIdentifier(params.assetOutAddress),
       amountIn: params.amountIn.toString(),
       maxSlippageBps: params.maxSlippageBps.toString(),
       minAmountOut: params.minAmountOut,
@@ -916,7 +1096,7 @@ export class FlashnetClient {
       totalIntegratorFeeRateBps: params.integratorFeeRateBps?.toString() || "0",
       integratorPublicKey: params.integratorPublicKey || "",
       nonce,
-      signature: Buffer.from(signature).toString("hex"),
+      signature: getHexFromUint8Array(signature),
     };
 
     const response = await this.typedApi.executeSwap(request);
@@ -939,7 +1119,11 @@ export class FlashnetClient {
   async simulateRouteSwap(
     params: SimulateRouteSwapRequest
   ): Promise<SimulateRouteSwapResponse> {
+    if (params.hops.length > 4) {
+      throw new Error("Route swap cannot have more than 4 hops");
+    }
     await this.ensureInitialized();
+    await this.ensurePingOk();
     return this.typedApi.simulateRouteSwap(params);
   }
 
@@ -962,7 +1146,24 @@ export class FlashnetClient {
   }): Promise<ExecuteRouteSwapResponse> {
     await this.ensureInitialized();
 
+    await this.ensureAmmOperationAllowed("allow_route_swaps");
+    // Validate min-amount policy for route: check initial input and final output asset
+    const finalOutputAsset =
+      params.hops[params.hops.length - 1]?.assetOutAddress;
+    if (!finalOutputAsset) {
+      throw new Error("Route swap requires at least one hop with output asset");
+    }
+    await this.assertSwapMeetsMinAmounts({
+      assetInAddress: params.initialAssetAddress,
+      assetOutAddress: finalOutputAsset,
+      amountIn: params.inputAmount,
+      minAmountOut: params.minAmountOut,
+    });
+
     // Validate hops array
+    if (params.hops.length > 4) {
+      throw new Error("Route swap cannot have more than 4 hops");
+    }
     if (!params.hops.length) {
       throw new Error("Route swap requires at least one hop");
     }
@@ -990,8 +1191,8 @@ export class FlashnetClient {
     // Prepare hops for validation
     const hops: RouteHopValidation[] = params.hops.map((hop) => ({
       lpIdentityPublicKey: hop.poolId,
-      inputAssetPublicKey: this.toHexTokenIdentifier(hop.assetInAddress),
-      outputAssetPublicKey: this.toHexTokenIdentifier(hop.assetOutAddress),
+      inputAssetAddress: this.toHexTokenIdentifier(hop.assetInAddress),
+      outputAssetAddress: this.toHexTokenIdentifier(hop.assetOutAddress),
       hopIntegratorFeeRateBps:
         hop.hopIntegratorFeeRateBps !== undefined &&
         hop.hopIntegratorFeeRateBps !== null
@@ -1017,8 +1218,8 @@ export class FlashnetClient {
       userPublicKey: this.publicKey,
       hops: hops.map((hop) => ({
         lpIdentityPublicKey: hop.lpIdentityPublicKey,
-        inputAssetPublicKey: hop.inputAssetPublicKey,
-        outputAssetPublicKey: hop.outputAssetPublicKey,
+        inputAssetAddress: hop.inputAssetAddress,
+        outputAssetAddress: hop.outputAssetAddress,
         hopIntegratorFeeRateBps: hop.hopIntegratorFeeRateBps,
       })),
       initialSparkTransferId: initialTransferId,
@@ -1045,7 +1246,7 @@ export class FlashnetClient {
       maxRouteSlippageBps: params.maxRouteSlippageBps.toString(),
       minAmountOut: params.minAmountOut,
       nonce,
-      signature: Buffer.from(signature).toString("hex"),
+      signature: getHexFromUint8Array(signature),
       integratorFeeRateBps: params.integratorFeeRateBps?.toString() || "0",
       integratorPublicKey: params.integratorPublicKey || "",
     };
@@ -1073,6 +1274,7 @@ export class FlashnetClient {
     params: SimulateAddLiquidityRequest
   ): Promise<SimulateAddLiquidityResponse> {
     await this.ensureInitialized();
+    await this.ensurePingOk();
     return this.typedApi.simulateAddLiquidity(params);
   }
 
@@ -1083,11 +1285,22 @@ export class FlashnetClient {
     poolId: string;
     assetAAmount: string;
     assetBAmount: string;
+    assetAMinAmountIn: string;
+    assetBMinAmountIn: string;
   }): Promise<AddLiquidityResponse> {
     await this.ensureInitialized();
 
+    await this.ensureAmmOperationAllowed("allow_add_liquidity");
+
     // Get pool details to know which assets we're dealing with
     const pool = await this.getPool(params.poolId);
+
+    // Enforce min-amount policy for inputs based on pool assets
+    await this.assertAddLiquidityMeetsMinAmounts({
+      poolId: params.poolId,
+      assetAAmount: params.assetAAmount,
+      assetBAmount: params.assetBAmount,
+    });
 
     // Transfer assets to pool using new address encoding
     const lpSparkAddress = encodeSparkAddressNew({
@@ -1120,6 +1333,8 @@ export class FlashnetClient {
       assetBSparkTransferId: assetBTransferId,
       assetAAmount: params.assetAAmount.toString(),
       assetBAmount: params.assetBAmount.toString(),
+      assetAMinAmountIn: params.assetAMinAmountIn.toString(),
+      assetBMinAmountIn: params.assetBMinAmountIn.toString(),
       nonce,
     });
 
@@ -1138,8 +1353,10 @@ export class FlashnetClient {
       assetBSparkTransferId: assetBTransferId,
       assetAAmountToAdd: params.assetAAmount.toString(),
       assetBAmountToAdd: params.assetBAmount.toString(),
+      assetAMinAmountIn: params.assetAMinAmountIn.toString(),
+      assetBMinAmountIn: params.assetBMinAmountIn.toString(),
       nonce,
-      signature: Buffer.from(signature).toString("hex"),
+      signature: getHexFromUint8Array(signature),
     };
 
     const response = await this.typedApi.addLiquidity(request);
@@ -1166,6 +1383,7 @@ export class FlashnetClient {
     params: SimulateRemoveLiquidityRequest
   ): Promise<SimulateRemoveLiquidityResponse> {
     await this.ensureInitialized();
+    await this.ensurePingOk();
     return this.typedApi.simulateRemoveLiquidity(params);
   }
 
@@ -1178,6 +1396,8 @@ export class FlashnetClient {
   }): Promise<RemoveLiquidityResponse> {
     await this.ensureInitialized();
 
+    await this.ensureAmmOperationAllowed("allow_withdraw_liquidity");
+
     // Check LP token balance
     const position = await this.getLpPosition(params.poolId);
     const lpTokensOwned = position.lpTokensOwned;
@@ -1188,6 +1408,12 @@ export class FlashnetClient {
         `Insufficient LP tokens. Owned: ${lpTokensOwned}, Requested: ${tokensToRemove}`
       );
     }
+
+    // Pre-simulate and enforce min-amount policy for outputs
+    await this.assertRemoveLiquidityMeetsMinAmounts({
+      poolId: params.poolId,
+      lpTokensToRemove: params.lpTokensToRemove,
+    });
 
     // Generate remove liquidity intent
     const nonce = generateNonce();
@@ -1211,7 +1437,7 @@ export class FlashnetClient {
       poolId: params.poolId,
       lpTokensToRemove: params.lpTokensToRemove,
       nonce,
-      signature: Buffer.from(signature).toString("hex"),
+      signature: getHexFromUint8Array(signature),
     };
 
     const response = await this.typedApi.removeLiquidity(request);
@@ -1237,6 +1463,7 @@ export class FlashnetClient {
     feeRecipientPublicKey?: string;
   }): Promise<RegisterHostResponse> {
     await this.ensureInitialized();
+    await this.ensurePingOk();
 
     const feeRecipient = params.feeRecipientPublicKey || this.publicKey;
     const nonce = generateNonce();
@@ -1262,7 +1489,7 @@ export class FlashnetClient {
       minFeeBps: params.minFeeBps,
       feeRecipientPublicKey: feeRecipient,
       nonce,
-      signature: Buffer.from(signature).toString("hex"),
+      signature: getHexFromUint8Array(signature),
     };
 
     return this.typedApi.registerHost(request);
@@ -1284,7 +1511,18 @@ export class FlashnetClient {
     poolId: string
   ): Promise<GetPoolHostFeesResponse> {
     await this.ensureInitialized();
+    await this.ensurePingOk();
     return this.typedApi.getPoolHostFees({ hostNamespace, poolId });
+  }
+
+  /**
+   * Get host fee withdrawal history
+   */
+  async getHostFeeWithdrawalHistory(
+    query?: FeeWithdrawalHistoryQuery
+  ): Promise<FeeWithdrawalHistoryResponse> {
+    await this.ensureInitialized();
+    return this.typedApi.getHostFeeWithdrawalHistory(query);
   }
 
   /**
@@ -1292,16 +1530,16 @@ export class FlashnetClient {
    */
   async withdrawHostFees(params: {
     lpIdentityPublicKey: string;
-    assetAAmount?: string;
     assetBAmount?: string;
   }): Promise<WithdrawHostFeesResponse> {
     await this.ensureInitialized();
+
+    await this.ensureAmmOperationAllowed("allow_withdraw_fees");
 
     const nonce = generateNonce();
     const intentMessage = generateWithdrawHostFeesIntentMessage({
       hostPublicKey: this.publicKey,
       lpIdentityPublicKey: params.lpIdentityPublicKey,
-      assetAAmount: params.assetAAmount,
       assetBAmount: params.assetBAmount,
       nonce,
     });
@@ -1316,10 +1554,9 @@ export class FlashnetClient {
 
     const request: WithdrawHostFeesRequest = {
       lpIdentityPublicKey: params.lpIdentityPublicKey,
-      assetAAmount: params.assetAAmount,
       assetBAmount: params.assetBAmount,
       nonce,
-      signature: Buffer.from(signature).toString("hex"),
+      signature: getHexFromUint8Array(signature),
     };
 
     const response = await this.typedApi.withdrawHostFees(request);
@@ -1339,6 +1576,7 @@ export class FlashnetClient {
    */
   async getHostFees(hostNamespace: string): Promise<GetHostFeesResponse> {
     await this.ensureInitialized();
+    await this.ensurePingOk();
 
     const request: GetHostFeesRequest = {
       hostNamespace,
@@ -1348,20 +1586,41 @@ export class FlashnetClient {
   }
 
   /**
+   * Get integrator fee withdrawal history
+   */
+  async getIntegratorFeeWithdrawalHistory(
+    query?: FeeWithdrawalHistoryQuery
+  ): Promise<FeeWithdrawalHistoryResponse> {
+    await this.ensureInitialized();
+    return this.typedApi.getIntegratorFeeWithdrawalHistory(query);
+  }
+
+  /**
+   * Get fees for a specific pool for an integrator
+   */
+  async getPoolIntegratorFees(
+    poolId: string
+  ): Promise<GetPoolIntegratorFeesResponse> {
+    await this.ensureInitialized();
+    await this.ensurePingOk();
+    return this.typedApi.getPoolIntegratorFees({ poolId });
+  }
+
+  /**
    * Withdraw integrator fees
    */
   async withdrawIntegratorFees(params: {
     lpIdentityPublicKey: string;
-    assetAAmount?: string;
     assetBAmount?: string;
   }): Promise<WithdrawIntegratorFeesResponse> {
     await this.ensureInitialized();
+
+    await this.ensureAmmOperationAllowed("allow_withdraw_fees");
 
     const nonce = generateNonce();
     const intentMessage = generateWithdrawIntegratorFeesIntentMessage({
       integratorPublicKey: this.publicKey,
       lpIdentityPublicKey: params.lpIdentityPublicKey,
-      assetAAmount: params.assetAAmount,
       assetBAmount: params.assetBAmount,
       nonce,
     });
@@ -1377,10 +1636,9 @@ export class FlashnetClient {
     const request: WithdrawIntegratorFeesRequest = {
       integratorPublicKey: this.publicKey,
       lpIdentityPublicKey: params.lpIdentityPublicKey,
-      assetAAmount: params.assetAAmount,
       assetBAmount: params.assetBAmount,
       nonce,
-      signature: Buffer.from(signature).toString("hex"),
+      signature: getHexFromUint8Array(signature),
     };
 
     const response = await this.typedApi.withdrawIntegratorFees(request);
@@ -1401,6 +1659,201 @@ export class FlashnetClient {
   async getIntegratorFees(): Promise<GetIntegratorFeesResponse> {
     await this.ensureInitialized();
     return this.typedApi.getIntegratorFees();
+  }
+
+  // ===== Escrow Operations =====
+
+  /**
+   * Creates a new escrow contract.
+   * This is the first step in a two-step process: create, then fund.
+   * @param params Parameters to create the escrow.
+   * @returns The escrow creation response, including the ID and deposit address.
+   */
+  async createEscrow(params: {
+    assetId: string;
+    assetAmount: string;
+    recipients: { id: string; amount: string }[];
+    claimConditions: Condition[];
+    abandonHost?: string;
+    abandonConditions?: Condition[];
+    autoFund?: boolean;
+  }): Promise<CreateEscrowResponse | FundEscrowResponse> {
+    await this.ensureInitialized();
+    await this.ensurePingOk();
+
+    const nonce = generateNonce();
+    // The intent message requires a different structure for recipients and conditions
+    const intentRecipients: EscrowRecipient[] = params.recipients.map((r) => ({
+      recipientId: r.id,
+      amount: r.amount,
+      hasClaimed: false, // Default value for creation
+    }));
+
+    const intentMessage = generateCreateEscrowIntentMessage({
+      creatorPublicKey: this.publicKey,
+      assetId: params.assetId,
+      assetAmount: params.assetAmount,
+      recipients: intentRecipients,
+      claimConditions: params.claimConditions as unknown as EscrowCondition[], // Assuming API `Condition` is compatible
+      abandonHost: params.abandonHost,
+      abandonConditions:
+        (params.abandonConditions as unknown as EscrowCondition[]) || undefined,
+      nonce,
+    });
+
+    const messageHash = new Uint8Array(
+      await crypto.subtle.digest("SHA-256", intentMessage)
+    );
+    const signature = await (
+      this._wallet as any
+    ).config.signer.signMessageWithIdentityKey(messageHash, true);
+
+    const request: CreateEscrowRequest = {
+      creatorPublicKey: this.publicKey,
+      assetId: params.assetId,
+      assetAmount: params.assetAmount,
+      recipients: params.recipients,
+      claimConditions: params.claimConditions,
+      abandonHost: params.abandonHost,
+      abandonConditions: params.abandonConditions,
+      nonce,
+      signature: getHexFromUint8Array(signature),
+    };
+
+    const createResponse = await this.typedApi.createEscrow(request);
+
+    const autoFund = params.autoFund !== false;
+
+    if (!autoFund) {
+      return createResponse;
+    }
+
+    // Auto-fund the escrow
+    return this.fundEscrow({
+      escrowId: createResponse.escrowId,
+      depositAddress: createResponse.depositAddress,
+      assetId: params.assetId,
+      assetAmount: params.assetAmount,
+    });
+  }
+
+  /**
+   * Funds an escrow contract to activate it.
+   * This handles the asset transfer and confirmation in one step.
+   * @param params Parameters to fund the escrow, including asset details and deposit address.
+   * @returns The funding confirmation response.
+   */
+  async fundEscrow(params: {
+    escrowId: string;
+    depositAddress: string;
+    assetId: string;
+    assetAmount: string;
+  }): Promise<FundEscrowResponse> {
+    await this.ensureInitialized();
+    await this.ensurePingOk();
+
+    // 1. Balance check
+    await this.checkBalance({
+      balancesToCheck: [
+        { assetAddress: params.assetId, amount: params.assetAmount },
+      ],
+      errorPrefix: "Insufficient balance to fund escrow: ",
+    });
+
+    // 2. Perform transfer
+    const escrowSparkAddress = encodeSparkAddressNew({
+      identityPublicKey: params.depositAddress,
+      network: this.sparkNetwork,
+    });
+
+    const sparkTransferId = await this.transferAsset({
+      receiverSparkAddress: escrowSparkAddress,
+      assetAddress: params.assetId,
+      amount: params.assetAmount,
+    });
+
+    // 3. Execute signed intent
+    return await this.executeFundEscrowIntent({
+      escrowId: params.escrowId,
+      sparkTransferId,
+    });
+  }
+
+  async executeFundEscrowIntent(params: {
+    escrowId: string;
+    sparkTransferId: string;
+  }): Promise<FundEscrowResponse> {
+    await this.ensurePingOk();
+    // Generate intent
+    const nonce = generateNonce();
+    const intentMessage = generateFundEscrowIntentMessage({
+      ...params,
+      creatorPublicKey: this.publicKey,
+      nonce,
+    });
+
+    // Sign
+    const messageHash = new Uint8Array(
+      await crypto.subtle.digest("SHA-256", intentMessage)
+    );
+    const signature = await (
+      this._wallet as any
+    ).config.signer.signMessageWithIdentityKey(messageHash, true);
+
+    // Call API
+    const request: FundEscrowRequest = {
+      ...params,
+      nonce,
+      signature: getHexFromUint8Array(signature),
+    };
+
+    return this.typedApi.fundEscrow(request);
+  }
+
+  /**
+   * Claims funds from an active escrow contract.
+   * The caller must be a valid recipient and all claim conditions must be met.
+   * @param params Parameters for the claim.
+   * @returns The claim processing response.
+   */
+  async claimEscrow(params: {
+    escrowId: string;
+  }): Promise<ClaimEscrowResponse> {
+    await this.ensureInitialized();
+    await this.ensurePingOk();
+
+    const nonce = generateNonce();
+    const intentMessage = generateClaimEscrowIntentMessage({
+      escrowId: params.escrowId,
+      recipientPublicKey: this.publicKey,
+      nonce,
+    });
+
+    const messageHash = new Uint8Array(
+      await crypto.subtle.digest("SHA-256", intentMessage)
+    );
+    const signature = await (
+      this._wallet as any
+    ).config.signer.signMessageWithIdentityKey(messageHash, true);
+
+    const request: ClaimEscrowRequest = {
+      escrowId: params.escrowId,
+      nonce,
+      signature: getHexFromUint8Array(signature),
+    };
+
+    return this.typedApi.claimEscrow(request);
+  }
+
+  /**
+   * Retrieves the current state of an escrow contract.
+   * This is a read-only operation and does not require authentication.
+   * @param escrowId The unique identifier of the escrow.
+   * @returns The full state of the escrow.
+   */
+  async getEscrow(escrowId: string): Promise<EscrowState> {
+    await this.ensureInitialized();
+    return this.typedApi.getEscrow(escrowId);
   }
 
   // ===== Swap History =====
@@ -1436,6 +1889,50 @@ export class FlashnetClient {
     await this.ensureInitialized();
     const user = userPublicKey || this.publicKey;
     return this.typedApi.getUserSwaps(user, query);
+  }
+
+  // ===== Clawback =====
+  /**
+   * Request clawback of a stuck inbound transfer to an LP wallet
+   */
+  async clawback(params: {
+    sparkTransferId: string;
+    lpIdentityPublicKey: string;
+  }): Promise<ClawbackResponse> {
+    await this.ensureInitialized();
+    await this.ensurePingOk();
+
+    const nonce = generateNonce();
+    const intentMessage = generateClawbackIntentMessage({
+      senderPublicKey: this.publicKey,
+      sparkTransferId: params.sparkTransferId,
+      lpIdentityPublicKey: params.lpIdentityPublicKey,
+      nonce,
+    });
+
+    const messageHash = new Uint8Array(
+      await crypto.subtle.digest("SHA-256", intentMessage)
+    );
+    const signature = await (
+      this._wallet as any
+    ).config.signer.signMessageWithIdentityKey(messageHash, true);
+
+    const request: ClawbackRequest = {
+      senderPublicKey: this.publicKey,
+      sparkTransferId: params.sparkTransferId,
+      lpIdentityPublicKey: params.lpIdentityPublicKey,
+      nonce,
+      signature: getHexFromUint8Array(signature),
+    };
+
+    const response = await this.typedApi.clawback(request);
+
+    if (!response.accepted) {
+      const errorMessage = response.error || "Clawback request was rejected";
+      throw new Error(errorMessage);
+    }
+
+    return response;
   }
 
   // ===== Token Address Operations =====
@@ -1566,8 +2063,18 @@ export class FlashnetClient {
     assetAAddress: string,
     assetBAddress: string,
     assetAAmount: string,
-    assetBAmount: string
+    assetBAmount: string,
+    assetAMinAmountIn: string,
+    assetBMinAmountIn: string
   ): Promise<void> {
+    // Enforce gating and min-amount policy for initial liquidity
+    await this.ensureAmmOperationAllowed("allow_add_liquidity");
+    await this.assertAddLiquidityMeetsMinAmounts({
+      poolId,
+      assetAAmount,
+      assetBAmount,
+    });
+
     const lpSparkAddress = encodeSparkAddressNew({
       identityPublicKey: poolId,
       network: this.sparkNetwork,
@@ -1595,6 +2102,8 @@ export class FlashnetClient {
       assetBSparkTransferId: assetBTransferId,
       assetAAmount: assetAAmount.toString(),
       assetBAmount: assetBAmount.toString(),
+      assetAMinAmountIn: assetAMinAmountIn.toString(),
+      assetBMinAmountIn: assetBMinAmountIn.toString(),
       nonce,
     });
 
@@ -1612,8 +2121,10 @@ export class FlashnetClient {
       assetBSparkTransferId: assetBTransferId,
       assetAAmountToAdd: assetAAmount.toString(),
       assetBAmountToAdd: assetBAmount.toString(),
+      assetAMinAmountIn: assetAMinAmountIn.toString(),
+      assetBMinAmountIn: assetBMinAmountIn.toString(),
       nonce,
-      signature: Buffer.from(signature).toString("hex"),
+      signature: getHexFromUint8Array(signature),
     };
 
     const response = await this.typedApi.addLiquidity(request);
@@ -1631,5 +2142,252 @@ export class FlashnetClient {
    */
   async cleanup(): Promise<void> {
     await this._wallet.cleanupConnections();
+  }
+
+  // ===== Config and Policy Enforcement Helpers =====
+
+  private async ensureAmmOperationAllowed(
+    requiredFeature: FeatureName
+  ): Promise<void> {
+    await this.ensurePingOk();
+    const featureMap = await this.getFeatureStatusMap();
+
+    if (featureMap.get("master_kill_switch")) {
+      throw new Error("Service is temporarily disabled by master kill switch");
+    }
+
+    if (!featureMap.get(requiredFeature)) {
+      throw new Error(
+        `Operation not allowed: feature '${requiredFeature}' is disabled`
+      );
+    }
+  }
+
+  private async ensurePingOk(): Promise<void> {
+    const now = Date.now();
+    if (this.pingCache && this.pingCache.expiryMs > now) {
+      if (!this.pingCache.ok) {
+        throw new Error(
+          "Settlement service unavailable. Only read (GET) operations are allowed right now."
+        );
+      }
+      return;
+    }
+    const ping = await this.typedApi.ping();
+    const ok =
+      !!ping &&
+      typeof ping.status === "string" &&
+      ping.status.toLowerCase() === "ok";
+    this.pingCache = { ok, expiryMs: now + FlashnetClient.PING_TTL_MS };
+    if (!ok) {
+      throw new Error(
+        "Settlement service unavailable. Only read (GET) operations are allowed right now."
+      );
+    }
+  }
+
+  private async getFeatureStatusMap(): Promise<Map<FeatureName, boolean>> {
+    const now = Date.now();
+    if (this.featureStatusCache && this.featureStatusCache.expiryMs > now) {
+      const map = new Map<FeatureName, boolean>();
+      for (const item of this.featureStatusCache.data) {
+        map.set(item.feature_name as FeatureName, Boolean(item.enabled));
+      }
+      return map;
+    }
+
+    const data = await this.typedApi.getFeatureStatus();
+    this.featureStatusCache = {
+      data,
+      expiryMs: now + FlashnetClient.FEATURE_STATUS_TTL_MS,
+    };
+    const map = new Map<FeatureName, boolean>();
+    for (const item of data) {
+      map.set(item.feature_name as FeatureName, Boolean(item.enabled));
+    }
+    return map;
+  }
+
+  private async getEnabledMinAmountsMap(): Promise<Map<string, bigint>> {
+    const now = Date.now();
+    if (this.minAmountsCache && this.minAmountsCache.expiryMs > now) {
+      return this.minAmountsCache.map;
+    }
+
+    const config = await this.typedApi.getMinAmounts();
+    const map = new Map<string, bigint>();
+    for (const item of config) {
+      if (item.enabled) {
+        const key = item.asset_identifier.toLowerCase();
+        const value = BigInt(String(item.min_amount));
+        map.set(key, value);
+      }
+    }
+    this.minAmountsCache = {
+      map,
+      expiryMs: now + FlashnetClient.MIN_AMOUNTS_TTL_MS,
+    };
+    return map;
+  }
+
+  private getHexAddress(addr: string): string {
+    return this.toHexTokenIdentifier(addr).toLowerCase();
+  }
+
+  private async assertSwapMeetsMinAmounts(params: {
+    assetInAddress: string;
+    assetOutAddress: string;
+    amountIn: string | bigint | number;
+    minAmountOut: string | bigint | number;
+  }): Promise<void> {
+    const minMap = await this.getEnabledMinAmountsMap();
+    if (minMap.size === 0) {
+      return;
+    }
+
+    const inHex = this.getHexAddress(params.assetInAddress);
+    const outHex = this.getHexAddress(params.assetOutAddress);
+    const minIn = minMap.get(inHex);
+    const minOut = minMap.get(outHex);
+
+    const amountIn = BigInt(String(params.amountIn));
+    const minAmountOut = BigInt(String(params.minAmountOut));
+
+    if (minIn && minOut) {
+      if (amountIn < minIn) {
+        throw new Error(
+          `Minimum amount not met for input asset. Required \
+${minIn.toString()}, provided ${amountIn.toString()}`
+        );
+      }
+      return;
+    }
+
+    if (minIn) {
+      if (amountIn < minIn) {
+        throw new Error(
+          `Minimum amount not met for input asset. Required \
+${minIn.toString()}, provided ${amountIn.toString()}`
+        );
+      }
+      return;
+    }
+
+    if (minOut) {
+      const relaxed = minOut / 2n; // 50% relaxation for slippage
+      if (minAmountOut < relaxed) {
+        throw new Error(
+          `Minimum amount not met for output asset. Required at least \
+${relaxed.toString()} (50% relaxed), provided minAmountOut ${minAmountOut.toString()}`
+        );
+      }
+    }
+  }
+
+  private async assertAddLiquidityMeetsMinAmounts(params: {
+    poolId: string;
+    assetAAmount: string | bigint | number;
+    assetBAmount: string | bigint | number;
+  }): Promise<void> {
+    const minMap = await this.getEnabledMinAmountsMap();
+    if (minMap.size === 0) {
+      return;
+    }
+
+    const pool = await this.getPool(params.poolId);
+    const aHex = pool.assetAAddress.toLowerCase();
+    const bHex = pool.assetBAddress.toLowerCase();
+    const aMin = minMap.get(aHex);
+    const bMin = minMap.get(bHex);
+
+    if (aMin) {
+      const aAmt = BigInt(String(params.assetAAmount));
+      if (aAmt < aMin) {
+        throw new Error(
+          `Minimum amount not met for Asset A. Required ${aMin.toString()}, provided ${aAmt.toString()}`
+        );
+      }
+    }
+
+    if (bMin) {
+      const bAmt = BigInt(String(params.assetBAmount));
+      if (bAmt < bMin) {
+        throw new Error(
+          `Minimum amount not met for Asset B. Required ${bMin.toString()}, provided ${bAmt.toString()}`
+        );
+      }
+    }
+  }
+
+  private async assertRemoveLiquidityMeetsMinAmounts(params: {
+    poolId: string;
+    lpTokensToRemove: string | bigint | number;
+  }): Promise<void> {
+    const minMap = await this.getEnabledMinAmountsMap();
+    if (minMap.size === 0) {
+      return;
+    }
+
+    const simulation = await this.simulateRemoveLiquidity({
+      poolId: params.poolId,
+      providerPublicKey: this.publicKey,
+      lpTokensToRemove: String(params.lpTokensToRemove),
+    });
+
+    const pool = await this.getPool(params.poolId);
+    const aHex = pool.assetAAddress.toLowerCase();
+    const bHex = pool.assetBAddress.toLowerCase();
+    const aMin = minMap.get(aHex);
+    const bMin = minMap.get(bHex);
+
+    if (aMin) {
+      const predictedAOut = BigInt(String(simulation.assetAAmount));
+      const relaxedA = aMin / 2n; // apply 50% relaxation for outputs
+      if (predictedAOut < relaxedA) {
+        throw new Error(
+          `Minimum amount not met for Asset A on withdrawal. Required at least ${relaxedA.toString()} (50% relaxed), predicted ${predictedAOut.toString()}`
+        );
+      }
+    }
+
+    if (bMin) {
+      const predictedBOut = BigInt(String(simulation.assetBAmount));
+      const relaxedB = bMin / 2n;
+      if (predictedBOut < relaxedB) {
+        throw new Error(
+          `Minimum amount not met for Asset B on withdrawal. Required at least ${relaxedB.toString()} (50% relaxed), predicted ${predictedBOut.toString()}`
+        );
+      }
+    }
+  }
+
+  private async assertAllowedAssetBForPoolCreation(
+    assetBHex: string
+  ): Promise<void> {
+    const now = Date.now();
+    let allowed: AllowedAssetsResponse;
+    if (this.allowedAssetsCache && this.allowedAssetsCache.expiryMs > now) {
+      allowed = this.allowedAssetsCache.data;
+    } else {
+      allowed = await this.typedApi.getAllowedAssets();
+      this.allowedAssetsCache = {
+        data: allowed,
+        expiryMs: now + FlashnetClient.ALLOWED_ASSETS_TTL_MS,
+      };
+    }
+    if (!allowed || allowed.length === 0) {
+      // Wildcard allowance
+      return;
+    }
+
+    const isAllowed = allowed.some(
+      (it) =>
+        it.enabled &&
+        it.asset_identifier.toLowerCase() === assetBHex.toLowerCase()
+    );
+
+    if (!isAllowed) {
+      throw new Error(`Asset B is not allowed for pool creation: ${assetBHex}`);
+    }
   }
 }

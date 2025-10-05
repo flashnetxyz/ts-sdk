@@ -1,6 +1,7 @@
-import { bytesToHex, hexToBytes } from "@noble/hashes/utils";
-import { bech32m } from "@scure/base";
+import { bech32m } from "bech32";
+import sha256 from "fast-sha256";
 import type { NetworkType, SparkNetworkType } from "../types";
+import { getHexFromUint8Array, getUint8ArrayFromHex } from "./hex";
 
 const SparkHumanReadableTokenIdentifierNetworkPrefix: Record<
   SparkNetworkType,
@@ -19,6 +20,18 @@ export type SparkHumanReadableTokenIdentifier =
   | `btknt1${string}`
   | `btkns1${string}`
   | `btknl1${string}`;
+
+type TokenIdentifierHashes = {
+  versionHash: Uint8Array;
+  issuerPublicKeyHash: Uint8Array;
+  nameHash: Uint8Array;
+  tickerHash: Uint8Array;
+  decimalsHash: Uint8Array;
+  maxSupplyHash: Uint8Array;
+  isFreezableHash: Uint8Array;
+  networkHash: Uint8Array;
+  creationEntityPublicKeyHash: Uint8Array;
+};
 
 const NETWORK_MAGIC = {
   MAINNET: 3652501241,
@@ -44,7 +57,7 @@ export function encodeSparkHumanReadableTokenIdentifier(
     // Convert hex string to bytes if needed
     const tokenIdentifierBytes =
       typeof tokenIdentifier === "string"
-        ? hexToBytes(tokenIdentifier)
+        ? getUint8ArrayFromHex(tokenIdentifier)
         : tokenIdentifier;
 
     const words = bech32m.toWords(tokenIdentifierBytes);
@@ -85,7 +98,7 @@ export function decodeSparkHumanReadableTokenIdentifier(
     const tokenIdentifier = bech32m.fromWords(decoded.words);
 
     return {
-      tokenIdentifier: bytesToHex(tokenIdentifier),
+      tokenIdentifier: getHexFromUint8Array(new Uint8Array(tokenIdentifier)),
       network,
     };
   } catch (error) {
@@ -130,7 +143,7 @@ export function encodeHumanReadableTokenIdentifier(
     // Convert hex string to bytes if needed
     const tokenIdentifierBytes =
       typeof tokenIdentifier === "string"
-        ? hexToBytes(tokenIdentifier)
+        ? getUint8ArrayFromHex(tokenIdentifier)
         : tokenIdentifier;
 
     const words = bech32m.toWords(tokenIdentifierBytes);
@@ -166,7 +179,7 @@ export function decodeHumanReadableTokenIdentifier(
     const tokenIdentifier = bech32m.fromWords(decoded.words);
 
     return {
-      tokenIdentifier: bytesToHex(tokenIdentifier),
+      tokenIdentifier: getHexFromUint8Array(new Uint8Array(tokenIdentifier)),
       network,
     };
   } catch (error) {
@@ -177,8 +190,69 @@ export function decodeHumanReadableTokenIdentifier(
   }
 }
 
-async function sha256(buffer: Uint8Array): Promise<Uint8Array> {
-  return new Uint8Array(await crypto.subtle.digest("SHA-256", buffer));
+export function getTokenIdentifierHashes(token: {
+  issuerPublicKey: string | Uint8Array;
+  name: string;
+  ticker: string;
+  decimals: number;
+  maxSupply: bigint;
+  isFreezable: boolean;
+  network: keyof typeof NETWORK_MAGIC;
+  creationEntityPublicKey: string | Uint8Array;
+}): TokenIdentifierHashes {
+  const encoder = new TextEncoder();
+
+  const oneHash = sha256(new Uint8Array([1]));
+  const versionHash = oneHash;
+  const nameHash = sha256(encoder.encode(token.name));
+  const tickerHash = sha256(encoder.encode(token.ticker));
+  const decimalsHash = sha256(new Uint8Array([token.decimals]));
+
+  const isFreezableHash = sha256(new Uint8Array([token.isFreezable ? 1 : 0]));
+
+  const networkMagic = NETWORK_MAGIC[token.network];
+  const networkBytes = new Uint8Array(4);
+  new DataView(networkBytes.buffer).setUint32(0, networkMagic, false);
+  const networkHash = sha256(networkBytes);
+
+  const creationEntityBytes =
+    typeof token.creationEntityPublicKey === "string"
+      ? getUint8ArrayFromHex(token.creationEntityPublicKey)
+      : token.creationEntityPublicKey;
+  const isL1 =
+    !creationEntityBytes ||
+    (creationEntityBytes.length === 33 &&
+      creationEntityBytes.every((byte) => byte === 0));
+
+  const creationEntityPublicKeyHash = isL1
+    ? oneHash
+    : (() => {
+        const layerData = new Uint8Array(34);
+        layerData[0] = 2;
+        layerData.set(creationEntityBytes, 1);
+        return sha256(layerData);
+      })();
+
+  const issuerPublicKeyHash = sha256(
+    typeof token.issuerPublicKey === "string"
+      ? getUint8ArrayFromHex(token.issuerPublicKey)
+      : token.issuerPublicKey
+  );
+
+  const maxSupplyBytes = bigintTo16ByteArray(token.maxSupply);
+  const maxSupplyHash = sha256(maxSupplyBytes);
+
+  return {
+    versionHash,
+    issuerPublicKeyHash,
+    nameHash,
+    tickerHash,
+    decimalsHash,
+    maxSupplyHash,
+    isFreezableHash,
+    networkHash,
+    creationEntityPublicKeyHash,
+  };
 }
 
 function bigintTo16ByteArray(value: bigint) {
@@ -191,53 +265,18 @@ function bigintTo16ByteArray(value: bigint) {
   return buffer;
 }
 
-export async function getTokenIdentifier(token: {
-  issuerPublicKey: string;
-  name: string;
-  ticker: string;
-  decimals: number;
-  maxSupply: bigint;
-  isFreezable: boolean;
-  network: keyof typeof NETWORK_MAGIC;
-  creationEntityPublicKey: string;
-}): Promise<Uint8Array> {
-  const encoder = new TextEncoder();
+export function getTokenIdentifierWithHashes(hashes: TokenIdentifierHashes) {
   const allHashes = [
-    await sha256(new Uint8Array([1])),
-    await sha256(hexToBytes(token.issuerPublicKey)),
-    await sha256(encoder.encode(token.name)),
-    await sha256(encoder.encode(token.ticker)),
-    await sha256(new Uint8Array([token.decimals])),
+    hashes.versionHash,
+    hashes.issuerPublicKeyHash,
+    hashes.nameHash,
+    hashes.tickerHash,
+    hashes.decimalsHash,
+    hashes.maxSupplyHash,
+    hashes.isFreezableHash,
+    hashes.networkHash,
+    hashes.creationEntityPublicKeyHash,
   ];
-
-  const maxSupplyBytes = bigintTo16ByteArray(token.maxSupply);
-  if (maxSupplyBytes.length !== 16) {
-    throw Error(
-      `Max supply must be exactly 16 bytes, got ${maxSupplyBytes.length}`
-    );
-  }
-  allHashes.push(await sha256(maxSupplyBytes));
-  allHashes.push(await sha256(new Uint8Array([token.isFreezable ? 1 : 0])));
-
-  const networkMagic = NETWORK_MAGIC[token.network];
-  const networkBytes = new Uint8Array(4);
-  new DataView(networkBytes.buffer).setUint32(0, networkMagic, false);
-  allHashes.push(await sha256(networkBytes));
-
-  const creationEntityBytes = hexToBytes(token.creationEntityPublicKey);
-  const isL1 =
-    !creationEntityBytes ||
-    (creationEntityBytes.length === 33 &&
-      creationEntityBytes.every((byte) => byte === 0));
-
-  if (isL1) {
-    allHashes.push(await sha256(new Uint8Array([1])));
-  } else {
-    const layerData = new Uint8Array(34);
-    layerData[0] = 2;
-    layerData.set(creationEntityBytes, 1);
-    allHashes.push(await sha256(layerData));
-  }
 
   const concatenated = new Uint8Array(
     allHashes.reduce((acc, h) => acc + h.length, 0)
@@ -248,21 +287,35 @@ export async function getTokenIdentifier(token: {
     offset += h.length;
   }
 
-  return await sha256(concatenated);
+  return sha256(concatenated);
 }
 
-export async function getHumanReadableTokenIdentifier(token: {
-  issuerPublicKey: string;
+export function getTokenIdentifier(token: {
+  issuerPublicKey: string | Uint8Array;
   name: string;
   ticker: string;
   decimals: number;
   maxSupply: bigint;
   isFreezable: boolean;
   network: keyof typeof NETWORK_MAGIC;
-  creationEntityPublicKey: string;
-}): Promise<SparkHumanReadableTokenIdentifier> {
+  creationEntityPublicKey: string | Uint8Array;
+}): Uint8Array {
+  const tokenHashes = getTokenIdentifierHashes(token);
+  return getTokenIdentifierWithHashes(tokenHashes);
+}
+
+export function getHumanReadableTokenIdentifier(token: {
+  issuerPublicKey: string | Uint8Array;
+  name: string;
+  ticker: string;
+  decimals: number;
+  maxSupply: bigint;
+  isFreezable: boolean;
+  network: keyof typeof NETWORK_MAGIC;
+  creationEntityPublicKey: string | Uint8Array;
+}): SparkHumanReadableTokenIdentifier {
   return encodeSparkHumanReadableTokenIdentifier(
-    await getTokenIdentifier(token),
+    getTokenIdentifier(token),
     token.network
   );
 }

@@ -240,7 +240,8 @@ const signature = await signer.signMessage(
 // Execute swap
 const swap = await api.executeSwap({
   // ... swap parameters
-  signature: Buffer.from(signature).toString("hex"),
+  signature: typeof Buffer === "function" ?
+    Buffer.from(signature).toString("hex") : signature.toHex(),
 });
 ```
 

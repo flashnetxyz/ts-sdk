@@ -1,7 +1,6 @@
-import { secp256k1 } from "@noble/curves/secp256k1";
-import { bytesToHex, hexToBytes } from "@noble/hashes/utils";
-import { bech32m } from "@scure/base";
+import { bech32m } from "bech32";
 import type { NetworkType, SparkNetworkType } from "../types";
+import { getHexFromUint8Array, getUint8ArrayFromHex } from "./hex";
 
 // Simple interface just storing the public key bytes
 interface SparkAddress {
@@ -9,11 +8,11 @@ interface SparkAddress {
 }
 
 const SparkAddressNetworkPrefix: Record<SparkNetworkType, string> = {
-  MAINNET: "sp",
-  TESTNET: "spt",
-  REGTEST: "sprt",
-  SIGNET: "sps",
-  LOCAL: "spl",
+  MAINNET: "spark",
+  TESTNET: "sparkt",
+  REGTEST: "sparkrt",
+  SIGNET: "sparks",
+  LOCAL: "sparkl",
 } as const;
 
 const SparkPrefixToNetwork: Record<string, SparkNetworkType> =
@@ -23,6 +22,9 @@ const SparkPrefixToNetwork: Record<string, SparkNetworkType> =
       network as SparkNetworkType,
     ])
   );
+
+const SECP_256_K_1_PRIME_MOD =
+  0xfffffffffffffffffffffffffffffffffffffffffffffffffffffffefffffc2fn;
 
 export type SparkAddressFormat =
   `${(typeof SparkAddressNetworkPrefix)[keyof typeof SparkAddressNetworkPrefix]}1${string}`;
@@ -54,6 +56,34 @@ const PrefixToNetwork: Record<string, NetworkType> = Object.fromEntries(
     network as NetworkType,
   ])
 );
+
+// Map legacy prefixes to SparkNetworkType and combine with modern prefixes
+const LegacySparkPrefixToNetwork: Record<string, SparkNetworkType> =
+  Object.fromEntries(
+    Object.entries(AddressNetworkPrefix).map(([network, prefix]) => [
+      prefix,
+      network as SparkNetworkType,
+    ])
+  );
+
+const AllSparkPrefixToNetwork: Record<string, SparkNetworkType> = {
+  ...SparkPrefixToNetwork,
+  ...LegacySparkPrefixToNetwork,
+};
+
+// Map modern prefixes back to legacy NetworkType and combine with legacy prefixes
+const ModernPrefixToLegacyNetwork: Record<string, NetworkType> =
+  Object.fromEntries(
+    Object.entries(SparkAddressNetworkPrefix).map(([network, prefix]) => [
+      prefix,
+      network as NetworkType,
+    ])
+  );
+
+const AllPrefixToLegacyNetwork: Record<string, NetworkType> = {
+  ...PrefixToNetwork,
+  ...ModernPrefixToLegacyNetwork,
+};
 
 export interface SparkAddressData {
   identityPublicKey: string;
@@ -128,7 +158,7 @@ export function encodeSparkAddressNew(
   isValidPublicKey(payload.identityPublicKey);
 
   // Convert hex public key to bytes
-  const publicKeyBytes = hexToBytes(payload.identityPublicKey);
+  const publicKeyBytes = getUint8ArrayFromHex(payload.identityPublicKey);
 
   // Use proto-style encoding to match the original implementation
   const protoEncoded = encodeProto(publicKeyBytes);
@@ -154,9 +184,14 @@ export function decodeSparkAddressNew(
   address: string,
   network: SparkNetworkType
 ): string {
-  const prefix = SparkAddressNetworkPrefix[network];
-  if (!address?.startsWith(prefix)) {
-    throw new Error(`Invalid Spark address: expected prefix ${prefix}`);
+  const modernPrefix = SparkAddressNetworkPrefix[network];
+  const legacyPrefix = AddressNetworkPrefix[network as unknown as NetworkType];
+  const hasAllowedPrefix =
+    !!address?.startsWith(modernPrefix) || !!address?.startsWith(legacyPrefix);
+  if (!hasAllowedPrefix) {
+    throw new Error(
+      `Invalid Spark address: expected prefix ${modernPrefix} or ${legacyPrefix}`
+    );
   }
 
   // Decode the bech32m address
@@ -167,10 +202,10 @@ export function decodeSparkAddressNew(
   const protoBytes = bech32m.fromWords(decoded.words);
 
   // Decode the proto format to get the SparkAddress
-  const sparkAddressData = decodeProto(protoBytes);
+  const sparkAddressData = decodeProto(new Uint8Array(protoBytes));
 
   // Convert the public key bytes back to hex
-  const publicKey = bytesToHex(sparkAddressData.identityPublicKey);
+  const publicKey = getHexFromUint8Array(sparkAddressData.identityPublicKey);
 
   // Validate the extracted public key
   isValidPublicKey(publicKey);
@@ -194,7 +229,7 @@ export function getSparkNetworkFromAddress(
     return null; // Missing separator '1'
   }
   const prefix = parts[0] ?? "";
-  return SparkPrefixToNetwork[prefix] || null; // Return SparkNetworkType or null
+  return AllSparkPrefixToNetwork[prefix] || null; // Return SparkNetworkType or null
 }
 
 /**
@@ -218,7 +253,7 @@ export function isValidSparkAddressNew(
     const prefix = decoded.prefix;
 
     // Check if prefix is known
-    const networkFromPrefix = SparkPrefixToNetwork[prefix];
+    const networkFromPrefix = AllSparkPrefixToNetwork[prefix];
     if (!networkFromPrefix) {
       return false; // Unknown prefix
     }
@@ -230,8 +265,8 @@ export function isValidSparkAddressNew(
 
     // Try to decode the payload and validate the pubkey
     const protoBytes = bech32m.fromWords(decoded.words);
-    const sparkAddressData = decodeProto(protoBytes);
-    const publicKey = bytesToHex(sparkAddressData.identityPublicKey);
+    const sparkAddressData = decodeProto(new Uint8Array(protoBytes));
+    const publicKey = getHexFromUint8Array(sparkAddressData.identityPublicKey);
     isValidPublicKey(publicKey); // Throws on invalid key
 
     return true; // All checks passed
@@ -273,8 +308,8 @@ export function convertSparkAddressToSparkNetwork(
     // Extract the public key from the address
     const decoded = bech32m.decode(sparkAddress as SparkAddressFormat, 200);
     const protoBytes = bech32m.fromWords(decoded.words);
-    const sparkAddressData = decodeProto(protoBytes);
-    const publicKey = bytesToHex(sparkAddressData.identityPublicKey);
+    const sparkAddressData = decodeProto(new Uint8Array(protoBytes));
+    const publicKey = getHexFromUint8Array(sparkAddressData.identityPublicKey);
 
     // Create a new address for the target network
     return encodeSparkAddressNew({
@@ -300,7 +335,7 @@ export function encodeSparkAddress(
   isValidPublicKey(payload.identityPublicKey);
 
   // Convert hex public key to bytes
-  const publicKeyBytes = hexToBytes(payload.identityPublicKey);
+  const publicKeyBytes = getUint8ArrayFromHex(payload.identityPublicKey);
 
   // Use proto-style encoding to match the original implementation
   const protoEncoded = encodeProto(publicKeyBytes);
@@ -327,9 +362,15 @@ export function decodeSparkAddress(
   address: string,
   network: NetworkType
 ): string {
-  const prefix = AddressNetworkPrefix[network];
-  if (!address?.startsWith(prefix)) {
-    throw new Error(`Invalid Spark address: expected prefix ${prefix}`);
+  const legacyPrefix = AddressNetworkPrefix[network];
+  const modernPrefix =
+    SparkAddressNetworkPrefix[network as unknown as SparkNetworkType];
+  const hasAllowedPrefix =
+    !!address?.startsWith(legacyPrefix) || !!address?.startsWith(modernPrefix);
+  if (!hasAllowedPrefix) {
+    throw new Error(
+      `Invalid Spark address: expected prefix ${legacyPrefix} or ${modernPrefix}`
+    );
   }
 
   // Decode the bech32m address
@@ -340,10 +381,10 @@ export function decodeSparkAddress(
   const protoBytes = bech32m.fromWords(decoded.words);
 
   // Decode the proto format to get the SparkAddress
-  const sparkAddressData = decodeProto(protoBytes);
+  const sparkAddressData = decodeProto(new Uint8Array(protoBytes));
 
   // Convert the public key bytes back to hex
-  const publicKey = bytesToHex(sparkAddressData.identityPublicKey);
+  const publicKey = getHexFromUint8Array(sparkAddressData.identityPublicKey);
 
   // Validate the extracted public key
   isValidPublicKey(publicKey);
@@ -366,7 +407,7 @@ export function getNetworkFromAddress(address: string): NetworkType | null {
     return null; // Missing separator '1'
   }
   const prefix = parts[0] ?? "";
-  return PrefixToNetwork[prefix] || null; // Return NetworkType or null
+  return AllPrefixToLegacyNetwork[prefix] || null; // Return NetworkType or null
 }
 
 /**
@@ -391,7 +432,7 @@ export function isValidSparkAddress(
     const prefix = decoded.prefix;
 
     // Check if prefix is known
-    const networkFromPrefix = PrefixToNetwork[prefix];
+    const networkFromPrefix = AllPrefixToLegacyNetwork[prefix];
     if (!networkFromPrefix) {
       return false; // Unknown prefix
     }
@@ -403,8 +444,8 @@ export function isValidSparkAddress(
 
     // Try to decode the payload and validate the pubkey
     const protoBytes = bech32m.fromWords(decoded.words);
-    const sparkAddressData = decodeProto(protoBytes);
-    const publicKey = bytesToHex(sparkAddressData.identityPublicKey);
+    const sparkAddressData = decodeProto(new Uint8Array(protoBytes));
+    const publicKey = getHexFromUint8Array(sparkAddressData.identityPublicKey);
     isValidPublicKey(publicKey); // Throws on invalid key
 
     return true; // All checks passed
@@ -451,8 +492,8 @@ export function convertSparkAddressToNetwork(
     // Extract the public key from the address
     const decoded = bech32m.decode(sparkAddress as SparkAddressFormat, 200);
     const protoBytes = bech32m.fromWords(decoded.words);
-    const sparkAddressData = decodeProto(protoBytes);
-    const publicKey = bytesToHex(sparkAddressData.identityPublicKey);
+    const sparkAddressData = decodeProto(new Uint8Array(protoBytes));
+    const publicKey = getHexFromUint8Array(sparkAddressData.identityPublicKey);
 
     // Create a new address for the target network
     return encodeSparkAddress({
@@ -486,12 +527,11 @@ export function isValidPublicKey(publicKey: string) {
   if (!looksLikePublicKey(publicKey)) {
     throw new Error("Invalid public key format/length.");
   }
-  try {
-    const point = secp256k1.ProjectivePoint.fromHex(publicKey);
-    point.assertValidity();
-  } catch (error: unknown) {
-    const errorMessage =
-      error instanceof Error ? error.message : "Unknown error";
-    throw new Error(`Invalid public key point: ${errorMessage}`);
+
+  const xComponent = BigInt(`0x${publicKey.substring(2)}`);
+  if (xComponent === 0n || xComponent >= SECP_256_K_1_PRIME_MOD) {
+    throw new Error(
+      "Invalid public key point: x coordinate outside curve modulus"
+    );
   }
 }

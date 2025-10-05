@@ -11,6 +11,7 @@ export {
 export {
   commonValidationRules,
   constantProductPoolValidationRules,
+  singleSidedPoolValidationRules,
   ValidationError,
   type ValidationRule,
   type ValidationRules,
@@ -32,17 +33,28 @@ export {
 // Export configuration (new and legacy)
 export * from "./src/config";
 export type * from "./src/types";
+export {
+  calculateThresholdPercentage,
+  type ValidationResult,
+  validateSingleSidedPoolThreshold,
+} from "./src/types";
 export { fromSmallestUnit, generateNonce, toSmallestUnit } from "./src/utils";
 export { AuthManager } from "./src/utils/auth";
 export {
   generateAddLiquidityIntentMessage,
+  generateClaimEscrowIntentMessage,
+  generateClawbackIntentMessage,
   generateConstantProductPoolInitializationIntentMessage,
+  generateCreateEscrowIntentMessage,
+  generateFundEscrowIntentMessage,
   generatePoolConfirmInitialDepositIntentMessage,
   generatePoolInitializationIntentMessage,
   generatePoolSwapIntentMessage,
   generateRegisterHostIntentMessage,
   generateRemoveLiquidityIntentMessage,
+  generateRouteSwapIntentMessage,
   generateWithdrawHostFeesIntentMessage,
+  generateWithdrawIntegratorFeesIntentMessage,
 } from "./src/utils/intents";
 export { createWalletSigner } from "./src/utils/signer";
 
@@ -76,6 +88,8 @@ export {
   encodeSparkHumanReadableTokenIdentifier,
   getHumanReadableTokenIdentifier,
   getTokenIdentifier,
+  getTokenIdentifierHashes,
+  getTokenIdentifierWithHashes,
   type HumanReadableTokenIdentifier,
   SPARK_TOKEN_CREATION_ENTITY_PUBLIC_KEY,
   type SparkHumanReadableTokenIdentifier,

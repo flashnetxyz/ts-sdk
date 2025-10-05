@@ -237,7 +237,6 @@ export interface GetHostResponse {
 
 export interface WithdrawHostFeesRequest {
   lpIdentityPublicKey: string;
-  assetAAmount?: string;
   assetBAmount?: string;
   nonce: string;
   signature: string;
@@ -248,13 +247,8 @@ export interface WithdrawHostFeesResponse {
   accepted: boolean;
   assetAWithdrawn?: string;
   assetBWithdrawn?: string;
-  transferIds?: WithdrawalTransferIds;
+  transferId?: string;
   error?: string;
-}
-
-export interface WithdrawalTransferIds {
-  assetA?: string;
-  assetB?: string;
 }
 
 // Host fee inquiry types
@@ -286,7 +280,7 @@ export interface WithdrawIntegratorFeesResponse {
   accepted: boolean;
   assetAWithdrawn?: string;
   assetBWithdrawn?: string;
-  transferIds?: WithdrawalTransferIds;
+  transferId?: string;
   error?: string;
 }
 
@@ -307,8 +301,9 @@ export interface CreateSingleSidedPoolRequest {
   assetAAddress: string;
   assetBAddress: string;
   assetAInitialReserve: string;
-  graduationThresholdPct: number;
-  targetBRaisedAtGraduation: string;
+  virtualReserveA: string;
+  virtualReserveB: string;
+  threshold: string;
   lpFeeRateBps: string;
   totalHostFeeRateBps: string;
   hostNamespace?: string;
@@ -343,6 +338,8 @@ export interface AddLiquidityRequest {
   assetBSparkTransferId: string;
   assetAAmountToAdd: string;
   assetBAmountToAdd: string;
+  assetAMinAmountIn: string;
+  assetBMinAmountIn: string;
   nonce: string;
   signature: string;
 }
@@ -529,7 +526,6 @@ export interface HopResult {
   priceImpactPct: string;
 }
 
-// Pool listing types
 export interface AmmPool {
   lpPublicKey: string;
   hostName?: string;
@@ -539,6 +535,9 @@ export interface AmmPool {
   assetBAddress: string;
   assetAReserve?: string;
   assetBReserve?: string;
+  virtualReserveA?: string;
+  virtualReserveB?: string;
+  thresholdPct?: number;
   currentPriceAInB?: string;
   tvlAssetB?: string;
   volume24hAssetB?: string;
@@ -546,7 +545,9 @@ export interface AmmPool {
   curveType?: string;
   initialReserveA?: string;
   bondingProgressPercent?: string;
+  graduationThresholdAmount?: string;
   createdAt: string;
+  updatedAt: string;
 }
 
 export interface ListPoolsQuery {
@@ -559,7 +560,7 @@ export interface ListPoolsQuery {
   sort?: PoolSortOrder;
   limit?: number;
   offset?: number;
-  /** ISO8601 timestamp to filter pools updated after the given date */
+  /** RFC3339 timestamp to filter pools updated after the given date */
   afterUpdatedAt?: string;
 }
 
@@ -585,6 +586,9 @@ export interface PoolDetailsResponse {
   assetBAddress: string;
   assetAReserve: string;
   assetBReserve: string;
+  virtualReserveA?: string;
+  virtualReserveB?: string;
+  thresholdPct?: number;
   currentPriceAInB?: string;
   tvlAssetB: string;
   volume24hAssetB: string;
@@ -592,6 +596,7 @@ export interface PoolDetailsResponse {
   curveType: string;
   initialReserveA?: string;
   bondingProgressPercent?: string;
+  graduationThresholdAmount?: string;
   createdAt: string;
   status: string;
 }
@@ -730,6 +735,41 @@ export interface SettlementPingResponse {
   gatewayTimestamp: string;
 }
 
+// ===== Config Endpoints Types =====
+
+export type FeatureName =
+  | "master_kill_switch"
+  | "allow_withdraw_fees"
+  | "allow_pool_creation"
+  | "allow_swaps"
+  | "allow_add_liquidity"
+  | "allow_route_swaps"
+  | "allow_withdraw_liquidity";
+
+export interface FeatureStatusItem {
+  feature_name: FeatureName;
+  enabled: boolean;
+  reason: string | null;
+}
+
+export type FeatureStatusResponse = FeatureStatusItem[];
+
+export interface MinAmountItem {
+  asset_identifier: string;
+  min_amount: string | number;
+  enabled: boolean;
+}
+
+export type MinAmountsResponse = MinAmountItem[];
+
+export interface AllowedAssetItem {
+  asset_identifier: string;
+  asset_name: string | null;
+  enabled: boolean;
+}
+
+export type AllowedAssetsResponse = AllowedAssetItem[];
+
 // Define Network enum locally to avoid spark-sdk dependency
 export enum Network {
   MAINNET = 0,
@@ -803,11 +843,12 @@ export interface Token {
 // Intent message types (preserved custom types)
 export interface ValidateAmmInitializeSingleSidedPoolData {
   poolOwnerPublicKey: string;
-  assetATokenPublicKey: string;
-  assetBTokenPublicKey: string;
+  assetAAddress: string;
+  assetBAddress: string;
   assetAInitialReserve: string;
-  graduationThresholdPct: string;
-  targetBRaisedAtGraduation: string;
+  virtualReserveA: string;
+  virtualReserveB: string;
+  threshold: string; // Amount of asset A that must be sold to graduate to constant product
   totalHostFeeRateBps: string;
   lpFeeRateBps: string;
   nonce: string;
@@ -815,8 +856,8 @@ export interface ValidateAmmInitializeSingleSidedPoolData {
 
 export interface ValidateAmmInitializeConstantProductPoolData {
   poolOwnerPublicKey: string;
-  assetATokenPublicKey: string;
-  assetBTokenPublicKey: string;
+  assetAAddress: string;
+  assetBAddress: string;
   totalHostFeeRateBps: string;
   lpFeeRateBps: string;
   nonce: string;
@@ -833,8 +874,8 @@ export interface ValidateAmmSwapData {
   userPublicKey: string;
   lpIdentityPublicKey: string;
   assetInSparkTransferId: string;
-  assetInTokenPublicKey: string;
-  assetOutTokenPublicKey: string;
+  assetInAddress: string;
+  assetOutAddress: string;
   amountIn: string;
   minAmountOut: string;
   maxSlippageBps: string;
@@ -849,6 +890,8 @@ export interface AmmAddLiquiditySettlementRequest {
   assetBSparkTransferId: string;
   assetAAmount: string;
   assetBAmount: string;
+  assetAMinAmountIn: string;
+  assetBMinAmountIn: string;
   nonce: string;
 }
 
@@ -893,7 +936,6 @@ export interface RegisterHostIntentData {
 export interface ValidateAmmWithdrawHostFeesData {
   hostPublicKey: string;
   lpIdentityPublicKey: string;
-  assetAAmount?: string;
   assetBAmount?: string;
   nonce: string;
 }
@@ -901,8 +943,8 @@ export interface ValidateAmmWithdrawHostFeesData {
 // Route swap validation types
 export interface RouteHopValidation {
   lpIdentityPublicKey: string;
-  inputAssetPublicKey: string;
-  outputAssetPublicKey: string;
+  inputAssetAddress: string;
+  outputAssetAddress: string;
   hopIntegratorFeeRateBps?: string | null;
 }
 
@@ -917,12 +959,29 @@ export interface ValidateRouteSwapData {
   defaultIntegratorFeeRateBps?: string;
 }
 
+// Backward compatibility aliases (deprecated)
+/** @deprecated Use assetAAddress instead */
+export type AssetATokenPublicKey = string;
+/** @deprecated Use assetBAddress instead */
+export type AssetBTokenPublicKey = string;
+/** @deprecated Use assetInAddress instead */
+export type AssetInTokenPublicKey = string;
+/** @deprecated Use assetOutAddress instead */
+export type AssetOutTokenPublicKey = string;
+
 // Integrator fees validation types
 export interface ValidateAmmWithdrawIntegratorFeesData {
   integratorPublicKey: string;
   lpIdentityPublicKey: string;
-  assetAAmount?: string;
   assetBAmount?: string;
+  nonce: string;
+}
+
+// Clawback validation data
+export interface ValidateClawbackData {
+  senderPublicKey: string;
+  sparkTransferId: string;
+  lpIdentityPublicKey: string;
   nonce: string;
 }
 
@@ -933,9 +992,7 @@ export interface GetHostFeesRequest {
 
 export interface HostPoolFees {
   poolId: string;
-  assetAPubkey: string;
   assetBPubkey: string;
-  assetAFees: string;
   assetBFees: string;
 }
 
@@ -943,7 +1000,6 @@ export interface GetHostFeesResponse {
   hostNamespace: string;
   feeRecipientType: string;
   pools: HostPoolFees[];
-  totalAssetAFees?: string;
   totalAssetBFees?: string;
 }
 
@@ -951,16 +1007,13 @@ export interface GetHostFeesResponse {
 export interface IntegratorPoolFees {
   poolId: string;
   hostNamespace?: string;
-  assetAPubkey: string;
   assetBPubkey: string;
-  assetAFees: string;
   assetBFees: string;
 }
 
 export interface GetIntegratorFeesResponse {
   integratorPublicKey: string;
   pools: IntegratorPoolFees[];
-  totalAssetAFees?: string;
   totalAssetBFees?: string;
 }
 
@@ -971,12 +1024,417 @@ export interface GetPoolIntegratorFeesRequest {
 export interface GetPoolIntegratorFeesResponse {
   poolId: string;
   integratorPublicKey: string;
-  assetAFees: string;
   assetBFees: string;
+}
+
+export interface FeeWithdrawalRecord {
+  lpPubkey: string;
+  asset: string;
+  amount: string;
+  transferId: string;
+  timestamp: string;
+}
+
+export interface FeeWithdrawalHistoryResponse {
+  withdrawals: FeeWithdrawalRecord[];
+  totalCount: number;
+  page: number;
+  pageSize: number;
+  totalWithdrawn?: string;
+}
+
+export interface FeeWithdrawalHistoryQuery {
+  page?: number;
+  pageSize?: number;
+  lpPubkey?: string;
+  assetB?: string;
+  fromDate?: string;
+  toDate?: string;
+  sortOrder?: "desc" | "asc";
 }
 
 export interface TransferAssetRecipient {
   receiverSparkAddress: string;
   assetAddress: string;
   amount: string;
+}
+
+// ===== Escrow Types =====
+
+// --- Escrow Intent Validation Data ---
+
+/**
+ * Data for validating an escrow claim intent.
+ */
+export interface ValidateEscrowClaimData {
+  escrowId: string;
+  recipientPublicKey: string;
+  nonce: string;
+}
+
+/**
+ * Data for validating an escrow fund intent.
+ */
+export interface ValidateEscrowFundData {
+  escrowId: string;
+  creatorPublicKey: string;
+  sparkTransferId: string;
+  nonce: string;
+}
+
+/**
+ * A recipient in an escrow contract for intent validation.
+ */
+export interface EscrowRecipient {
+  recipientId: string;
+  amount: string;
+  hasClaimed: boolean;
+  claimedAt?: string;
+}
+
+/**
+ * Time comparison types for time-based conditions.
+ */
+export enum TimeComparison {
+  TIME_COMPARISON_UNSPECIFIED = 0,
+  TIME_COMPARISON_AFTER = 1,
+  TIME_COMPARISON_BEFORE = 2,
+  TIME_COMPARISON_BETWEEN = 3,
+}
+
+/**
+ * Time-based condition data for intent validation.
+ */
+export interface TimeConditionData {
+  comparison: TimeComparison;
+  timestampStart: string;
+  timestampEnd?: string;
+}
+
+/**
+ * AMM phase values for AMM state conditions.
+ */
+export enum AmmPhase {
+  AMM_PHASE_UNSPECIFIED = 0,
+  AMM_PHASE_SINGLE_SIDED = 1,
+  AMM_PHASE_DOUBLE_SIDED = 2,
+  AMM_PHASE_GRADUATED = 3,
+}
+
+/**
+ * AMM state check types for intent validation.
+ */
+export enum AmmStateCheckType {
+  PHASE = 0,
+  MINIMUM_RESERVE = 1,
+  EXISTS = 2,
+}
+
+/**
+ * AMM state condition data for intent validation.
+ */
+export interface AmmStateConditionData {
+  ammId: string;
+  checkType: AmmStateCheckType;
+  requiredPhase?: AmmPhase;
+  minimumReserveAmount?: string;
+  mustExist?: boolean;
+}
+
+/**
+ * Logical condition data for AND/OR operations for intent validation.
+ */
+export interface LogicalConditionData {
+  conditions: EscrowCondition[];
+}
+
+/**
+ * Types of conditions for escrow for intent validation.
+ */
+export enum ConditionType {
+  TIME = 0,
+  AMM_STATE = 1,
+  LOGICAL = 2,
+}
+
+/**
+ * Generic escrow condition for intent validation.
+ */
+export interface EscrowCondition {
+  conditionType: ConditionType;
+  timeCondition?: TimeConditionData;
+  ammStateCondition?: AmmStateConditionData;
+  logicalCondition?: LogicalConditionData;
+}
+
+/**
+ * Data for validating an escrow creation intent.
+ */
+export interface ValidateEscrowCreateData {
+  creatorPublicKey: string;
+  assetId: string;
+  assetAmount: string;
+  recipients: EscrowRecipient[];
+  claimConditions: EscrowCondition[];
+  abandonHost?: string;
+  abandonConditions?: EscrowCondition[];
+  nonce: string;
+}
+
+// --- Escrow API Types ---
+
+/**
+ * Recipient definition for escrow creation API request.
+ */
+export interface EscrowRecipientInput {
+  id: string;
+  amount: string;
+}
+
+/**
+ * Flexible condition definition for API requests.
+ */
+export type Condition = LogicCondition | TimeCondition | AmmStateCondition;
+
+interface LogicCondition {
+  conditionType: "and" | "or";
+  data: {
+    conditions: Condition[];
+  };
+}
+
+interface TimeCondition {
+  conditionType: "time";
+  data: {
+    comparison: "after" | "before";
+    timestamp: string;
+  };
+}
+
+interface AmmStateCondition {
+  conditionType: "amm_state";
+  data: {
+    ammId: string;
+    stateCheck:
+      | {
+          type: "minimum_reserve";
+          asset: "A" | "B";
+          min: string;
+        }
+      | {
+          type: "phase";
+          phase: "double_sided";
+        };
+  };
+}
+
+/**
+ * Request body for creating a new escrow contract.
+ */
+export interface CreateEscrowRequest {
+  creatorPublicKey: string;
+  assetId: string;
+  assetAmount: string;
+  recipients: EscrowRecipientInput[];
+  claimConditions: Condition[];
+  abandonHost?: string;
+  abandonConditions?: Condition[];
+  nonce: string;
+  signature: string;
+}
+
+/**
+ * Response after successfully initiating escrow creation.
+ */
+export interface CreateEscrowResponse {
+  requestId: string;
+  escrowId: string;
+  depositAddress: string;
+  message: string;
+}
+
+/**
+ * Request body for funding an escrow contract.
+ */
+export interface FundEscrowRequest {
+  escrowId: string;
+  sparkTransferId: string;
+  nonce: string;
+  signature: string;
+}
+
+// ===== CLAWBACK TYPES =====
+
+export interface ClawbackRequest {
+  senderPublicKey: string;
+  sparkTransferId: string;
+  lpIdentityPublicKey: string;
+  nonce: string;
+  signature: string;
+}
+
+/**
+ * Response after successfully funding an escrow contract.
+ */
+export interface FundEscrowResponse {
+  requestId: string;
+  escrowId: string;
+  status: string;
+  message: string;
+}
+
+/**
+ * Request body for claiming funds from an escrow contract.
+ */
+export interface ClaimEscrowRequest {
+  escrowId: string;
+  nonce: string;
+  signature: string;
+}
+
+/**
+ * Response after successfully initiating an escrow claim.
+ */
+export interface ClaimEscrowResponse {
+  requestId: string;
+  escrowId: string;
+  recipientId: string;
+  claimedAmount: string;
+  outboundTransferId: string;
+  message: string;
+}
+
+/**
+ * Status of an escrow contract.
+ */
+export type EscrowStatus =
+  | "PENDING_FUNDING"
+  | "ACTIVE"
+  | "COMPLETED"
+  | "ABANDONED";
+
+/**
+ * Asset held in escrow.
+ */
+export interface Asset {
+  id: string;
+  amount: string;
+}
+
+/**
+ * Recipient state within an active escrow.
+ */
+export interface EscrowRecipientState {
+  id: string;
+  amount: string;
+  hasClaimed: boolean;
+  claimedAt?: string;
+}
+
+/**
+ * Complete state of an escrow contract.
+ */
+export interface EscrowState {
+  id: string;
+  asset: Asset;
+  recipients: EscrowRecipientState[];
+  status: EscrowStatus;
+  claimConditions: Condition[];
+  abandonHost?: string;
+  abandonConditions?: Condition[];
+  createdAt: string;
+  updatedAt: string;
+  totalClaimed: string;
+}
+
+export interface ClawbackResponse {
+  requestId: string;
+  accepted: boolean;
+  internalRequestId: string;
+  sparkStatusTrackingId: string;
+  error?: string;
+}
+
+// ===== VALIDATION UTILITIES =====
+
+/**
+ * Validation result interface for client-side validations
+ */
+export interface ValidationResult {
+  isValid: boolean;
+  error?: string;
+}
+
+/**
+ * Validates that a single-sided pool threshold is within acceptable range (20%-90% of initial reserve)
+ * @param threshold - Amount of asset A that must be sold to graduate to constant product
+ * @param assetAInitialReserve - Initial reserve amount for asset A
+ * @returns Validation result with error message if invalid
+ */
+export function validateSingleSidedPoolThreshold(
+  threshold: string,
+  assetAInitialReserve: string
+): ValidationResult {
+  try {
+    const thresholdNum = BigInt(threshold);
+    const initialReserveNum = BigInt(assetAInitialReserve);
+
+    if (thresholdNum <= 0n || initialReserveNum <= 0n) {
+      return {
+        isValid: false,
+        error: "Threshold and initial reserve must be positive values",
+      };
+    }
+
+    // Calculate 20% and 90% thresholds
+    const minThreshold = (initialReserveNum * BigInt(20)) / BigInt(100); // 20%
+    const maxThreshold = (initialReserveNum * BigInt(90)) / BigInt(100); // 90%
+
+    if (thresholdNum < minThreshold) {
+      return {
+        isValid: false,
+        error: `Threshold must be at least 20% of initial reserve (minimum: ${minThreshold.toString()})`,
+      };
+    }
+
+    if (thresholdNum > maxThreshold) {
+      return {
+        isValid: false,
+        error: `Threshold must not exceed 90% of initial reserve (maximum: ${maxThreshold.toString()})`,
+      };
+    }
+
+    return { isValid: true };
+  } catch (_error) {
+    return {
+      isValid: false,
+      error: "Invalid number format for threshold or initial reserve",
+    };
+  }
+}
+
+/**
+ * Calculates the percentage that a threshold represents of the initial reserve
+ * @param threshold - Amount of asset A that must be sold
+ * @param assetAInitialReserve - Initial reserve amount for asset A
+ * @returns Percentage as a number (e.g., 25.5 for 25.5%)
+ */
+export function calculateThresholdPercentage(
+  threshold: string,
+  assetAInitialReserve: string
+): number {
+  try {
+    const thresholdNum = BigInt(threshold);
+    const initialReserveNum = BigInt(assetAInitialReserve);
+
+    if (initialReserveNum === 0n) {
+      return 0;
+    }
+
+    // Calculate percentage with precision
+    const percentage = (thresholdNum * BigInt(10000)) / initialReserveNum;
+    return Number(percentage) / 100; // Convert back to percentage
+  } catch (_error) {
+    return 0;
+  }
 }

@@ -94,8 +94,22 @@ export class TypedAmmApi {
     request: Types.GetHostFeesRequest
   ): Promise<Types.GetHostFeesResponse> {
     return this.client.ammPost<Types.GetHostFeesResponse>(
-      "/v1/hosts/host-fees",
+      "/v1/hosts/fees",
       request
+    );
+  }
+
+  /**
+   * Get host fee withdrawal history
+   * @GET /v1/hosts/fee-withdrawal-history
+   * @requires Bearer token
+   */
+  async getHostFeeWithdrawalHistory(
+    query?: Types.FeeWithdrawalHistoryQuery
+  ): Promise<Types.FeeWithdrawalHistoryResponse> {
+    return this.client.ammGet<Types.FeeWithdrawalHistoryResponse>(
+      "/v1/hosts/fee-withdrawal-history",
+      { params: query as any }
     );
   }
 
@@ -343,27 +357,40 @@ export class TypedAmmApi {
 
   /**
    * Get integrator fees across all pools
-   * @GET /v1/hosts/integrator-fees
+   * @GET /v1/integrators/fees
    * @requires Bearer token
    */
   async getIntegratorFees(): Promise<Types.GetIntegratorFeesResponse> {
     return this.client.ammGet<Types.GetIntegratorFeesResponse>(
-      "/v1/hosts/integrator-fees"
+      "/v1/integrators/fees"
+    );
+  }
+
+  /**
+   * Get integrator fee withdrawal history
+   * @GET /v1/integrators/fee-withdrawal-history
+   * @requires Bearer token
+   */
+  async getIntegratorFeeWithdrawalHistory(
+    query?: Types.FeeWithdrawalHistoryQuery
+  ): Promise<Types.FeeWithdrawalHistoryResponse> {
+    return this.client.ammGet<Types.FeeWithdrawalHistoryResponse>(
+      "/v1/integrators/fee-withdrawal-history",
+      { params: query as any }
     );
   }
 
   /**
    * Get pool integrator fees
-  /**
-   * Get pool integrator fees
-   * @GET /v1/integrators/pool-fees/{poolId}
+   * @POST /v1/integrators/pool-fees
    * @requires Bearer token
    */
   async getPoolIntegratorFees(
-    poolId: string
+    request: Types.GetPoolIntegratorFeesRequest
   ): Promise<Types.GetPoolIntegratorFeesResponse> {
-    return this.client.ammGet<Types.GetPoolIntegratorFeesResponse>(
-      `/v1/integrators/pool-fees/${poolId}`
+    return this.client.ammPost<Types.GetPoolIntegratorFeesResponse>(
+      "/v1/integrators/pool-fees",
+      request
     );
   }
 
@@ -381,6 +408,58 @@ export class TypedAmmApi {
     );
   }
 
+  // ===== Escrow Endpoints =====
+
+  /**
+   * Create a new escrow contract
+   * @POST /v1/escrows/create
+   * @requires Bearer token
+   */
+  async createEscrow(
+    request: Types.CreateEscrowRequest
+  ): Promise<Types.CreateEscrowResponse> {
+    return this.client.ammPost<Types.CreateEscrowResponse>(
+      "/v1/escrows/create",
+      request
+    );
+  }
+
+  /**
+   * Fund an existing escrow contract
+   * @POST /v1/escrows/fund
+   * @requires Bearer token
+   */
+  async fundEscrow(
+    request: Types.FundEscrowRequest
+  ): Promise<Types.FundEscrowResponse> {
+    return this.client.ammPost<Types.FundEscrowResponse>(
+      "/v1/escrows/fund",
+      request
+    );
+  }
+
+  /**
+   * Claim funds from an escrow contract
+   * @POST /v1/escrows/claim
+   * @requires Bearer token
+   */
+  async claimEscrow(
+    request: Types.ClaimEscrowRequest
+  ): Promise<Types.ClaimEscrowResponse> {
+    return this.client.ammPost<Types.ClaimEscrowResponse>(
+      "/v1/escrows/claim",
+      request
+    );
+  }
+
+  /**
+   * Get the state of an escrow contract
+   * @GET /v1/escrows/{escrowId}
+   */
+  async getEscrow(escrowId: string): Promise<Types.EscrowState> {
+    return this.client.ammGet<Types.EscrowState>(`/v1/escrows/${escrowId}`);
+  }
+
   // ===== Status Endpoints =====
 
   /**
@@ -389,6 +468,50 @@ export class TypedAmmApi {
    */
   async ping(): Promise<Types.SettlementPingResponse> {
     return this.client.ammGet<Types.SettlementPingResponse>("/v1/ping");
+  }
+
+  // ===== Config Endpoints =====
+
+  /**
+   * Get feature status flags
+   * @GET /v1/config/feature-status
+   */
+  async getFeatureStatus(): Promise<Types.FeatureStatusResponse> {
+    return this.client.ammGet<Types.FeatureStatusResponse>(
+      "/v1/config/feature-status"
+    );
+  }
+
+  /**
+   * Get min amount configuration per asset
+   * @GET /v1/config/min-amounts
+   */
+  async getMinAmounts(): Promise<Types.MinAmountsResponse> {
+    return this.client.ammGet<Types.MinAmountsResponse>(
+      "/v1/config/min-amounts"
+    );
+  }
+
+  /**
+   * Get allowed Asset B list for pool creation
+   * @GET /v1/config/allowed-assets
+   */
+  async getAllowedAssets(): Promise<Types.AllowedAssetsResponse> {
+    return this.client.ammGet<Types.AllowedAssetsResponse>(
+      "/v1/config/allowed-assets"
+    );
+  }
+
+  // ===== Clawback Endpoint =====
+  /**
+   * Clawback stuck funds sent to an LP wallet
+   * @POST /v1/clawback
+   * @requires Bearer token
+   */
+  async clawback(
+    request: Types.ClawbackRequest
+  ): Promise<Types.ClawbackResponse> {
+    return this.client.ammPost<Types.ClawbackResponse>("/v1/clawback", request);
   }
 }
 

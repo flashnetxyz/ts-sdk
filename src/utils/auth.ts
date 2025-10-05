@@ -8,6 +8,7 @@ import type {
   VerifyRequestData,
   VerifyResponseData,
 } from "../types";
+import { getHexFromUint8Array, getUint8ArrayFromHex } from "./hex";
 
 export class AuthManager {
   private apiClient: ApiClient;
@@ -43,8 +44,8 @@ export class AuthManager {
   private async signMessage(message: string): Promise<string> {
     try {
       const messageBytes = message.startsWith("0x")
-        ? Buffer.from(message.slice(2), "hex")
-        : Buffer.from(message, "hex");
+        ? getUint8ArrayFromHex(message.slice(2))
+        : getUint8ArrayFromHex(message);
 
       const messageHash = new Uint8Array(
         await crypto.subtle.digest("SHA-256", messageBytes)
@@ -67,7 +68,7 @@ export class AuthManager {
         throw new Error("No wallet or signer available");
       }
 
-      return Buffer.from(signature).toString("hex");
+      return getHexFromUint8Array(signature);
     } catch (error) {
       throw new Error(
         `Failed to sign message: ${
