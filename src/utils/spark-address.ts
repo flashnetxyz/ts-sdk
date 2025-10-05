@@ -1,7 +1,6 @@
-import { secp256k1 } from "@noble/curves/secp256k1.js";
-import { bytesToHex, hexToBytes } from "@noble/hashes/utils.js";
-import { bech32m } from "@scure/base";
+import { bech32m } from "bech32";
 import type { NetworkType, SparkNetworkType } from "../types";
+import { getHexFromUint8Array, getUint8ArrayFromHex } from "./hex";
 
 // Simple interface just storing the public key bytes
 interface SparkAddress {
@@ -23,6 +22,9 @@ const SparkPrefixToNetwork: Record<string, SparkNetworkType> =
       network as SparkNetworkType,
     ])
   );
+
+const SECP_256_K_1_PRIME_MOD =
+  0xfffffffffffffffffffffffffffffffffffffffffffffffffffffffefffffc2fn;
 
 export type SparkAddressFormat =
   `${(typeof SparkAddressNetworkPrefix)[keyof typeof SparkAddressNetworkPrefix]}1${string}`;
@@ -156,7 +158,7 @@ export function encodeSparkAddressNew(
   isValidPublicKey(payload.identityPublicKey);
 
   // Convert hex public key to bytes
-  const publicKeyBytes = hexToBytes(payload.identityPublicKey);
+  const publicKeyBytes = getUint8ArrayFromHex(payload.identityPublicKey);
 
   // Use proto-style encoding to match the original implementation
   const protoEncoded = encodeProto(publicKeyBytes);
@@ -200,10 +202,10 @@ export function decodeSparkAddressNew(
   const protoBytes = bech32m.fromWords(decoded.words);
 
   // Decode the proto format to get the SparkAddress
-  const sparkAddressData = decodeProto(protoBytes);
+  const sparkAddressData = decodeProto(new Uint8Array(protoBytes));
 
   // Convert the public key bytes back to hex
-  const publicKey = bytesToHex(sparkAddressData.identityPublicKey);
+  const publicKey = getHexFromUint8Array(sparkAddressData.identityPublicKey);
 
   // Validate the extracted public key
   isValidPublicKey(publicKey);
@@ -263,8 +265,8 @@ export function isValidSparkAddressNew(
 
     // Try to decode the payload and validate the pubkey
     const protoBytes = bech32m.fromWords(decoded.words);
-    const sparkAddressData = decodeProto(protoBytes);
-    const publicKey = bytesToHex(sparkAddressData.identityPublicKey);
+    const sparkAddressData = decodeProto(new Uint8Array(protoBytes));
+    const publicKey = getHexFromUint8Array(sparkAddressData.identityPublicKey);
     isValidPublicKey(publicKey); // Throws on invalid key
 
     return true; // All checks passed
@@ -306,8 +308,8 @@ export function convertSparkAddressToSparkNetwork(
     // Extract the public key from the address
     const decoded = bech32m.decode(sparkAddress as SparkAddressFormat, 200);
     const protoBytes = bech32m.fromWords(decoded.words);
-    const sparkAddressData = decodeProto(protoBytes);
-    const publicKey = bytesToHex(sparkAddressData.identityPublicKey);
+    const sparkAddressData = decodeProto(new Uint8Array(protoBytes));
+    const publicKey = getHexFromUint8Array(sparkAddressData.identityPublicKey);
 
     // Create a new address for the target network
     return encodeSparkAddressNew({
@@ -333,7 +335,7 @@ export function encodeSparkAddress(
   isValidPublicKey(payload.identityPublicKey);
 
   // Convert hex public key to bytes
-  const publicKeyBytes = hexToBytes(payload.identityPublicKey);
+  const publicKeyBytes = getUint8ArrayFromHex(payload.identityPublicKey);
 
   // Use proto-style encoding to match the original implementation
   const protoEncoded = encodeProto(publicKeyBytes);
@@ -379,10 +381,10 @@ export function decodeSparkAddress(
   const protoBytes = bech32m.fromWords(decoded.words);
 
   // Decode the proto format to get the SparkAddress
-  const sparkAddressData = decodeProto(protoBytes);
+  const sparkAddressData = decodeProto(new Uint8Array(protoBytes));
 
   // Convert the public key bytes back to hex
-  const publicKey = bytesToHex(sparkAddressData.identityPublicKey);
+  const publicKey = getHexFromUint8Array(sparkAddressData.identityPublicKey);
 
   // Validate the extracted public key
   isValidPublicKey(publicKey);
@@ -442,8 +444,8 @@ export function isValidSparkAddress(
 
     // Try to decode the payload and validate the pubkey
     const protoBytes = bech32m.fromWords(decoded.words);
-    const sparkAddressData = decodeProto(protoBytes);
-    const publicKey = bytesToHex(sparkAddressData.identityPublicKey);
+    const sparkAddressData = decodeProto(new Uint8Array(protoBytes));
+    const publicKey = getHexFromUint8Array(sparkAddressData.identityPublicKey);
     isValidPublicKey(publicKey); // Throws on invalid key
 
     return true; // All checks passed
@@ -490,8 +492,8 @@ export function convertSparkAddressToNetwork(
     // Extract the public key from the address
     const decoded = bech32m.decode(sparkAddress as SparkAddressFormat, 200);
     const protoBytes = bech32m.fromWords(decoded.words);
-    const sparkAddressData = decodeProto(protoBytes);
-    const publicKey = bytesToHex(sparkAddressData.identityPublicKey);
+    const sparkAddressData = decodeProto(new Uint8Array(protoBytes));
+    const publicKey = getHexFromUint8Array(sparkAddressData.identityPublicKey);
 
     // Create a new address for the target network
     return encodeSparkAddress({
@@ -525,12 +527,11 @@ export function isValidPublicKey(publicKey: string) {
   if (!looksLikePublicKey(publicKey)) {
     throw new Error("Invalid public key format/length.");
   }
-  try {
-    const point = secp256k1.Point.fromHex(publicKey);
-    point.assertValidity();
-  } catch (error: unknown) {
-    const errorMessage =
-      error instanceof Error ? error.message : "Unknown error";
-    throw new Error(`Invalid public key point: ${errorMessage}`);
+
+  const xComponent = BigInt("0x" + publicKey.substring(2));
+  if (xComponent === 0n || xComponent >= SECP_256_K_1_PRIME_MOD) {
+    throw new Error(
+      "Invalid public key point: x coordinate outside curve modulus"
+    );
   }
 }

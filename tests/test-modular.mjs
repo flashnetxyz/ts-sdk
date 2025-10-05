@@ -12,8 +12,7 @@ import { ApiClient } from "@flashnet/sdk/api";
 import { AuthManager } from "@flashnet/sdk/auth";
 import { getNetworkConfig } from "@flashnet/sdk/config";
 import { encodeSparkAddress, generateNonce } from "@flashnet/sdk/utils";
-import { secp256k1 } from "@noble/curves/secp256k1";
-import { sha256 } from "@noble/hashes/sha2";
+import sha256 from "fast-sha256";
 
 console.log("Testing modular imports...\n");
 
@@ -88,8 +87,8 @@ if (
     return buffer;
   }
 
-  const issuerPrivateKey = secp256k1.utils.randomSecretKey();
-  const issuerPublicKey = secp256k1.getPublicKey(issuerPrivateKey);
+  const issuerPublicKey = Buffer.from(
+    '031111111111111111111111111111111111111111111111111111111111111111', 'hex');
 
   const start = Date.now();
 
