@@ -1,5 +1,5 @@
-import sha256 from "fast-sha256";
 import { bech32m } from "bech32";
+import sha256 from "fast-sha256";
 import type { NetworkType, SparkNetworkType } from "../types";
 import { getHexFromUint8Array, getUint8ArrayFromHex } from "./hex";
 

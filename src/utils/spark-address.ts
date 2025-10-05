@@ -528,7 +528,7 @@ export function isValidPublicKey(publicKey: string) {
     throw new Error("Invalid public key format/length.");
   }
 
-  const xComponent = BigInt("0x" + publicKey.substring(2));
+  const xComponent = BigInt(`0x${publicKey.substring(2)}`);
   if (xComponent === 0n || xComponent >= SECP_256_K_1_PRIME_MOD) {
     throw new Error(
       "Invalid public key point: x coordinate outside curve modulus"
