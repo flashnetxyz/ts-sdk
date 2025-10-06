@@ -989,7 +989,16 @@ export class FlashnetClient {
   ): Promise<SimulateSwapResponse> {
     await this.ensureInitialized();
     await this.ensurePingOk();
-    return this.typedApi.simulateSwap(params);
+
+    // Clip decimals from integratorBps if it's a number
+    const processedParams = {
+      ...params,
+      ...(params.integratorBps !== undefined && {
+        integratorBps: Math.floor(params.integratorBps),
+      }),
+    };
+
+    return this.typedApi.simulateSwap(processedParams);
   }
 
   /**
