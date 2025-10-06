@@ -1537,10 +1537,11 @@ export class FlashnetClient {
     await this.ensureAmmOperationAllowed("allow_withdraw_fees");
 
     const nonce = generateNonce();
+    const assetBAmount = params.assetBAmount ?? "0";
     const intentMessage = generateWithdrawHostFeesIntentMessage({
       hostPublicKey: this.publicKey,
       lpIdentityPublicKey: params.lpIdentityPublicKey,
-      assetBAmount: params.assetBAmount,
+      assetBAmount,
       nonce,
     });
 
@@ -1554,7 +1555,7 @@ export class FlashnetClient {
 
     const request: WithdrawHostFeesRequest = {
       lpIdentityPublicKey: params.lpIdentityPublicKey,
-      assetBAmount: params.assetBAmount,
+      assetBAmount,
       nonce,
       signature: getHexFromUint8Array(signature),
     };
@@ -1618,10 +1619,11 @@ export class FlashnetClient {
     await this.ensureAmmOperationAllowed("allow_withdraw_fees");
 
     const nonce = generateNonce();
+    const assetBAmount = params.assetBAmount ?? "0";
     const intentMessage = generateWithdrawIntegratorFeesIntentMessage({
       integratorPublicKey: this.publicKey,
       lpIdentityPublicKey: params.lpIdentityPublicKey,
-      assetBAmount: params.assetBAmount,
+      assetBAmount,
       nonce,
     });
 
@@ -1636,7 +1638,7 @@ export class FlashnetClient {
     const request: WithdrawIntegratorFeesRequest = {
       integratorPublicKey: this.publicKey,
       lpIdentityPublicKey: params.lpIdentityPublicKey,
-      assetBAmount: params.assetBAmount,
+      assetBAmount,
       nonce,
       signature: getHexFromUint8Array(signature),
     };
