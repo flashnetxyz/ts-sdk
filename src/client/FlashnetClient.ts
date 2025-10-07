@@ -13,6 +13,8 @@ import {
   type AddLiquidityResponse,
   type AllLpPositionsResponse,
   type AllowedAssetsResponse,
+  type CheckClawbackEligibilityRequest,
+  type CheckClawbackEligibilityResponse,
   type ClaimEscrowRequest,
   type ClaimEscrowResponse,
   type ClawbackRequest,
@@ -1944,6 +1946,34 @@ export class FlashnetClient {
     }
 
     return response;
+  }
+
+  /**
+   * Check if a transfer is eligible for clawback
+   *
+   * This is a read-only check that verifies:
+   * - The transfer exists and is valid
+   * - The authenticated user is the original sender
+   * - The transfer is not already reserved or spent
+   * - The transfer has not been claimed/settled
+   * - The transfer is less than 23 hours old
+   *
+   * Note: This does NOT initiate a clawback, only checks eligibility.
+   *
+   * @param sparkTransferId - The Spark transfer ID to check
+   * @returns Response indicating if the transfer is eligible and any error message
+   */
+  async checkClawbackEligibility(params: {
+    sparkTransferId: string;
+  }): Promise<CheckClawbackEligibilityResponse> {
+    await this.ensureInitialized();
+    await this.ensurePingOk();
+
+    const request: CheckClawbackEligibilityRequest = {
+      sparkTransferId: params.sparkTransferId,
+    };
+
+    return this.typedApi.checkClawbackEligibility(request);
   }
 
   // ===== Token Address Operations =====

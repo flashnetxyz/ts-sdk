@@ -513,6 +513,20 @@ export class TypedAmmApi {
   ): Promise<Types.ClawbackResponse> {
     return this.client.ammPost<Types.ClawbackResponse>("/v1/clawback", request);
   }
+
+  /**
+   * Check if a transfer is eligible for clawback
+   * @POST /v1/check_clawback_eligibility
+   * @requires Bearer token
+   */
+  async checkClawbackEligibility(
+    request: Types.CheckClawbackEligibilityRequest
+  ): Promise<Types.CheckClawbackEligibilityResponse> {
+    return this.client.ammPost<Types.CheckClawbackEligibilityResponse>(
+      "/v1/check_clawback_eligibility",
+      request
+    );
+  }
 }
 
 /**
