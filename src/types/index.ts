@@ -1273,6 +1273,15 @@ export interface ClawbackRequest {
   signature: string;
 }
 
+export interface CheckClawbackEligibilityRequest {
+  sparkTransferId: string;
+}
+
+export interface CheckClawbackEligibilityResponse {
+  accepted: boolean;
+  error?: string;
+}
+
 /**
  * Response after successfully funding an escrow contract.
  */
