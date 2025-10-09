@@ -13,6 +13,7 @@ import {
   type AddLiquidityResponse,
   type AllLpPositionsResponse,
   type AllowedAssetsResponse,
+  type MinAmountsResponse,
   type ClaimEscrowRequest,
   type ClaimEscrowResponse,
   type ClawbackRequest,
@@ -146,7 +147,7 @@ export interface FlashnetClientOptions {
 type Tuple<
   T,
   N extends number,
-  Acc extends readonly T[] = [],
+  Acc extends readonly T[] = []
 > = Acc["length"] extends N ? Acc : Tuple<T, N, [...Acc, T]>;
 
 /**
@@ -1994,6 +1995,65 @@ export class FlashnetClient {
   }
 
   // ===== Status =====
+
+  // ===== Config Inspection =====
+  /**
+   * Get raw feature status list (cached briefly)
+   */
+  async getFeatureStatus(): Promise<FeatureStatusResponse> {
+    await this.ensureInitialized();
+    const now = Date.now();
+    if (this.featureStatusCache && this.featureStatusCache.expiryMs > now) {
+      return this.featureStatusCache.data;
+    }
+    const data = await this.typedApi.getFeatureStatus();
+    this.featureStatusCache = {
+      data,
+      expiryMs: now + FlashnetClient.FEATURE_STATUS_TTL_MS,
+    };
+    return data;
+  }
+
+  /**
+   * Get feature flags as a map of feature name to boolean (cached briefly)
+   */
+  async getFeatureFlags(): Promise<Map<FeatureName, boolean>> {
+    await this.ensureInitialized();
+    return this.getFeatureStatusMap();
+  }
+
+  /**
+   * Get raw min-amounts configuration list from the backend
+   */
+  async getMinAmounts(): Promise<MinAmountsResponse> {
+    await this.ensureInitialized();
+    return this.typedApi.getMinAmounts();
+  }
+
+  /**
+   * Get enabled min-amounts as a map keyed by hex asset identifier
+   */
+  async getMinAmountsMap(): Promise<Map<string, bigint>> {
+    await this.ensureInitialized();
+    return this.getEnabledMinAmountsMap();
+  }
+
+  /**
+   * Get allowed Asset B list for pool creation (cached for 60s)
+   */
+  async getAllowedAssets(): Promise<AllowedAssetsResponse> {
+    await this.ensureInitialized();
+    const now = Date.now();
+    if (this.allowedAssetsCache && this.allowedAssetsCache.expiryMs > now) {
+      return this.allowedAssetsCache.data;
+    }
+    const allowed = await this.typedApi.getAllowedAssets();
+    this.allowedAssetsCache = {
+      data: allowed,
+      expiryMs: now + FlashnetClient.ALLOWED_ASSETS_TTL_MS,
+    };
+    return allowed;
+  }
 
   /**
    * Ping the settlement service
