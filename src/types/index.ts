@@ -186,6 +186,7 @@ export interface ChallengeRequest {
 
 export interface ChallengeResponse {
   challenge: string;
+  challengeString: string;
   requestId: string;
 }
 

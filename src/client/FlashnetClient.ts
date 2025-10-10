@@ -422,7 +422,7 @@ export class FlashnetClient {
     this.authManager = new AuthManager(
       this.apiClient,
       this.publicKey,
-      createWalletSigner(this._wallet)
+      this._wallet
     );
 
     // Authenticate

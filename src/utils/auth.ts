@@ -30,8 +30,8 @@ export class AuthManager {
     this.apiClient = apiClient;
     this.pubkey = pubkey;
 
-    // Check if it's a wallet (has getIdentityPublicKey method) or a signer
-    if ("getIdentityPublicKey" in signerOrWallet) {
+    // Check if it's a wallet (has signMessageWithIdentityKey method) or a custom signer
+    if ("signMessageWithIdentityKey" in signerOrWallet) {
       this.wallet = signerOrWallet;
     } else {
       this.signer = signerOrWallet;
@@ -43,32 +43,25 @@ export class AuthManager {
    */
   private async signMessage(message: string): Promise<string> {
     try {
-      const messageBytes = message.startsWith("0x")
-        ? getUint8ArrayFromHex(message.slice(2))
-        : getUint8ArrayFromHex(message);
-
-      const messageHash = new Uint8Array(
-        await crypto.subtle.digest("SHA-256", messageBytes)
-      );
-
-      let signature: Uint8Array;
-
       if (this.wallet) {
-        // Use wallet signing
-        signature =
-          // @ts-expect-error
-          await this.wallet.config.signer.signMessageWithIdentityKey(
-            messageHash,
-            true
-          );
+        // Use wallet's public signMessageWithIdentityKey method
+        // It expects a UTF-8 string, hashes it internally, and returns hex
+        return await this.wallet.signMessageWithIdentityKey(message, true);
       } else if (this.signer) {
-        // Use custom signer
-        signature = await this.signer.signMessage(messageHash);
+        // Use custom signer - signs raw bytes
+        const messageBytes = message.startsWith("0x")
+          ? getUint8ArrayFromHex(message.slice(2))
+          : getUint8ArrayFromHex(message);
+
+        const messageHash = new Uint8Array(
+          await crypto.subtle.digest("SHA-256", messageBytes)
+        );
+
+        const signature = await this.signer.signMessage(messageHash);
+        return getHexFromUint8Array(signature);
       } else {
         throw new Error("No wallet or signer available");
       }
-
-      return getHexFromUint8Array(signature);
     } catch (error) {
       throw new Error(
         `Failed to sign message: ${
@@ -99,7 +92,11 @@ export class AuthManager {
       }
 
       // Step 2: Sign the challenge
-      const signature = await this.signMessage(challengeResponse.challenge);
+      // Use challengeString if available (UTF-8 friendly for wallets)
+      // Otherwise use challenge (hex string - backend accepts both)
+      const messageToSign =
+        challengeResponse.challengeString || challengeResponse.challenge;
+      const signature = await this.signMessage(messageToSign);
 
       // Step 3: Verify signature and get access token
       const verifyRequest: VerifyRequestData = {
