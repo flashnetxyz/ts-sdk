@@ -94,8 +94,7 @@ export class AuthManager {
       // Step 2: Sign the challenge
       // Use challengeString if available (UTF-8 friendly for wallets)
       // Otherwise use challenge (hex string - backend accepts both)
-      const messageToSign =
-        challengeResponse.challengeString || challengeResponse.challenge;
+      const messageToSign = challengeResponse.challengeString;
       const signature = await this.signMessage(messageToSign);
 
       // Step 3: Verify signature and get access token
