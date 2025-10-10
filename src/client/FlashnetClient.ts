@@ -13,7 +13,6 @@ import {
   type AddLiquidityResponse,
   type AllLpPositionsResponse,
   type AllowedAssetsResponse,
-  type MinAmountsResponse,
   type ClaimEscrowRequest,
   type ClaimEscrowResponse,
   type ClawbackRequest,
@@ -61,6 +60,7 @@ import {
   type ListUserSwapsQuery,
   type ListUserSwapsResponse,
   type LpPositionDetailsResponse,
+  type MinAmountsResponse,
   Network,
   type NetworkType,
   type PoolDetailsResponse,
@@ -106,7 +106,6 @@ import {
   generateWithdrawHostFeesIntentMessage,
   generateWithdrawIntegratorFeesIntentMessage,
 } from "../utils/intents";
-import { createWalletSigner } from "../utils/signer";
 import {
   encodeSparkAddressNew,
   getSparkNetworkFromAddress,
@@ -147,7 +146,7 @@ export interface FlashnetClientOptions {
 type Tuple<
   T,
   N extends number,
-  Acc extends readonly T[] = []
+  Acc extends readonly T[] = [],
 > = Acc["length"] extends N ? Acc : Tuple<T, N, [...Acc, T]>;
 
 /**
@@ -422,7 +421,7 @@ export class FlashnetClient {
     this.authManager = new AuthManager(
       this.apiClient,
       this.publicKey,
-      createWalletSigner(this._wallet)
+      this._wallet
     );
 
     // Authenticate
