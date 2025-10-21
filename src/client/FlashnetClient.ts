@@ -43,10 +43,13 @@ import {
   type FlashnetClientLegacyConfig,
   type FundEscrowRequest,
   type FundEscrowResponse,
+  type GetCreatorFeesRequest,
+  type GetCreatorFeesResponse,
   type GetHostFeesRequest,
   type GetHostFeesResponse,
   type GetHostResponse,
   type GetIntegratorFeesResponse,
+  type GetPoolCreatorFeesResponse,
   type GetPoolHostFeesResponse,
   type GetPoolIntegratorFeesResponse,
   getClientEnvironmentFromLegacy,
@@ -82,6 +85,8 @@ import {
   type SparkNetworkType,
   type SwapResponse,
   type TransferAssetRecipient,
+  type WithdrawCreatorFeesRequest,
+  type WithdrawCreatorFeesResponse,
   type WithdrawHostFeesRequest,
   type WithdrawHostFeesResponse,
   type WithdrawIntegratorFeesRequest,
@@ -103,6 +108,7 @@ import {
   generateRegisterHostIntentMessage,
   generateRemoveLiquidityIntentMessage,
   generateRouteSwapIntentMessage,
+  generateWithdrawCreatorFeesIntentMessage,
   generateWithdrawHostFeesIntentMessage,
   generateWithdrawIntegratorFeesIntentMessage,
 } from "../utils/intents";
@@ -146,7 +152,7 @@ export interface FlashnetClientOptions {
 type Tuple<
   T,
   N extends number,
-  Acc extends readonly T[] = [],
+  Acc extends readonly T[] = []
 > = Acc["length"] extends N ? Acc : Tuple<T, N, [...Acc, T]>;
 
 /**
@@ -949,17 +955,27 @@ export class FlashnetClient {
   async confirmInitialDeposit(
     poolId: string,
     assetASparkTransferId: string,
-    poolOwnerPublicKey?: string
+    poolOwnerPublicKey?: string,
+    poolCreatorPublicKey?: string
   ): Promise<ConfirmDepositResponse> {
     await this.ensureInitialized();
 
     const nonce = generateNonce();
-    const intentMessage = generatePoolConfirmInitialDepositIntentMessage({
+
+    // Build intent message params - only include poolCreatorPublicKey if provided
+    const intentParams: any = {
       poolOwnerPublicKey: poolOwnerPublicKey ?? this.publicKey,
       lpIdentityPublicKey: poolId,
       assetASparkTransferId,
       nonce,
-    });
+    };
+
+    if (poolCreatorPublicKey !== undefined) {
+      intentParams.poolCreatorPublicKey = poolCreatorPublicKey;
+    }
+
+    const intentMessage =
+      generatePoolConfirmInitialDepositIntentMessage(intentParams);
 
     const messageHash = new Uint8Array(
       await crypto.subtle.digest("SHA-256", intentMessage)
@@ -975,6 +991,10 @@ export class FlashnetClient {
       signature: getHexFromUint8Array(signature),
       poolOwnerPublicKey: poolOwnerPublicKey ?? this.publicKey,
     };
+
+    if (poolCreatorPublicKey !== undefined) {
+      request.poolCreatorPublicKey = poolCreatorPublicKey;
+    }
 
     return this.typedApi.confirmInitialDeposit(request);
   }
@@ -1670,6 +1690,84 @@ export class FlashnetClient {
   async getIntegratorFees(): Promise<GetIntegratorFeesResponse> {
     await this.ensureInitialized();
     return this.typedApi.getIntegratorFees();
+  }
+
+  // ===== Creator Fee Operations =====
+
+  /**
+   * Get creator fees for a specific pool
+   */
+  async getPoolCreatorFees(
+    poolId: string
+  ): Promise<GetPoolCreatorFeesResponse> {
+    await this.ensureInitialized();
+    await this.ensurePingOk();
+    return this.typedApi.getPoolCreatorFees({ poolId });
+  }
+
+  /**
+   * Withdraw creator fees from a pool
+   */
+  async withdrawCreatorFees(params: {
+    lpIdentityPublicKey: string;
+    assetBAmount?: string;
+  }): Promise<WithdrawCreatorFeesResponse> {
+    await this.ensureInitialized();
+
+    await this.ensureAmmOperationAllowed("allow_withdraw_fees");
+
+    const nonce = generateNonce();
+    const assetBAmount =
+      params.assetBAmount !== undefined ? params.assetBAmount : undefined;
+
+    const intentMessage = generateWithdrawCreatorFeesIntentMessage({
+      creatorPublicKey: this.publicKey,
+      lpIdentityPublicKey: params.lpIdentityPublicKey,
+      assetBAmount,
+      nonce,
+    });
+
+    // Sign intent
+    const messageHash = new Uint8Array(
+      await crypto.subtle.digest("SHA-256", intentMessage)
+    );
+    const signature = await (
+      this._wallet as any
+    ).config.signer.signMessageWithIdentityKey(messageHash, true);
+
+    const request: WithdrawCreatorFeesRequest = {
+      creatorPublicKey: this.publicKey,
+      lpIdentityPublicKey: params.lpIdentityPublicKey,
+      assetBAmount,
+      nonce,
+      signature: getHexFromUint8Array(signature),
+    };
+
+    const response = await this.typedApi.withdrawCreatorFees(request);
+
+    // Check if the withdrawal was accepted
+    if (!response.accepted) {
+      const errorMessage =
+        response.error || "Withdraw creator fees rejected by the AMM";
+      throw new Error(errorMessage);
+    }
+
+    return response;
+  }
+
+  /**
+   * Get creator fees across all pools
+   */
+  async getCreatorFees(
+    creatorPublicKey?: string
+  ): Promise<GetCreatorFeesResponse> {
+    await this.ensureInitialized();
+
+    const request: GetCreatorFeesRequest = {
+      creatorPublicKey: creatorPublicKey ?? this.publicKey,
+    };
+
+    return this.typedApi.getCreatorFees(request);
   }
 
   // ===== Escrow Operations =====

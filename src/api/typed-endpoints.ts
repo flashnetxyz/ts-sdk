@@ -408,6 +408,49 @@ export class TypedAmmApi {
     );
   }
 
+  // ===== Creator Fee Endpoints =====
+  /**
+   * Get creator fees across all pools
+   * @POST /v1/creators/pool-fees
+   * @requires Bearer token
+   */
+  async getCreatorFees(
+    request: Types.GetCreatorFeesRequest
+  ): Promise<Types.GetCreatorFeesResponse> {
+    return this.client.ammPost<Types.GetCreatorFeesResponse>(
+      "/v1/creators/pool-fees",
+      request
+    );
+  }
+
+  /**
+   * Get creator fees for a specific pool
+   * @POST /v1/creators/pool-fees
+   * @requires Bearer token
+   */
+  async getPoolCreatorFees(
+    request: Types.GetPoolCreatorFeesRequest
+  ): Promise<Types.GetPoolCreatorFeesResponse> {
+    return this.client.ammPost<Types.GetPoolCreatorFeesResponse>(
+      "/v1/creators/pool-fees",
+      request
+    );
+  }
+
+  /**
+   * Withdraw creator fees from a pool
+   * @POST /v1/creators/withdraw-fees
+   * @requires Bearer token
+   */
+  async withdrawCreatorFees(
+    request: Types.WithdrawCreatorFeesRequest
+  ): Promise<Types.WithdrawCreatorFeesResponse> {
+    return this.client.ammPost<Types.WithdrawCreatorFeesResponse>(
+      "/v1/creators/withdraw-fees",
+      request
+    );
+  }
+
   // ===== Escrow Endpoints =====
 
   /**
