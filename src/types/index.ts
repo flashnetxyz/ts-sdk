@@ -565,6 +565,7 @@ export interface AmmPool {
   initialReserveA?: string;
   bondingProgressPercent?: string;
   graduationThresholdAmount?: string;
+  creatorPubkey?: string;
   createdAt: string;
   updatedAt: string;
 }
@@ -616,7 +617,9 @@ export interface PoolDetailsResponse {
   initialReserveA?: string;
   bondingProgressPercent?: string;
   graduationThresholdAmount?: string;
+  creatorPubkey?: string;
   createdAt: string;
+  updatedAt: string;
   status: string;
 }
 
