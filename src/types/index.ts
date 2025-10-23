@@ -1057,21 +1057,6 @@ export interface GetPoolIntegratorFeesResponse {
   assetBFees: string;
 }
 
-export interface GetCreatorFeesRequest {
-  creatorPublicKey: string;
-}
-
-export interface CreatorPoolFees {
-  poolId: string;
-  assetBFees: string;
-}
-
-export interface GetCreatorFeesResponse {
-  creatorPublicKey: string;
-  pools: CreatorPoolFees[];
-  totalAssetBFees?: string;
-}
-
 export interface GetPoolCreatorFeesRequest {
   poolId: string;
 }

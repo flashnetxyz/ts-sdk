@@ -43,8 +43,6 @@ import {
   type FlashnetClientLegacyConfig,
   type FundEscrowRequest,
   type FundEscrowResponse,
-  type GetCreatorFeesRequest,
-  type GetCreatorFeesResponse,
   type GetHostFeesRequest,
   type GetHostFeesResponse,
   type GetHostResponse,
@@ -1753,21 +1751,6 @@ export class FlashnetClient {
     }
 
     return response;
-  }
-
-  /**
-   * Get creator fees across all pools
-   */
-  async getCreatorFees(
-    creatorPublicKey?: string
-  ): Promise<GetCreatorFeesResponse> {
-    await this.ensureInitialized();
-
-    const request: GetCreatorFeesRequest = {
-      creatorPublicKey: creatorPublicKey ?? this.publicKey,
-    };
-
-    return this.typedApi.getCreatorFees(request);
   }
 
   // ===== Escrow Operations =====

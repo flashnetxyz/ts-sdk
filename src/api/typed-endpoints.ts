@@ -409,19 +409,6 @@ export class TypedAmmApi {
   }
 
   // ===== Creator Fee Endpoints =====
-  /**
-   * Get creator fees across all pools
-   * @POST /v1/creators/pool-fees
-   * @requires Bearer token
-   */
-  async getCreatorFees(
-    request: Types.GetCreatorFeesRequest
-  ): Promise<Types.GetCreatorFeesResponse> {
-    return this.client.ammPost<Types.GetCreatorFeesResponse>(
-      "/v1/creators/pool-fees",
-      request
-    );
-  }
 
   /**
    * Get creator fees for a specific pool
