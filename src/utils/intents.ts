@@ -8,6 +8,7 @@ import type {
   ValidateAmmInitializeConstantProductPoolData,
   ValidateAmmInitializeSingleSidedPoolData,
   ValidateAmmSwapData,
+  ValidateAmmWithdrawCreatorFeesData,
   ValidateAmmWithdrawIntegratorFeesData,
   ValidateClawbackData,
   ValidateEscrowClaimData,
@@ -84,6 +85,7 @@ export function generatePoolConfirmInitialDepositIntentMessage(params: {
   lpIdentityPublicKey: string;
   assetASparkTransferId: string;
   nonce: string;
+  poolCreatorPublicKey?: string;
 }): Uint8Array {
   const intentMessage: ValidateAmmConfirmInitialDepositData = {
     poolOwnerPublicKey: params.poolOwnerPublicKey,
@@ -91,6 +93,11 @@ export function generatePoolConfirmInitialDepositIntentMessage(params: {
     assetASparkTransferId: params.assetASparkTransferId,
     nonce: params.nonce,
   };
+
+  if (params.poolCreatorPublicKey !== undefined) {
+    intentMessage.poolCreatorPublicKey = params.poolCreatorPublicKey;
+  }
+
   return new TextEncoder().encode(JSON.stringify(intentMessage));
 }
 
@@ -222,6 +229,25 @@ export function generateWithdrawIntegratorFeesIntentMessage(params: {
 }): Uint8Array {
   const signingPayload: ValidateAmmWithdrawIntegratorFeesData = {
     integratorPublicKey: params.integratorPublicKey,
+    lpIdentityPublicKey: params.lpIdentityPublicKey,
+    assetBAmount: params.assetBAmount,
+    nonce: params.nonce,
+  };
+
+  return new TextEncoder().encode(JSON.stringify(signingPayload));
+}
+
+/**
+ * Generate the intent message for withdrawing creator fees
+ */
+export function generateWithdrawCreatorFeesIntentMessage(params: {
+  creatorPublicKey: string;
+  lpIdentityPublicKey: string;
+  assetBAmount?: string;
+  nonce: string;
+}): Uint8Array {
+  const signingPayload: ValidateAmmWithdrawCreatorFeesData = {
+    creatorPublicKey: params.creatorPublicKey,
     lpIdentityPublicKey: params.lpIdentityPublicKey,
     assetBAmount: params.assetBAmount,
     nonce: params.nonce,
