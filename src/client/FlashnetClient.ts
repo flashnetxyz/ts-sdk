@@ -19,8 +19,6 @@ import {
   type ClaimEscrowResponse,
   type ClawbackRequest,
   type ClawbackResponse,
-  type ListClawbackableTransfersQuery,
-  type ListClawbackableTransfersResponse,
   type ClientEnvironment,
   type ClientNetworkConfig,
   type Condition,
@@ -55,6 +53,8 @@ import {
   type GetPoolIntegratorFeesResponse,
   getClientEnvironmentFromLegacy,
   getSparkNetworkFromLegacy,
+  type ListClawbackableTransfersQuery,
+  type ListClawbackableTransfersResponse,
   type ListGlobalSwapsQuery,
   type ListGlobalSwapsResponse,
   type ListPoolSwapsQuery,
@@ -150,7 +150,7 @@ export interface FlashnetClientOptions {
 type Tuple<
   T,
   N extends number,
-  Acc extends readonly T[] = []
+  Acc extends readonly T[] = [],
 > = Acc["length"] extends N ? Acc : Tuple<T, N, [...Acc, T]>;
 
 /**
