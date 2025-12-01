@@ -527,6 +527,20 @@ export class TypedAmmApi {
       request
     );
   }
+
+  /**
+   * List transfers eligible for clawback
+   * @GET /v1/clawback-transfers/list
+   * @requires Bearer token
+   */
+  async listClawbackableTransfers(
+    query?: Types.ListClawbackableTransfersQuery
+  ): Promise<Types.ListClawbackableTransfersResponse> {
+    return this.client.ammGet<Types.ListClawbackableTransfersResponse>(
+      "/v1/clawback-transfers/list",
+      { params: query as any }
+    );
+  }
 }
 
 /**

@@ -19,6 +19,8 @@ import {
   type ClaimEscrowResponse,
   type ClawbackRequest,
   type ClawbackResponse,
+  type ListClawbackableTransfersQuery,
+  type ListClawbackableTransfersResponse,
   type ClientEnvironment,
   type ClientNetworkConfig,
   type Condition,
@@ -1974,6 +1976,27 @@ export class FlashnetClient {
     };
 
     return this.typedApi.checkClawbackEligibility(request);
+  }
+
+  /**
+   * List transfers eligible for clawback
+   *
+   * Returns a paginated list of transfers that the authenticated user
+   * can potentially clawback. Filters based on:
+   * - Transfers sent by the authenticated user
+   * - Transfers to pools the user has interacted with
+   * - Not already spent or reserved
+   * - Less than 10 days old
+   *
+   * @param query - Optional pagination parameters (limit, offset)
+   * @returns List of eligible transfers with IDs and timestamps
+   */
+  async listClawbackableTransfers(
+    query?: ListClawbackableTransfersQuery
+  ): Promise<ListClawbackableTransfersResponse> {
+    await this.ensureInitialized();
+    await this.ensurePingOk();
+    return this.typedApi.listClawbackableTransfers(query);
   }
 
   // ===== Token Address Operations =====
