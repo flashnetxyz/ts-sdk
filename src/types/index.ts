@@ -1283,6 +1283,24 @@ export interface CheckClawbackEligibilityResponse {
   error?: string;
 }
 
+// Query parameters for listing clawbackable transfers
+export interface ListClawbackableTransfersQuery {
+  limit?: number; // 1-500, default 20
+  offset?: number; // min 0, default 0
+}
+
+// Single clawback transfer with ID and timestamp
+export interface ClawbackTransfer {
+  id: string;
+  lpIdentityPublicKey: string;
+  createdAt?: string; // RFC3339 format, optional
+}
+
+// Response for listing clawbackable transfers
+export interface ListClawbackableTransfersResponse {
+  transfers: ClawbackTransfer[];
+}
+
 /**
  * Response after successfully funding an escrow contract.
  */
