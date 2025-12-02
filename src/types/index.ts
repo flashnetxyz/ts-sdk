@@ -1292,6 +1292,7 @@ export interface ListClawbackableTransfersQuery {
 // Single clawback transfer with ID and timestamp
 export interface ClawbackTransfer {
   id: string;
+  lpIdentityPublicKey: string;
   createdAt?: string; // RFC3339 format, optional
 }
 
