@@ -285,6 +285,23 @@ export interface WithdrawIntegratorFeesResponse {
   error?: string;
 }
 
+export interface WithdrawCreatorFeesRequest {
+  creatorPublicKey: string;
+  lpIdentityPublicKey: string;
+  assetBAmount?: string;
+  nonce: string;
+  signature: string;
+}
+
+export interface WithdrawCreatorFeesResponse {
+  requestId: string;
+  accepted: boolean;
+  assetAWithdrawn?: string;
+  assetBWithdrawn?: string;
+  transferId?: string;
+  error?: string;
+}
+
 // Pool types
 export interface CreateConstantProductPoolRequest {
   poolOwnerPublicKey: string;
@@ -323,6 +340,7 @@ export interface ConfirmInitialDepositRequest {
   nonce: string;
   signature: string;
   poolOwnerPublicKey?: string;
+  poolCreatorPublicKey?: string;
 }
 
 export interface ConfirmDepositResponse {
@@ -547,6 +565,7 @@ export interface AmmPool {
   initialReserveA?: string;
   bondingProgressPercent?: string;
   graduationThresholdAmount?: string;
+  creatorPubkey?: string;
   createdAt: string;
   updatedAt: string;
 }
@@ -598,7 +617,9 @@ export interface PoolDetailsResponse {
   initialReserveA?: string;
   bondingProgressPercent?: string;
   graduationThresholdAmount?: string;
+  creatorPubkey?: string;
   createdAt: string;
+  updatedAt: string;
   status: string;
 }
 
@@ -869,6 +890,7 @@ export interface ValidateAmmConfirmInitialDepositData {
   lpIdentityPublicKey: string;
   assetASparkTransferId: string;
   nonce: string;
+  poolCreatorPublicKey?: string;
 }
 
 export interface ValidateAmmSwapData {
@@ -978,6 +1000,13 @@ export interface ValidateAmmWithdrawIntegratorFeesData {
   nonce: string;
 }
 
+export interface ValidateAmmWithdrawCreatorFeesData {
+  creatorPublicKey: string;
+  lpIdentityPublicKey: string;
+  assetBAmount?: string;
+  nonce: string;
+}
+
 // Clawback validation data
 export interface ValidateClawbackData {
   senderPublicKey: string;
@@ -1025,6 +1054,16 @@ export interface GetPoolIntegratorFeesRequest {
 export interface GetPoolIntegratorFeesResponse {
   poolId: string;
   integratorPublicKey: string;
+  assetBFees: string;
+}
+
+export interface GetPoolCreatorFeesRequest {
+  poolId: string;
+}
+
+export interface GetPoolCreatorFeesResponse {
+  poolId: string;
+  creatorPublicKey: string;
   assetBFees: string;
 }
 
