@@ -72,17 +72,17 @@ export type FlashnetErrorCode =
   | "FSAG-2005" // Nonce verification failed
   | "FSAG-2101" // Public key invalid
   // Infrastructure/External (3000-3999)
-  | "FSAG-3001" // Redis connection failed
-  | "FSAG-3002" // Redis operation failed
-  | "FSAG-3101" // Database operation failed
-  | "FSAG-3201" // Settlement service error
-  | "FSAG-3201T1" // Settlement transport unavailable
-  | "FSAG-3201T2" // Settlement transport timeout
-  | "FSAG-3202" // Sparkscan service error
-  | "FSAG-3301" // Failed to send event to AMM processor
-  | "FSAG-3302" // AMM processor timeout
-  | "FSAG-3401" // Serialization error
-  | "FSAG-3402" // Deserialization error
+  | "FSAG-3001" // Internal server error
+  | "FSAG-3002" // Internal server error
+  | "FSAG-3101" // Internal server error
+  | "FSAG-3201" // Internal server error
+  | "FSAG-3201T1" // Internal server error
+  | "FSAG-3201T2" // Internal server error
+  | "FSAG-3202" // Internal server error
+  | "FSAG-3301" // Internal server error
+  | "FSAG-3302" // Internal server error
+  | "FSAG-3401" // Internal server error
+  | "FSAG-3402" // Internal server error
   // Business/AMM Logic (4000-4999)
   | "FSAG-4001" // Pool not found
   | "FSAG-4002" // Host not found
@@ -258,7 +258,7 @@ export const ERROR_CODE_METADATA: Record<FlashnetErrorCode, ErrorCodeMetadata> =
       httpStatus: 503,
       category: "Infrastructure",
       recovery: "clawback_recommended",
-      summary: "Redis connection failed",
+      summary: "Internal server error",
       userMessage: "A temporary service issue occurred. Please try again.",
       actionHint:
         "Wait a moment and retry. If you sent funds, consider initiating a clawback.",
@@ -268,7 +268,7 @@ export const ERROR_CODE_METADATA: Record<FlashnetErrorCode, ErrorCodeMetadata> =
       httpStatus: 500,
       category: "Infrastructure",
       recovery: "clawback_recommended",
-      summary: "Redis operation failed",
+      summary: "Internal server error",
       userMessage: "A temporary service issue occurred. Please try again.",
       actionHint:
         "Wait a moment and retry. If you sent funds, consider initiating a clawback.",
@@ -278,7 +278,7 @@ export const ERROR_CODE_METADATA: Record<FlashnetErrorCode, ErrorCodeMetadata> =
       httpStatus: 500,
       category: "Infrastructure",
       recovery: "clawback_recommended",
-      summary: "Database operation failed",
+      summary: "Internal server error",
       userMessage: "A database error occurred. Please try again.",
       actionHint:
         "Wait a moment and retry. If you sent funds, consider initiating a clawback.",
@@ -288,7 +288,7 @@ export const ERROR_CODE_METADATA: Record<FlashnetErrorCode, ErrorCodeMetadata> =
       httpStatus: 503,
       category: "Infrastructure",
       recovery: "clawback_recommended",
-      summary: "Settlement service error",
+      summary: "Internal server error",
       userMessage: "The settlement service is temporarily unavailable.",
       actionHint:
         "Wait and retry. If you sent funds and they haven't been processed, consider initiating a clawback.",
@@ -298,7 +298,7 @@ export const ERROR_CODE_METADATA: Record<FlashnetErrorCode, ErrorCodeMetadata> =
       httpStatus: 503,
       category: "Infrastructure",
       recovery: "clawback_recommended",
-      summary: "Settlement transport unavailable",
+      summary: "Internal server error",
       userMessage: "The settlement service is temporarily unavailable.",
       actionHint:
         "Wait and retry. If you sent funds and they haven't been processed, consider initiating a clawback.",
@@ -308,7 +308,7 @@ export const ERROR_CODE_METADATA: Record<FlashnetErrorCode, ErrorCodeMetadata> =
       httpStatus: 503,
       category: "Infrastructure",
       recovery: "clawback_recommended",
-      summary: "Settlement transport timeout",
+      summary: "Internal server error",
       userMessage: "The settlement request timed out.",
       actionHint:
         "Check if your transaction was processed. If not, you may retry or initiate a clawback.",
@@ -318,7 +318,7 @@ export const ERROR_CODE_METADATA: Record<FlashnetErrorCode, ErrorCodeMetadata> =
       httpStatus: 503,
       category: "Infrastructure",
       recovery: "clawback_recommended",
-      summary: "Sparkscan service error",
+      summary: "Internal server error",
       userMessage: "A dependent service is temporarily unavailable.",
       actionHint: "Wait a moment and retry.",
       isRetryable: true,
@@ -327,7 +327,7 @@ export const ERROR_CODE_METADATA: Record<FlashnetErrorCode, ErrorCodeMetadata> =
       httpStatus: 500,
       category: "Infrastructure",
       recovery: "clawback_recommended",
-      summary: "Failed to send event to AMM processor",
+      summary: "Internal server error",
       userMessage: "The AMM processor couldn't receive your request.",
       actionHint:
         "Wait and retry. If you sent funds, consider initiating a clawback.",
@@ -337,7 +337,7 @@ export const ERROR_CODE_METADATA: Record<FlashnetErrorCode, ErrorCodeMetadata> =
       httpStatus: 503,
       category: "Infrastructure",
       recovery: "clawback_recommended",
-      summary: "AMM processor timeout",
+      summary: "Internal server error",
       userMessage: "The AMM processor timed out while processing your request.",
       actionHint:
         "Check if your transaction was processed. If not, you may retry or initiate a clawback.",
@@ -347,7 +347,7 @@ export const ERROR_CODE_METADATA: Record<FlashnetErrorCode, ErrorCodeMetadata> =
       httpStatus: 500,
       category: "Infrastructure",
       recovery: "clawback_recommended",
-      summary: "Serialization error",
+      summary: "Internal server error",
       userMessage: "An internal processing error occurred.",
       actionHint:
         "This is likely a temporary issue. Wait and retry. If you sent funds, consider initiating a clawback.",
@@ -357,7 +357,7 @@ export const ERROR_CODE_METADATA: Record<FlashnetErrorCode, ErrorCodeMetadata> =
       httpStatus: 500,
       category: "Infrastructure",
       recovery: "clawback_recommended",
-      summary: "Deserialization error",
+      summary: "Internal server error",
       userMessage: "An internal processing error occurred.",
       actionHint:
         "This is likely a temporary issue. Wait and retry. If you sent funds, consider initiating a clawback.",
