@@ -5,7 +5,7 @@ export type { RequestOptions } from "./src/api/client";
 export { ApiClient } from "./src/api/client";
 export {
   isApiError,
-  isFlashnetError,
+  isLegacyFlashnetErrorResponse,
   TypedAmmApi,
 } from "./src/api/typed-endpoints";
 export {
@@ -24,12 +24,14 @@ export {
 } from "./src/api/validation";
 // Export client
 export {
+  type ClawbackMonitorHandle,
+  type ClawbackMonitorOptions,
+  type ClawbackPollResult,
   FlashnetClient,
   type FlashnetClientOptions,
   type TokenBalance,
   type WalletBalance,
 } from "./src/client/FlashnetClient";
-
 // Export configuration (new and legacy)
 export * from "./src/config";
 export type * from "./src/types";
@@ -38,6 +40,25 @@ export {
   type ValidationResult,
   validateSingleSidedPoolThreshold,
 } from "./src/types";
+// Export error system
+export {
+  type AutoClawbackSummary,
+  type ClawbackAttemptResult,
+  ERROR_CODE_METADATA,
+  type ErrorCodeMetadata,
+  type ErrorRecoveryStrategy,
+  FlashnetError,
+  type FlashnetErrorCategory,
+  type FlashnetErrorCode,
+  type FlashnetErrorOptions,
+  type FlashnetErrorResponseBody,
+  getCategoryFromCodeRange,
+  getErrorCategory,
+  getErrorMetadata,
+  getErrorRecovery,
+  isFlashnetError,
+  isFlashnetErrorCode,
+} from "./src/types/errors";
 export { fromSmallestUnit, generateNonce, toSmallestUnit } from "./src/utils";
 export { AuthManager } from "./src/utils/auth";
 export {

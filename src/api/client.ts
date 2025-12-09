@@ -1,5 +1,6 @@
 import type { NetworkConfig } from "../config";
 import type { ClientNetworkConfig } from "../types";
+import { FlashnetError, type FlashnetErrorResponseBody } from "../types/errors";
 
 export interface RequestOptions {
   headers?: Record<string, string>;
@@ -68,33 +69,41 @@ export class ApiClient {
     const response = await fetch(finalUrl, requestOptions);
 
     if (!response.ok) {
-      const errorData = (await response.json().catch(() => null)) as {
-        message?: string;
-        msg?: string;
-        error?: any;
-        details?: any;
-        code?: number;
-      } | null;
+      const errorData = (await response.json().catch(() => null)) as
+        | FlashnetErrorResponseBody
+        | {
+            message?: string;
+            msg?: string;
+            error?: unknown;
+            details?: unknown;
+            code?: number;
+          }
+        | null;
 
-      // Log detailed error info for debugging
-      if (response.status === 400 || response.status === 422) {
-        console.error(`\n❌ API Error (${response.status}):`);
-        console.error("URL:", finalUrl);
-        console.error("Method:", method);
-        if (options?.body) {
-          console.error("Request body:", JSON.stringify(options.body, null, 2));
-        }
-        if (errorData) {
-          console.error("Error response:", JSON.stringify(errorData, null, 2));
-        }
+      // Check if it's a structured FlashnetError response
+      if (
+        errorData &&
+        "errorCode" in errorData &&
+        typeof errorData.errorCode === "string"
+      ) {
+        throw FlashnetError.fromResponse(
+          errorData as FlashnetErrorResponseBody,
+          response.status
+        );
       }
 
-      // Create error with additional properties
-      const error: any = new Error(
-        errorData?.message ||
-          errorData?.msg ||
-          `HTTP error! status: ${response.status}`
-      );
+      // Legacy/fallback error handling for non-structured errors
+      const message =
+        (errorData as { message?: string; msg?: string })?.message ??
+        (errorData as { msg?: string })?.msg ??
+        `HTTP error! status: ${response.status}`;
+
+      // Create error with additional properties for backwards compatibility
+      const error: Error & {
+        status?: number;
+        response?: { status: number; data: unknown };
+        request?: { url: string; method: string; body?: unknown };
+      } = new Error(message);
       error.status = response.status;
       error.response = { status: response.status, data: errorData };
       error.request = { url: finalUrl, method, body: options?.body };

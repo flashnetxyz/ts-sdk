@@ -546,7 +546,12 @@ export class TypedAmmApi {
 /**
  * Error checking utilities
  */
-export function isFlashnetError(
+
+/**
+ * @deprecated Use isFlashnetError from types/errors instead
+ * Check if error matches the legacy FlashnetErrorResponse format (code/msg)
+ */
+export function isLegacyFlashnetErrorResponse(
   error: unknown
 ): error is Types.FlashnetErrorResponse {
   return (
@@ -558,6 +563,11 @@ export function isFlashnetError(
     typeof (error as any).msg === "string"
   );
 }
+
+/**
+ * @deprecated Use isLegacyFlashnetErrorResponse - this name is reserved for FlashnetError class check
+ */
+export const isFlashnetError = isLegacyFlashnetErrorResponse;
 
 export function isApiError(error: unknown): error is Types.ApiErrorResponse {
   return (
