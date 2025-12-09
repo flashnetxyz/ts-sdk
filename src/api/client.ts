@@ -93,9 +93,13 @@ export class ApiClient {
       }
 
       // Legacy/fallback error handling for non-structured errors
+      const legacyError = errorData as {
+        message?: string;
+        msg?: string;
+      } | null;
       const message =
-        (errorData as { message?: string; msg?: string })?.message ??
-        (errorData as { msg?: string })?.msg ??
+        legacyError?.message ??
+        legacyError?.msg ??
         `HTTP error! status: ${response.status}`;
 
       // Create error with additional properties for backwards compatibility
