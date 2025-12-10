@@ -979,7 +979,7 @@ export class FlashnetError extends Error {
           httpStatus: error.httpStatus,
           transferIds: shouldPreserveTransferIds
             ? error.transferIds
-            : options.transferIds ?? error.transferIds,
+            : (options.transferIds ?? error.transferIds),
           lpIdentityPublicKey:
             options.lpIdentityPublicKey ?? error.lpIdentityPublicKey,
           cause: error,
