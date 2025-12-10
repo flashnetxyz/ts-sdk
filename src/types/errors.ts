@@ -691,7 +691,8 @@ export class FlashnetError extends Error {
       this.isRetryable = metadata.isRetryable;
       this.summary = metadata.summary;
       this.userMessage = metadata.userMessage;
-      this.actionHint = metadata.actionHint;
+      // Prefer remediation from response (e.g., after successful auto-clawback)
+      this.actionHint = response?.remediation ?? metadata.actionHint;
     } else {
       // Unknown error code - try to determine category from range
       this.errorCode = rawCode;
@@ -958,8 +959,11 @@ export class FlashnetError extends Error {
     options?: { transferIds?: string[]; lpIdentityPublicKey?: string }
   ): FlashnetError {
     if (error instanceof FlashnetError) {
-      // If already a FlashnetError, add transfer info if provided
-      if (options?.transferIds?.length || options?.lpIdentityPublicKey) {
+      // If already a FlashnetError, preserve its state
+      // Don't override transferIds if the error indicates auto_refund (funds already safe)
+      const shouldPreserveTransferIds = error.recovery === "auto_refund";
+
+      if (options?.lpIdentityPublicKey && !error.lpIdentityPublicKey) {
         return new FlashnetError(error.message, {
           response: {
             errorCode: error.errorCode,
@@ -973,7 +977,9 @@ export class FlashnetError extends Error {
             remediation: error.remediation,
           },
           httpStatus: error.httpStatus,
-          transferIds: options.transferIds ?? error.transferIds,
+          transferIds: shouldPreserveTransferIds
+            ? error.transferIds
+            : options.transferIds ?? error.transferIds,
           lpIdentityPublicKey:
             options.lpIdentityPublicKey ?? error.lpIdentityPublicKey,
           cause: error,

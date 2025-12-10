@@ -203,7 +203,7 @@ export interface FlashnetClientOptions {
 type Tuple<
   T,
   N extends number,
-  Acc extends readonly T[] = [],
+  Acc extends readonly T[] = []
 > = Acc["length"] extends N ? Acc : Tuple<T, N, [...Acc, T]>;
 
 /**
@@ -1186,10 +1186,28 @@ export class FlashnetClient {
     // Check if the swap was accepted
     if (!response.accepted) {
       const errorMessage = response.error || "Swap rejected by the AMM";
-      const refundInfo = response.refundedAmount
+      const hasRefund = !!response.refundedAmount;
+      const refundInfo = hasRefund
         ? ` Refunded ${response.refundedAmount} of ${response.refundedAssetAddress} via transfer ${response.refundTransferId}`
         : "";
-      throw new Error(`${errorMessage}.${refundInfo}`);
+
+      // If refund was provided, funds are safe - use auto_refund recovery
+      // If no refund, funds may need clawback
+      throw new FlashnetError(`${errorMessage}.${refundInfo}`, {
+        response: {
+          errorCode: hasRefund ? "FSAG-4202" : "UNKNOWN", // Slippage if refunded
+          errorCategory: hasRefund ? "Business" : "System",
+          message: `${errorMessage}.${refundInfo}`,
+          requestId: "",
+          timestamp: new Date().toISOString(),
+          service: "amm-gateway",
+          severity: "Error",
+        },
+        httpStatus: 400,
+        // Don't include transferIds if refunded - no clawback needed
+        transferIds: hasRefund ? [] : [params.transferId],
+        lpIdentityPublicKey: params.poolId,
+      });
     }
 
     return response;
@@ -1345,10 +1363,25 @@ export class FlashnetClient {
         if (!response.accepted) {
           const errorMessage =
             response.error || "Route swap rejected by the AMM";
-          const refundInfo = response.refundedAmount
+          const hasRefund = !!response.refundedAmount;
+          const refundInfo = hasRefund
             ? ` Refunded ${response.refundedAmount} of ${response.refundedAssetPublicKey} via transfer ${response.refundTransferId}`
             : "";
-          throw new Error(`${errorMessage}.${refundInfo}`);
+
+          throw new FlashnetError(`${errorMessage}.${refundInfo}`, {
+            response: {
+              errorCode: hasRefund ? "FSAG-4202" : "UNKNOWN",
+              errorCategory: hasRefund ? "Business" : "System",
+              message: `${errorMessage}.${refundInfo}`,
+              requestId: "",
+              timestamp: new Date().toISOString(),
+              service: "amm-gateway",
+              severity: "Error",
+            },
+            httpStatus: 400,
+            transferIds: hasRefund ? [] : [initialTransferId],
+            lpIdentityPublicKey: firstPoolId,
+          });
         }
 
         return response;
@@ -1464,12 +1497,29 @@ export class FlashnetClient {
         if (!response.accepted) {
           const errorMessage =
             response.error || "Add liquidity rejected by the AMM";
+          const hasRefund = !!(
+            response.refund?.assetAAmount || response.refund?.assetBAmount
+          );
           const refundInfo = response.refund
             ? ` Refunds: Asset A: ${
                 response.refund.assetAAmount || 0
               }, Asset B: ${response.refund.assetBAmount || 0}`
             : "";
-          throw new Error(`${errorMessage}.${refundInfo}`);
+
+          throw new FlashnetError(`${errorMessage}.${refundInfo}`, {
+            response: {
+              errorCode: hasRefund ? "FSAG-4203" : "UNKNOWN", // Phase error if refunded
+              errorCategory: hasRefund ? "Business" : "System",
+              message: `${errorMessage}.${refundInfo}`,
+              requestId: "",
+              timestamp: new Date().toISOString(),
+              service: "amm-gateway",
+              severity: "Error",
+            },
+            httpStatus: 400,
+            transferIds: hasRefund ? [] : [assetATransferId, assetBTransferId],
+            lpIdentityPublicKey: params.poolId,
+          });
         }
 
         return response;
@@ -2181,6 +2231,19 @@ export class FlashnetClient {
           enhancedMessage += ` [Clawback failed for: ${failedIds}]`;
         }
 
+        // Determine remediation based on clawback results
+        let remediation: string;
+        if (clawbackSummary.failureCount === 0) {
+          remediation =
+            "Your funds have been automatically recovered. No action needed.";
+        } else if (clawbackSummary.successCount > 0) {
+          remediation = `${clawbackSummary.successCount} transfer(s) recovered. Manual clawback needed for remaining transfers.`;
+        } else {
+          remediation =
+            flashnetError.remediation ??
+            "Automatic recovery failed. Please initiate a manual clawback.";
+        }
+
         // Throw new error with typed clawback summary
         const errorWithClawback = new FlashnetError(enhancedMessage, {
           response: {
@@ -2192,7 +2255,7 @@ export class FlashnetClient {
             timestamp: flashnetError.timestamp,
             service: flashnetError.service,
             severity: flashnetError.severity,
-            remediation: flashnetError.remediation,
+            remediation,
           },
           httpStatus: flashnetError.httpStatus,
           transferIds: clawbackSummary.unrecoveredTransferIds,
