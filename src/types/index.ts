@@ -1466,3 +1466,7 @@ export function calculateThresholdPercentage(
     return 0;
   }
 }
+
+// ===== Error Types =====
+// Re-export all error types from errors module
+export * from "./errors";

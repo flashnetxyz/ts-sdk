@@ -13,10 +13,12 @@ import {
   type AddLiquidityResponse,
   type AllLpPositionsResponse,
   type AllowedAssetsResponse,
+  type AutoClawbackSummary,
   type CheckClawbackEligibilityRequest,
   type CheckClawbackEligibilityResponse,
   type ClaimEscrowRequest,
   type ClaimEscrowResponse,
+  type ClawbackAttemptResult,
   type ClawbackRequest,
   type ClawbackResponse,
   type ClientEnvironment,
@@ -43,6 +45,7 @@ import {
   type FlashnetClientCustomConfig,
   type FlashnetClientEnvironmentConfig,
   type FlashnetClientLegacyConfig,
+  FlashnetError,
   type FundEscrowRequest,
   type FundEscrowResponse,
   type GetHostFeesRequest,
@@ -135,6 +138,56 @@ export interface TokenBalance {
 export interface WalletBalance {
   balance: bigint; // BTC balance in sats
   tokenBalances: Map<string, TokenBalance>;
+}
+
+/**
+ * Result of a single clawback monitor poll cycle
+ */
+export interface ClawbackPollResult {
+  /** Number of clawbackable transfers found */
+  transfersFound: number;
+  /** Number of clawback attempts made */
+  clawbacksAttempted: number;
+  /** Number of successful clawbacks */
+  clawbacksSucceeded: number;
+  /** Number of failed clawbacks */
+  clawbacksFailed: number;
+  /** Detailed results for each clawback attempt */
+  results: ClawbackAttemptResult[];
+}
+
+/**
+ * Options for configuring the clawback monitor
+ */
+export interface ClawbackMonitorOptions {
+  /** Polling interval in milliseconds (default: 60000 = 1 minute) */
+  intervalMs?: number;
+  /** Number of clawbacks to process per batch (default: 2, for rate limit safety) */
+  batchSize?: number;
+  /** Delay between batches in milliseconds (default: 500ms) */
+  batchDelayMs?: number;
+  /** Maximum transfers to fetch per poll (default: 100) */
+  maxTransfersPerPoll?: number;
+  /** Called when a clawback succeeds */
+  onClawbackSuccess?: (result: ClawbackAttemptResult) => void;
+  /** Called when a clawback fails */
+  onClawbackError?: (transferId: string, error: unknown) => void;
+  /** Called after each poll cycle completes */
+  onPollComplete?: (result: ClawbackPollResult) => void;
+  /** Called if the poll itself fails (e.g., network error fetching transfers) */
+  onPollError?: (error: unknown) => void;
+}
+
+/**
+ * Handle returned by startClawbackMonitor to control the monitor
+ */
+export interface ClawbackMonitorHandle {
+  /** Check if the monitor is currently running */
+  isRunning: () => boolean;
+  /** Stop the monitor (waits for current poll to complete) */
+  stop: () => Promise<void>;
+  /** Trigger an immediate poll (throws if monitor is stopped) */
+  pollNow: () => Promise<ClawbackPollResult>;
 }
 
 /**
@@ -929,17 +982,26 @@ export class FlashnetClient {
       amount: assetAInitialReserve,
     });
 
-    const confirmResponse = await this.confirmInitialDeposit(
-      createResponse.poolId,
-      assetATransferId,
-      poolOwnerPublicKey
-    );
+    // Execute confirm with auto-clawback on failure
+    await this.executeWithAutoClawback(
+      async () => {
+        const confirmResponse = await this.confirmInitialDeposit(
+          createResponse.poolId,
+          assetATransferId,
+          poolOwnerPublicKey
+        );
 
-    if (!confirmResponse.confirmed) {
-      throw new Error(
-        `Failed to confirm initial deposit: ${confirmResponse.message}`
-      );
-    }
+        if (!confirmResponse.confirmed) {
+          throw new Error(
+            `Failed to confirm initial deposit: ${confirmResponse.message}`
+          );
+        }
+
+        return confirmResponse;
+      },
+      [assetATransferId],
+      createResponse.poolId
+    );
 
     return createResponse;
   }
@@ -1007,6 +1069,9 @@ export class FlashnetClient {
 
   /**
    * Execute a swap
+   *
+   * If the swap fails with a clawbackable error, the SDK will automatically
+   * attempt to recover the transferred funds via clawback.
    */
   async executeSwap(params: {
     poolId: string;
@@ -1044,12 +1109,16 @@ export class FlashnetClient {
       "Insufficient balance for swap: "
     );
 
-    const response = await this.executeSwapIntent({
-      ...params,
-      transferId,
-    });
-
-    return response;
+    // Execute with auto-clawback on failure
+    return this.executeWithAutoClawback(
+      () =>
+        this.executeSwapIntent({
+          ...params,
+          transferId,
+        }),
+      [transferId],
+      params.poolId
+    );
   }
 
   async executeSwapIntent(params: {
@@ -1117,10 +1186,28 @@ export class FlashnetClient {
     // Check if the swap was accepted
     if (!response.accepted) {
       const errorMessage = response.error || "Swap rejected by the AMM";
-      const refundInfo = response.refundedAmount
+      const hasRefund = !!response.refundedAmount;
+      const refundInfo = hasRefund
         ? ` Refunded ${response.refundedAmount} of ${response.refundedAssetAddress} via transfer ${response.refundTransferId}`
         : "";
-      throw new Error(`${errorMessage}.${refundInfo}`);
+
+      // If refund was provided, funds are safe - use auto_refund recovery
+      // If no refund, funds may need clawback
+      throw new FlashnetError(`${errorMessage}.${refundInfo}`, {
+        response: {
+          errorCode: hasRefund ? "FSAG-4202" : "UNKNOWN", // Slippage if refunded
+          errorCategory: hasRefund ? "Business" : "System",
+          message: `${errorMessage}.${refundInfo}`,
+          requestId: "",
+          timestamp: new Date().toISOString(),
+          service: "amm-gateway",
+          severity: "Error",
+        },
+        httpStatus: 400,
+        // Don't include transferIds if refunded - no clawback needed
+        transferIds: hasRefund ? [] : [params.transferId],
+        lpIdentityPublicKey: params.poolId,
+      });
     }
 
     return response;
@@ -1142,6 +1229,9 @@ export class FlashnetClient {
 
   /**
    * Execute a route swap (multi-hop swap)
+   *
+   * If the route swap fails with a clawbackable error, the SDK will automatically
+   * attempt to recover the transferred funds via clawback.
    */
   async executeRouteSwap(params: {
     hops: Array<{
@@ -1201,81 +1291,104 @@ export class FlashnetClient {
       "Insufficient balance for route swap: "
     );
 
-    // Prepare hops for validation
-    const hops: RouteHopValidation[] = params.hops.map((hop) => ({
-      lpIdentityPublicKey: hop.poolId,
-      inputAssetAddress: this.toHexTokenIdentifier(hop.assetInAddress),
-      outputAssetAddress: this.toHexTokenIdentifier(hop.assetOutAddress),
-      hopIntegratorFeeRateBps:
-        hop.hopIntegratorFeeRateBps !== undefined &&
-        hop.hopIntegratorFeeRateBps !== null
-          ? hop.hopIntegratorFeeRateBps.toString()
-          : "0",
-    }));
+    // Execute with auto-clawback on failure
+    return this.executeWithAutoClawback(
+      async () => {
+        // Prepare hops for validation
+        const hops: RouteHopValidation[] = params.hops.map((hop) => ({
+          lpIdentityPublicKey: hop.poolId,
+          inputAssetAddress: this.toHexTokenIdentifier(hop.assetInAddress),
+          outputAssetAddress: this.toHexTokenIdentifier(hop.assetOutAddress),
+          hopIntegratorFeeRateBps:
+            hop.hopIntegratorFeeRateBps !== undefined &&
+            hop.hopIntegratorFeeRateBps !== null
+              ? hop.hopIntegratorFeeRateBps.toString()
+              : "0",
+        }));
 
-    // Convert hops and ensure integrator fee is always present
-    const requestHops: RouteHopRequest[] = params.hops.map((hop) => ({
-      poolId: hop.poolId,
-      assetInAddress: this.toHexTokenIdentifier(hop.assetInAddress),
-      assetOutAddress: this.toHexTokenIdentifier(hop.assetOutAddress),
-      hopIntegratorFeeRateBps:
-        hop.hopIntegratorFeeRateBps !== undefined &&
-        hop.hopIntegratorFeeRateBps !== null
-          ? hop.hopIntegratorFeeRateBps.toString()
-          : "0",
-    }));
+        // Convert hops and ensure integrator fee is always present
+        const requestHops: RouteHopRequest[] = params.hops.map((hop) => ({
+          poolId: hop.poolId,
+          assetInAddress: this.toHexTokenIdentifier(hop.assetInAddress),
+          assetOutAddress: this.toHexTokenIdentifier(hop.assetOutAddress),
+          hopIntegratorFeeRateBps:
+            hop.hopIntegratorFeeRateBps !== undefined &&
+            hop.hopIntegratorFeeRateBps !== null
+              ? hop.hopIntegratorFeeRateBps.toString()
+              : "0",
+        }));
 
-    // Generate route swap intent
-    const nonce = generateNonce();
-    const intentMessage = generateRouteSwapIntentMessage({
-      userPublicKey: this.publicKey,
-      hops: hops.map((hop) => ({
-        lpIdentityPublicKey: hop.lpIdentityPublicKey,
-        inputAssetAddress: hop.inputAssetAddress,
-        outputAssetAddress: hop.outputAssetAddress,
-        hopIntegratorFeeRateBps: hop.hopIntegratorFeeRateBps,
-      })),
-      initialSparkTransferId: initialTransferId,
-      inputAmount: params.inputAmount.toString(),
-      maxRouteSlippageBps: params.maxRouteSlippageBps.toString(),
-      minAmountOut: params.minAmountOut,
-      nonce,
-      defaultIntegratorFeeRateBps: params.integratorFeeRateBps?.toString(),
-    });
+        // Generate route swap intent
+        const nonce = generateNonce();
+        const intentMessage = generateRouteSwapIntentMessage({
+          userPublicKey: this.publicKey,
+          hops: hops.map((hop) => ({
+            lpIdentityPublicKey: hop.lpIdentityPublicKey,
+            inputAssetAddress: hop.inputAssetAddress,
+            outputAssetAddress: hop.outputAssetAddress,
+            hopIntegratorFeeRateBps: hop.hopIntegratorFeeRateBps,
+          })),
+          initialSparkTransferId: initialTransferId,
+          inputAmount: params.inputAmount.toString(),
+          maxRouteSlippageBps: params.maxRouteSlippageBps.toString(),
+          minAmountOut: params.minAmountOut,
+          nonce,
+          defaultIntegratorFeeRateBps: params.integratorFeeRateBps?.toString(),
+        });
 
-    // Sign intent
-    const messageHash = new Uint8Array(
-      await crypto.subtle.digest("SHA-256", intentMessage)
+        // Sign intent
+        const messageHash = new Uint8Array(
+          await crypto.subtle.digest("SHA-256", intentMessage)
+        );
+        const signature = await (
+          this._wallet as any
+        ).config.signer.signMessageWithIdentityKey(messageHash, true);
+
+        const request: ExecuteRouteSwapRequest = {
+          userPublicKey: this.publicKey,
+          hops: requestHops,
+          initialSparkTransferId: initialTransferId,
+          inputAmount: params.inputAmount.toString(),
+          maxRouteSlippageBps: params.maxRouteSlippageBps.toString(),
+          minAmountOut: params.minAmountOut,
+          nonce,
+          signature: getHexFromUint8Array(signature),
+          integratorFeeRateBps: params.integratorFeeRateBps?.toString() || "0",
+          integratorPublicKey: params.integratorPublicKey || "",
+        };
+
+        const response = await this.typedApi.executeRouteSwap(request);
+
+        // Check if the route swap was accepted
+        if (!response.accepted) {
+          const errorMessage =
+            response.error || "Route swap rejected by the AMM";
+          const hasRefund = !!response.refundedAmount;
+          const refundInfo = hasRefund
+            ? ` Refunded ${response.refundedAmount} of ${response.refundedAssetPublicKey} via transfer ${response.refundTransferId}`
+            : "";
+
+          throw new FlashnetError(`${errorMessage}.${refundInfo}`, {
+            response: {
+              errorCode: hasRefund ? "FSAG-4202" : "UNKNOWN",
+              errorCategory: hasRefund ? "Business" : "System",
+              message: `${errorMessage}.${refundInfo}`,
+              requestId: "",
+              timestamp: new Date().toISOString(),
+              service: "amm-gateway",
+              severity: "Error",
+            },
+            httpStatus: 400,
+            transferIds: hasRefund ? [] : [initialTransferId],
+            lpIdentityPublicKey: firstPoolId,
+          });
+        }
+
+        return response;
+      },
+      [initialTransferId],
+      firstPoolId
     );
-    const signature = await (
-      this._wallet as any
-    ).config.signer.signMessageWithIdentityKey(messageHash, true);
-
-    const request: ExecuteRouteSwapRequest = {
-      userPublicKey: this.publicKey,
-      hops: requestHops,
-      initialSparkTransferId: initialTransferId,
-      inputAmount: params.inputAmount.toString(),
-      maxRouteSlippageBps: params.maxRouteSlippageBps.toString(),
-      minAmountOut: params.minAmountOut,
-      nonce,
-      signature: getHexFromUint8Array(signature),
-      integratorFeeRateBps: params.integratorFeeRateBps?.toString() || "0",
-      integratorPublicKey: params.integratorPublicKey || "",
-    };
-
-    const response = await this.typedApi.executeRouteSwap(request);
-
-    // Check if the route swap was accepted
-    if (!response.accepted) {
-      const errorMessage = response.error || "Route swap rejected by the AMM";
-      const refundInfo = response.refundedAmount
-        ? ` Refunded ${response.refundedAmount} of ${response.refundedAssetPublicKey} via transfer ${response.refundTransferId}`
-        : "";
-      throw new Error(`${errorMessage}.${refundInfo}`);
-    }
-
-    return response;
   }
 
   // ===== Liquidity Operations =====
@@ -1293,6 +1406,9 @@ export class FlashnetClient {
 
   /**
    * Add liquidity to a pool
+   *
+   * If adding liquidity fails with a clawbackable error, the SDK will automatically
+   * attempt to recover the transferred funds via clawback.
    */
   async addLiquidity(params: {
     poolId: string;
@@ -1337,56 +1453,80 @@ export class FlashnetClient {
       "Insufficient balance for adding liquidity: "
     );
 
-    // Generate add liquidity intent
-    const nonce = generateNonce();
-    const intentMessage = generateAddLiquidityIntentMessage({
-      userPublicKey: this.publicKey,
-      lpIdentityPublicKey: params.poolId,
-      assetASparkTransferId: assetATransferId,
-      assetBSparkTransferId: assetBTransferId,
-      assetAAmount: params.assetAAmount.toString(),
-      assetBAmount: params.assetBAmount.toString(),
-      assetAMinAmountIn: params.assetAMinAmountIn.toString(),
-      assetBMinAmountIn: params.assetBMinAmountIn.toString(),
-      nonce,
-    });
+    // Execute with auto-clawback on failure
+    return this.executeWithAutoClawback(
+      async () => {
+        // Generate add liquidity intent
+        const nonce = generateNonce();
+        const intentMessage = generateAddLiquidityIntentMessage({
+          userPublicKey: this.publicKey,
+          lpIdentityPublicKey: params.poolId,
+          assetASparkTransferId: assetATransferId,
+          assetBSparkTransferId: assetBTransferId,
+          assetAAmount: params.assetAAmount.toString(),
+          assetBAmount: params.assetBAmount.toString(),
+          assetAMinAmountIn: params.assetAMinAmountIn.toString(),
+          assetBMinAmountIn: params.assetBMinAmountIn.toString(),
+          nonce,
+        });
 
-    // Sign intent
-    const messageHash = new Uint8Array(
-      await crypto.subtle.digest("SHA-256", intentMessage)
+        // Sign intent
+        const messageHash = new Uint8Array(
+          await crypto.subtle.digest("SHA-256", intentMessage)
+        );
+        const signature = await (
+          this._wallet as any
+        ).config.signer.signMessageWithIdentityKey(messageHash, true);
+
+        const request: AddLiquidityRequest = {
+          userPublicKey: this.publicKey,
+          poolId: params.poolId,
+          assetASparkTransferId: assetATransferId,
+          assetBSparkTransferId: assetBTransferId,
+          assetAAmountToAdd: params.assetAAmount.toString(),
+          assetBAmountToAdd: params.assetBAmount.toString(),
+          assetAMinAmountIn: params.assetAMinAmountIn.toString(),
+          assetBMinAmountIn: params.assetBMinAmountIn.toString(),
+          nonce,
+          signature: getHexFromUint8Array(signature),
+        };
+
+        const response = await this.typedApi.addLiquidity(request);
+
+        // Check if the liquidity addition was accepted
+        if (!response.accepted) {
+          const errorMessage =
+            response.error || "Add liquidity rejected by the AMM";
+          const hasRefund = !!(
+            response.refund?.assetAAmount || response.refund?.assetBAmount
+          );
+          const refundInfo = response.refund
+            ? ` Refunds: Asset A: ${
+                response.refund.assetAAmount || 0
+              }, Asset B: ${response.refund.assetBAmount || 0}`
+            : "";
+
+          throw new FlashnetError(`${errorMessage}.${refundInfo}`, {
+            response: {
+              errorCode: hasRefund ? "FSAG-4203" : "UNKNOWN", // Phase error if refunded
+              errorCategory: hasRefund ? "Business" : "System",
+              message: `${errorMessage}.${refundInfo}`,
+              requestId: "",
+              timestamp: new Date().toISOString(),
+              service: "amm-gateway",
+              severity: "Error",
+            },
+            httpStatus: 400,
+            transferIds: hasRefund ? [] : [assetATransferId, assetBTransferId],
+            lpIdentityPublicKey: params.poolId,
+          });
+        }
+
+        return response;
+      },
+      [assetATransferId, assetBTransferId],
+      params.poolId
     );
-    const signature = await (
-      this._wallet as any
-    ).config.signer.signMessageWithIdentityKey(messageHash, true);
-
-    const request: AddLiquidityRequest = {
-      userPublicKey: this.publicKey,
-      poolId: params.poolId,
-      assetASparkTransferId: assetATransferId,
-      assetBSparkTransferId: assetBTransferId,
-      assetAAmountToAdd: params.assetAAmount.toString(),
-      assetBAmountToAdd: params.assetBAmount.toString(),
-      assetAMinAmountIn: params.assetAMinAmountIn.toString(),
-      assetBMinAmountIn: params.assetBMinAmountIn.toString(),
-      nonce,
-      signature: getHexFromUint8Array(signature),
-    };
-
-    const response = await this.typedApi.addLiquidity(request);
-
-    // Check if the liquidity addition was accepted
-    if (!response.accepted) {
-      const errorMessage =
-        response.error || "Add liquidity rejected by the AMM";
-      const refundInfo = response.refund
-        ? ` Refunds: Asset A: ${response.refund.assetAAmount || 0}, Asset B: ${
-            response.refund.assetBAmount || 0
-          }`
-        : "";
-      throw new Error(`${errorMessage}.${refundInfo}`);
-    }
-
-    return response;
   }
 
   /**
@@ -1997,6 +2137,298 @@ export class FlashnetClient {
     await this.ensureInitialized();
     await this.ensurePingOk();
     return this.typedApi.listClawbackableTransfers(query);
+  }
+
+  /**
+   * Attempt to clawback multiple transfers
+   *
+   * @param transferIds - Array of transfer IDs to clawback
+   * @param lpIdentityPublicKey - The LP wallet public key
+   * @returns Array of results for each clawback attempt
+   */
+  async clawbackMultiple(
+    transferIds: string[],
+    lpIdentityPublicKey: string
+  ): Promise<ClawbackAttemptResult[]> {
+    const results: ClawbackAttemptResult[] = [];
+
+    for (const transferId of transferIds) {
+      try {
+        const response = await this.clawback({
+          sparkTransferId: transferId,
+          lpIdentityPublicKey,
+        });
+        results.push({
+          transferId,
+          success: true,
+          response,
+        });
+      } catch (err) {
+        results.push({
+          transferId,
+          success: false,
+          error: err instanceof Error ? err.message : String(err),
+        });
+      }
+    }
+
+    return results;
+  }
+
+  /**
+   * Internal helper to execute an operation with automatic clawback on failure
+   *
+   * @param operation - The async operation to execute
+   * @param transferIds - Transfer IDs that were sent and may need clawback
+   * @param lpIdentityPublicKey - The LP wallet public key for clawback
+   * @returns The result of the operation
+   * @throws FlashnetError with typed clawbackSummary attached
+   */
+  private async executeWithAutoClawback<T>(
+    operation: () => Promise<T>,
+    transferIds: string[],
+    lpIdentityPublicKey: string
+  ): Promise<T> {
+    try {
+      return await operation();
+    } catch (error) {
+      // Convert to FlashnetError if not already
+      const flashnetError = FlashnetError.fromUnknown(error, {
+        transferIds,
+        lpIdentityPublicKey,
+      });
+
+      // Check if we should attempt clawback
+      if (flashnetError.shouldClawback() && transferIds.length > 0) {
+        // Attempt to clawback all transfers
+        const clawbackResults = await this.clawbackMultiple(
+          transferIds,
+          lpIdentityPublicKey
+        );
+
+        // Separate successful and failed clawbacks
+        const successfulClawbacks = clawbackResults.filter((r) => r.success);
+        const failedClawbacks = clawbackResults.filter((r) => !r.success);
+
+        // Build typed clawback summary
+        const clawbackSummary: AutoClawbackSummary = {
+          attempted: true,
+          totalTransfers: transferIds.length,
+          successCount: successfulClawbacks.length,
+          failureCount: failedClawbacks.length,
+          results: clawbackResults,
+          recoveredTransferIds: successfulClawbacks.map((r) => r.transferId),
+          unrecoveredTransferIds: failedClawbacks.map((r) => r.transferId),
+        };
+
+        // Create enhanced error message
+        let enhancedMessage = flashnetError.message;
+        if (successfulClawbacks.length > 0) {
+          enhancedMessage += ` [Auto-clawback: ${successfulClawbacks.length}/${transferIds.length} transfers recovered]`;
+        }
+        if (failedClawbacks.length > 0) {
+          const failedIds = failedClawbacks.map((r) => r.transferId).join(", ");
+          enhancedMessage += ` [Clawback failed for: ${failedIds}]`;
+        }
+
+        // Determine remediation based on clawback results
+        let remediation: string;
+        if (clawbackSummary.failureCount === 0) {
+          remediation =
+            "Your funds have been automatically recovered. No action needed.";
+        } else if (clawbackSummary.successCount > 0) {
+          remediation = `${clawbackSummary.successCount} transfer(s) recovered. Manual clawback needed for remaining transfers.`;
+        } else {
+          remediation =
+            flashnetError.remediation ??
+            "Automatic recovery failed. Please initiate a manual clawback.";
+        }
+
+        // Throw new error with typed clawback summary
+        const errorWithClawback = new FlashnetError(enhancedMessage, {
+          response: {
+            errorCode: flashnetError.errorCode,
+            errorCategory: flashnetError.category,
+            message: enhancedMessage,
+            details: flashnetError.details,
+            requestId: flashnetError.requestId,
+            timestamp: flashnetError.timestamp,
+            service: flashnetError.service,
+            severity: flashnetError.severity,
+            remediation,
+          },
+          httpStatus: flashnetError.httpStatus,
+          transferIds: clawbackSummary.unrecoveredTransferIds,
+          lpIdentityPublicKey,
+          clawbackSummary,
+        });
+
+        throw errorWithClawback;
+      }
+
+      // Not a clawbackable error, just re-throw
+      throw flashnetError;
+    }
+  }
+
+  // ===== Clawback Monitor =====
+
+  /**
+   * Start a background job that periodically polls for clawbackable transfers
+   * and automatically claws them back.
+   *
+   * @param options - Monitor configuration options
+   * @returns ClawbackMonitorHandle to control the monitor
+   *
+   * @example
+   * ```typescript
+   * const monitor = client.startClawbackMonitor({
+   *   intervalMs: 60000, // Poll every 60 seconds
+   *   onClawbackSuccess: (result) => console.log('Recovered:', result.transferId),
+   *   onClawbackError: (transferId, error) => console.error('Failed:', transferId, error),
+   * });
+   *
+   * // Later, to stop:
+   * monitor.stop();
+   * ```
+   */
+  startClawbackMonitor(
+    options: ClawbackMonitorOptions = {}
+  ): ClawbackMonitorHandle {
+    const {
+      intervalMs = 60000, // Default: 1 minute
+      batchSize = 2, // Default: 2 clawbacks per batch (rate limit safe)
+      batchDelayMs = 500, // Default: 500ms between batches
+      maxTransfersPerPoll = 100, // Default: max 100 transfers per poll
+      onClawbackSuccess,
+      onClawbackError,
+      onPollComplete,
+      onPollError,
+    } = options;
+
+    let isRunning = true;
+    let timeoutId: ReturnType<typeof setTimeout> | null = null;
+    let currentPollPromise: Promise<void> | null = null;
+
+    const poll = async (): Promise<ClawbackPollResult> => {
+      const result: ClawbackPollResult = {
+        transfersFound: 0,
+        clawbacksAttempted: 0,
+        clawbacksSucceeded: 0,
+        clawbacksFailed: 0,
+        results: [],
+      };
+
+      try {
+        // Fetch clawbackable transfers
+        const response = await this.listClawbackableTransfers({
+          limit: maxTransfersPerPoll,
+        });
+
+        result.transfersFound = response.transfers.length;
+
+        if (response.transfers.length === 0) {
+          return result;
+        }
+
+        // Process in batches to respect rate limits
+        for (let i = 0; i < response.transfers.length; i += batchSize) {
+          if (!isRunning) {
+            break;
+          }
+
+          const batch = response.transfers.slice(i, i + batchSize);
+
+          // Process batch concurrently
+          const batchResults = await Promise.all(
+            batch.map(async (transfer) => {
+              result.clawbacksAttempted++;
+              try {
+                const clawbackResponse = await this.clawback({
+                  sparkTransferId: transfer.id,
+                  lpIdentityPublicKey: transfer.lpIdentityPublicKey,
+                });
+
+                const attemptResult: ClawbackAttemptResult = {
+                  transferId: transfer.id,
+                  success: true,
+                  response: clawbackResponse,
+                };
+
+                result.clawbacksSucceeded++;
+                onClawbackSuccess?.(attemptResult);
+                return attemptResult;
+              } catch (err) {
+                const attemptResult: ClawbackAttemptResult = {
+                  transferId: transfer.id,
+                  success: false,
+                  error: err instanceof Error ? err.message : String(err),
+                };
+
+                result.clawbacksFailed++;
+                onClawbackError?.(transfer.id, err);
+                return attemptResult;
+              }
+            })
+          );
+
+          result.results.push(...batchResults);
+
+          // Wait between batches if there are more to process
+          if (i + batchSize < response.transfers.length && isRunning) {
+            await new Promise((resolve) => setTimeout(resolve, batchDelayMs));
+          }
+        }
+      } catch (err) {
+        onPollError?.(err);
+      }
+
+      return result;
+    };
+
+    const scheduleNextPoll = () => {
+      if (!isRunning) {
+        return;
+      }
+      timeoutId = setTimeout(async () => {
+        if (!isRunning) {
+          return;
+        }
+        currentPollPromise = (async () => {
+          const result = await poll();
+          onPollComplete?.(result);
+          scheduleNextPoll();
+        })();
+      }, intervalMs);
+    };
+
+    // Start first poll immediately
+    currentPollPromise = (async () => {
+      const result = await poll();
+      onPollComplete?.(result);
+      scheduleNextPoll();
+    })();
+
+    return {
+      isRunning: () => isRunning,
+      stop: async () => {
+        isRunning = false;
+        if (timeoutId) {
+          clearTimeout(timeoutId);
+          timeoutId = null;
+        }
+        // Wait for current poll to complete
+        if (currentPollPromise) {
+          await currentPollPromise.catch(() => {});
+        }
+      },
+      pollNow: async () => {
+        if (!isRunning) {
+          throw new Error("Monitor is stopped");
+        }
+        return poll();
+      },
+    };
   }
 
   // ===== Token Address Operations =====
