@@ -29,6 +29,9 @@ export {
   type ClawbackPollResult,
   FlashnetClient,
   type FlashnetClientOptions,
+  type PayLightningWithTokenOptions,
+  type PayLightningWithTokenQuote,
+  type PayLightningWithTokenResult,
   type TokenBalance,
   type WalletBalance,
 } from "./src/client/FlashnetClient";

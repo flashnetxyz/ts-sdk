@@ -141,6 +141,87 @@ export interface WalletBalance {
 }
 
 /**
+ * Options for paying a Lightning invoice with a token
+ */
+export interface PayLightningWithTokenOptions {
+  /** BOLT11-encoded Lightning invoice to pay */
+  invoice: string;
+  /** Token identifier (hex or bech32m format) to use for payment */
+  tokenAddress: string;
+  /** Maximum slippage for the AMM swap in basis points (default: 100 = 1%) */
+  maxSlippageBps?: number;
+  /** Maximum Lightning routing fee in sats (default: calculated as max(5, amount * 0.17%)) */
+  maxLightningFeeSats?: number;
+  /** Prefer Spark transfers when possible (default: true) */
+  preferSpark?: boolean;
+  /** Integrator fee rate in basis points for the swap (optional) */
+  integratorFeeRateBps?: number;
+  /** Integrator public key for fee collection (optional) */
+  integratorPublicKey?: string;
+  /** Maximum time to wait for swap transfer completion in ms (default: 10000) */
+  transferTimeoutMs?: number;
+}
+
+/**
+ * Result of paying a Lightning invoice with a token
+ */
+export interface PayLightningWithTokenResult {
+  /** Whether the payment was successful */
+  success: boolean;
+  /** The pool used for the swap */
+  poolId: string;
+  /** Amount of token spent (including fees) */
+  tokenAmountSpent: string;
+  /** Amount of BTC received from swap */
+  btcAmountReceived: string;
+  /** Swap transaction ID */
+  swapTransferId: string;
+  /** Lightning payment ID */
+  lightningPaymentId?: string;
+  /** AMM fee paid in token units */
+  ammFeePaid: string;
+  /** Lightning routing fee paid in sats */
+  lightningFeePaid?: number;
+  /** Error message if failed */
+  error?: string;
+}
+
+/**
+ * Quote for paying a Lightning invoice with a token
+ */
+export interface PayLightningWithTokenQuote {
+  /** The pool that offers the best rate */
+  poolId: string;
+  /** Token address being swapped */
+  tokenAddress: string;
+  /** Amount of token required (including all fees) */
+  tokenAmountRequired: string;
+  /** BTC amount needed for the invoice (in sats), rounded up for AMM bit masking */
+  btcAmountRequired: string;
+  /** Original invoice amount in sats (before Lightning fee and AMM adjustments) */
+  invoiceAmountSats: number;
+  /** Estimated AMM fee in token units */
+  estimatedAmmFee: string;
+  /** Estimated Lightning routing fee in sats */
+  estimatedLightningFee: number;
+  /** Extra sats added due to AMM BTC variable fee (bit masking rounds down by up to 63 sats) */
+  btcVariableFeeAdjustment: number;
+  /** Execution price (token per sat) */
+  executionPrice: string;
+  /** Price impact percentage */
+  priceImpactPct: string;
+  /** Whether the token is asset A or B in the pool */
+  tokenIsAssetA: boolean;
+  /** Pool reserves for reference */
+  poolReserves: {
+    assetAReserve: string;
+    assetBReserve: string;
+  };
+  /** Warning message if any */
+  warningMessage?: string;
+}
+
+/**
  * Result of a single clawback monitor poll cycle
  */
 export interface ClawbackPollResult {
@@ -2690,6 +2771,666 @@ export class FlashnetClient {
         response.error || "Initial liquidity addition rejected by the AMM";
       throw new Error(errorMessage);
     }
+  }
+
+  // ===== Lightning Payment with Token =====
+
+  /**
+   * Get a quote for paying a Lightning invoice with a token.
+   * This calculates the optimal pool and token amount needed.
+   *
+   * @param invoice - BOLT11-encoded Lightning invoice
+   * @param tokenAddress - Token identifier to use for payment
+   * @param options - Optional configuration (slippage, integrator fees, etc.)
+   * @returns Quote with pricing details
+   * @throws Error if invoice amount or token amount is below Flashnet minimums
+   */
+  async getPayLightningWithTokenQuote(
+    invoice: string,
+    tokenAddress: string,
+    options?: {
+      maxSlippageBps?: number;
+      integratorFeeRateBps?: number;
+    }
+  ): Promise<PayLightningWithTokenQuote> {
+    await this.ensureInitialized();
+
+    // Decode the invoice to get the amount
+    const invoiceAmountSats = await this.decodeInvoiceAmount(invoice);
+    if (!invoiceAmountSats || invoiceAmountSats <= 0) {
+      throw new Error(
+        "Unable to decode invoice amount. Zero-amount invoices are not supported for token payments."
+      );
+    }
+
+    // Get Lightning fee estimate
+    const lightningFeeEstimate = await this.getLightningFeeEstimate(invoice);
+
+    // Total BTC needed = invoice amount + lightning fee
+    const baseBtcNeeded =
+      BigInt(invoiceAmountSats) + BigInt(lightningFeeEstimate);
+
+    // Round up to next multiple of 64 (2^6) to account for BTC variable fee bit masking.
+    // The AMM zeroes the lowest 6 bits of BTC output, so we need to request enough
+    // that after masking we still have the required amount.
+    // Example: 5014 -> masked to 4992, but if we request 5056, masked stays 5056
+    const BTC_VARIABLE_FEE_BITS = 6n;
+    const BTC_VARIABLE_FEE_MASK = 1n << BTC_VARIABLE_FEE_BITS; // 64
+    const totalBtcNeeded =
+      ((baseBtcNeeded + BTC_VARIABLE_FEE_MASK - 1n) / BTC_VARIABLE_FEE_MASK) *
+      BTC_VARIABLE_FEE_MASK;
+
+    // Check Flashnet minimum amounts early to provide clear error messages
+    const minAmounts = await this.getEnabledMinAmountsMap();
+
+    // Check BTC minimum (output from swap)
+    const btcMinAmount = minAmounts.get(BTC_ASSET_PUBKEY.toLowerCase());
+    if (btcMinAmount && totalBtcNeeded < btcMinAmount) {
+      throw new Error(
+        `Invoice amount too small. Flashnet minimum BTC output is ${btcMinAmount} sats, ` +
+          `but invoice + lightning fee totals only ${totalBtcNeeded} sats. ` +
+          `Please use an invoice of at least ${btcMinAmount} sats.`
+      );
+    }
+
+    // Find the best pool to swap token -> BTC
+    const poolQuote = await this.findBestPoolForTokenToBtc(
+      tokenAddress,
+      totalBtcNeeded.toString(),
+      options?.integratorFeeRateBps
+    );
+
+    // Check token minimum (input to swap)
+    const tokenHex = this.toHexTokenIdentifier(tokenAddress).toLowerCase();
+    const tokenMinAmount = minAmounts.get(tokenHex);
+    if (
+      tokenMinAmount &&
+      BigInt(poolQuote.tokenAmountRequired) < tokenMinAmount
+    ) {
+      throw new Error(
+        `Token amount too small. Flashnet minimum input is ${tokenMinAmount} units, ` +
+          `but calculated amount is only ${poolQuote.tokenAmountRequired} units. ` +
+          `Please use a larger invoice amount.`
+      );
+    }
+
+    // Calculate the BTC variable fee adjustment (how much extra we're requesting)
+    const btcVariableFeeAdjustment = Number(totalBtcNeeded - baseBtcNeeded);
+
+    return {
+      poolId: poolQuote.poolId,
+      tokenAddress: this.toHexTokenIdentifier(tokenAddress),
+      tokenAmountRequired: poolQuote.tokenAmountRequired,
+      btcAmountRequired: totalBtcNeeded.toString(),
+      invoiceAmountSats: invoiceAmountSats,
+      estimatedAmmFee: poolQuote.estimatedAmmFee,
+      estimatedLightningFee: lightningFeeEstimate,
+      btcVariableFeeAdjustment,
+      executionPrice: poolQuote.executionPrice,
+      priceImpactPct: poolQuote.priceImpactPct,
+      tokenIsAssetA: poolQuote.tokenIsAssetA,
+      poolReserves: poolQuote.poolReserves,
+      warningMessage: poolQuote.warningMessage,
+    };
+  }
+
+  /**
+   * Pay a Lightning invoice using a token.
+   * This swaps the token to BTC on Flashnet and uses the BTC to pay the invoice.
+   *
+   * @param options - Payment options including invoice and token address
+   * @returns Payment result with transaction details
+   */
+  async payLightningWithToken(
+    options: PayLightningWithTokenOptions
+  ): Promise<PayLightningWithTokenResult> {
+    await this.ensureInitialized();
+
+    const {
+      invoice,
+      tokenAddress,
+      maxSlippageBps = 100, // 1% default
+      maxLightningFeeSats,
+      preferSpark = true,
+      integratorFeeRateBps,
+      integratorPublicKey,
+      transferTimeoutMs = 10000,
+    } = options;
+
+    try {
+      // Step 1: Get a quote for the payment
+      const quote = await this.getPayLightningWithTokenQuote(
+        invoice,
+        tokenAddress,
+        {
+          maxSlippageBps,
+          integratorFeeRateBps,
+        }
+      );
+
+      // Step 2: Check balance
+      await this.checkBalance({
+        balancesToCheck: [
+          {
+            assetAddress: tokenAddress,
+            amount: quote.tokenAmountRequired,
+          },
+        ],
+        errorPrefix: "Insufficient token balance for Lightning payment: ",
+      });
+
+      // Step 3: Get pool details
+      const pool = await this.getPool(quote.poolId);
+
+      // Step 4: Determine swap direction and execute
+      const assetInAddress = quote.tokenIsAssetA
+        ? pool.assetAAddress
+        : pool.assetBAddress;
+      const assetOutAddress = quote.tokenIsAssetA
+        ? pool.assetBAddress
+        : pool.assetAAddress;
+
+      // Calculate min amount out with slippage protection
+      const minBtcOut = this.calculateMinAmountOut(
+        quote.btcAmountRequired,
+        maxSlippageBps
+      );
+
+      // Execute the swap
+      const swapResponse = await this.executeSwap({
+        poolId: quote.poolId,
+        assetInAddress,
+        assetOutAddress,
+        amountIn: quote.tokenAmountRequired,
+        maxSlippageBps,
+        minAmountOut: minBtcOut,
+        integratorFeeRateBps,
+        integratorPublicKey,
+      });
+
+      if (!swapResponse.accepted || !swapResponse.outboundTransferId) {
+        return {
+          success: false,
+          poolId: quote.poolId,
+          tokenAmountSpent: quote.tokenAmountRequired,
+          btcAmountReceived: "0",
+          swapTransferId: swapResponse.outboundTransferId || "",
+          ammFeePaid: quote.estimatedAmmFee,
+          error: swapResponse.error || "Swap was not accepted",
+        };
+      }
+
+      // Step 5: Wait for the transfer to complete
+      const transferComplete = await this.waitForTransferCompletion(
+        swapResponse.outboundTransferId,
+        transferTimeoutMs
+      );
+
+      if (!transferComplete) {
+        return {
+          success: false,
+          poolId: quote.poolId,
+          tokenAmountSpent: quote.tokenAmountRequired,
+          btcAmountReceived: swapResponse.amountOut || "0",
+          swapTransferId: swapResponse.outboundTransferId,
+          ammFeePaid: quote.estimatedAmmFee,
+          error: "Transfer did not complete within timeout",
+        };
+      }
+
+      // Step 6: Calculate Lightning fee limit
+      const invoiceAmountSats = await this.decodeInvoiceAmount(invoice);
+      const effectiveMaxLightningFee =
+        maxLightningFeeSats ??
+        Math.max(5, Math.ceil(invoiceAmountSats * 0.0017)); // 17 bps or 5 sats minimum
+
+      // Step 7: Pay the Lightning invoice
+      const lightningPayment = await (this._wallet as any).payLightningInvoice({
+        invoice,
+        maxFeeSats: effectiveMaxLightningFee,
+        preferSpark,
+      });
+
+      return {
+        success: true,
+        poolId: quote.poolId,
+        tokenAmountSpent: quote.tokenAmountRequired,
+        btcAmountReceived: swapResponse.amountOut || quote.btcAmountRequired,
+        swapTransferId: swapResponse.outboundTransferId,
+        lightningPaymentId: lightningPayment.id,
+        ammFeePaid: quote.estimatedAmmFee,
+        lightningFeePaid: effectiveMaxLightningFee,
+      };
+    } catch (error) {
+      const errorMessage =
+        error instanceof Error ? error.message : String(error);
+      return {
+        success: false,
+        poolId: "",
+        tokenAmountSpent: "0",
+        btcAmountReceived: "0",
+        swapTransferId: "",
+        ammFeePaid: "0",
+        error: errorMessage,
+      };
+    }
+  }
+
+  /**
+   * Find the best pool for swapping a token to BTC
+   * @private
+   */
+  private async findBestPoolForTokenToBtc(
+    tokenAddress: string,
+    btcAmountNeeded: string,
+    integratorFeeRateBps?: number
+  ): Promise<{
+    poolId: string;
+    tokenAmountRequired: string;
+    estimatedAmmFee: string;
+    executionPrice: string;
+    priceImpactPct: string;
+    tokenIsAssetA: boolean;
+    poolReserves: {
+      assetAReserve: string;
+      assetBReserve: string;
+    };
+    warningMessage?: string;
+  }> {
+    const tokenHex = this.toHexTokenIdentifier(tokenAddress);
+    const btcHex = BTC_ASSET_PUBKEY;
+
+    // Find all pools that have this token paired with BTC
+    const poolsWithTokenAsA = await this.listPools({
+      assetAAddress: tokenHex,
+      assetBAddress: btcHex,
+    });
+
+    const poolsWithTokenAsB = await this.listPools({
+      assetAAddress: btcHex,
+      assetBAddress: tokenHex,
+    });
+
+    const allPools = [
+      ...poolsWithTokenAsA.pools.map((p) => ({ ...p, tokenIsAssetA: true })),
+      ...poolsWithTokenAsB.pools.map((p) => ({ ...p, tokenIsAssetA: false })),
+    ];
+
+    if (allPools.length === 0) {
+      throw new Error(
+        `No liquidity pool found for token ${tokenAddress} paired with BTC`
+      );
+    }
+
+    // Find the best pool (lowest token cost for the required BTC)
+    let bestPool: (typeof allPools)[0] | null = null;
+    let bestTokenAmount = BigInt(Number.MAX_SAFE_INTEGER);
+    let bestSimulation: {
+      amountIn: string;
+      fee: string;
+      executionPrice: string;
+      priceImpactPct: string;
+      warningMessage?: string;
+    } | null = null;
+
+    for (const pool of allPools) {
+      try {
+        // Get pool details for reserves
+        const poolDetails = await this.getPool(pool.lpPublicKey);
+
+        // Calculate the token amount needed using AMM math
+        const calculation = this.calculateTokenAmountForBtcOutput(
+          btcAmountNeeded,
+          poolDetails.assetAReserve,
+          poolDetails.assetBReserve,
+          poolDetails.lpFeeBps,
+          poolDetails.hostFeeBps,
+          pool.tokenIsAssetA,
+          integratorFeeRateBps
+        );
+
+        const tokenAmount = BigInt(calculation.amountIn);
+
+        // Check if this is better than our current best
+        if (tokenAmount < bestTokenAmount) {
+          // Verify with simulation
+          const simulation = await this.simulateSwap({
+            poolId: pool.lpPublicKey,
+            assetInAddress: pool.tokenIsAssetA
+              ? poolDetails.assetAAddress
+              : poolDetails.assetBAddress,
+            assetOutAddress: pool.tokenIsAssetA
+              ? poolDetails.assetBAddress
+              : poolDetails.assetAAddress,
+            amountIn: calculation.amountIn,
+            integratorBps: integratorFeeRateBps,
+          });
+
+          // Verify the output is sufficient
+          if (BigInt(simulation.amountOut) >= BigInt(btcAmountNeeded)) {
+            bestPool = pool;
+            bestTokenAmount = tokenAmount;
+            bestSimulation = {
+              amountIn: calculation.amountIn,
+              fee: calculation.totalFee,
+              executionPrice: simulation.executionPrice || "0",
+              priceImpactPct: simulation.priceImpactPct || "0",
+              warningMessage: simulation.warningMessage,
+            };
+          }
+        }
+      } catch {}
+    }
+
+    if (!bestPool || !bestSimulation) {
+      throw new Error(
+        `No pool has sufficient liquidity for ${btcAmountNeeded} sats`
+      );
+    }
+
+    const poolDetails = await this.getPool(bestPool.lpPublicKey);
+
+    return {
+      poolId: bestPool.lpPublicKey,
+      tokenAmountRequired: bestSimulation.amountIn,
+      estimatedAmmFee: bestSimulation.fee,
+      executionPrice: bestSimulation.executionPrice,
+      priceImpactPct: bestSimulation.priceImpactPct,
+      tokenIsAssetA: bestPool.tokenIsAssetA,
+      poolReserves: {
+        assetAReserve: poolDetails.assetAReserve,
+        assetBReserve: poolDetails.assetBReserve,
+      },
+      warningMessage: bestSimulation.warningMessage,
+    };
+  }
+
+  /**
+   * Calculate the token amount needed to get a specific BTC output.
+   * Implements the AMM fee-inclusive model.
+   * @private
+   */
+  private calculateTokenAmountForBtcOutput(
+    btcAmountOut: string,
+    reserveA: string,
+    reserveB: string,
+    lpFeeBps: number,
+    hostFeeBps: number,
+    tokenIsAssetA: boolean,
+    integratorFeeBps?: number
+  ): { amountIn: string; totalFee: string } {
+    const amountOut = BigInt(btcAmountOut);
+    const resA = BigInt(reserveA);
+    const resB = BigInt(reserveB);
+    const totalFeeBps = lpFeeBps + hostFeeBps + (integratorFeeBps || 0);
+    const feeRate = Number(totalFeeBps) / 10000; // Convert bps to decimal
+
+    // Token is the input asset
+    // BTC is the output asset
+
+    if (tokenIsAssetA) {
+      // Token is asset A, BTC is asset B
+      // A → B swap: we want BTC out (asset B)
+      // reserve_in = reserveA (token), reserve_out = reserveB (BTC)
+
+      // Constant product formula for amount_in given amount_out:
+      // amount_in_effective = (reserve_in * amount_out) / (reserve_out - amount_out)
+      const reserveIn = resA;
+      const reserveOut = resB;
+
+      if (amountOut >= reserveOut) {
+        throw new Error(
+          "Insufficient liquidity: requested BTC amount exceeds reserve"
+        );
+      }
+
+      // Calculate effective amount in (before fees)
+      const amountInEffective =
+        (reserveIn * amountOut) / (reserveOut - amountOut) + 1n; // +1 for rounding up
+
+      // A→B swap: LP fee deducted from input A, integrator fee from output B
+      // amount_in = amount_in_effective * (1 + lp_fee_rate)
+      // Then integrator fee is deducted from output, so we need slightly more input
+      const lpFeeRate = Number(lpFeeBps) / 10000;
+      const integratorFeeRate = Number(integratorFeeBps || 0) / 10000;
+
+      // Account for LP fee on input
+      const amountInWithLpFee = BigInt(
+        Math.ceil(Number(amountInEffective) * (1 + lpFeeRate))
+      );
+
+      // Account for integrator fee on output (need more input to get same output after fee)
+      const amountIn =
+        integratorFeeRate > 0
+          ? BigInt(
+              Math.ceil(Number(amountInWithLpFee) * (1 + integratorFeeRate))
+            )
+          : amountInWithLpFee;
+
+      const totalFee = amountIn - amountInEffective;
+
+      return {
+        amountIn: amountIn.toString(),
+        totalFee: totalFee.toString(),
+      };
+    } else {
+      // Token is asset B, BTC is asset A
+      // B → A swap: we want BTC out (asset A)
+      // reserve_in = reserveB (token), reserve_out = reserveA (BTC)
+
+      const reserveIn = resB;
+      const reserveOut = resA;
+
+      if (amountOut >= reserveOut) {
+        throw new Error(
+          "Insufficient liquidity: requested BTC amount exceeds reserve"
+        );
+      }
+
+      // Calculate effective amount in (before fees)
+      const amountInEffective =
+        (reserveIn * amountOut) / (reserveOut - amountOut) + 1n; // +1 for rounding up
+
+      // B→A swap: ALL fees (LP + integrator) deducted from input B
+      // amount_in = amount_in_effective * (1 + total_fee_rate)
+      const amountIn = BigInt(
+        Math.ceil(Number(amountInEffective) * (1 + feeRate))
+      );
+
+      // Fee calculation: fee = amount_in * fee_rate / (1 + fee_rate)
+      const totalFee = BigInt(
+        Math.ceil((Number(amountIn) * feeRate) / (1 + feeRate))
+      );
+
+      return {
+        amountIn: amountIn.toString(),
+        totalFee: totalFee.toString(),
+      };
+    }
+  }
+
+  /**
+   * Calculate minimum amount out with slippage protection
+   * @private
+   */
+  private calculateMinAmountOut(
+    expectedAmount: string,
+    slippageBps: number
+  ): string {
+    const amount = BigInt(expectedAmount);
+    const slippageFactor = BigInt(10000 - slippageBps);
+    const minAmount = (amount * slippageFactor) / 10000n;
+    return minAmount.toString();
+  }
+
+  /**
+   * Wait for a transfer to be claimed using wallet events.
+   * This is more efficient than polling as it uses the wallet's event stream.
+   * @private
+   */
+  private async waitForTransferCompletion(
+    transferId: string,
+    timeoutMs: number
+  ): Promise<boolean> {
+    return new Promise((resolve) => {
+      const timeout = setTimeout(() => {
+        // Remove listener on timeout
+        try {
+          (this._wallet as any).removeListener?.("transfer:claimed", handler);
+        } catch {
+          // Ignore if removeListener doesn't exist
+        }
+        resolve(false);
+      }, timeoutMs);
+
+      const handler = (claimedTransferId: string, _balance: bigint) => {
+        if (claimedTransferId === transferId) {
+          clearTimeout(timeout);
+          try {
+            (this._wallet as any).removeListener?.("transfer:claimed", handler);
+          } catch {
+            // Ignore if removeListener doesn't exist
+          }
+          resolve(true);
+        }
+      };
+
+      // Subscribe to transfer claimed events
+      // The wallet's RPC stream will automatically claim incoming transfers
+      try {
+        (this._wallet as any).on?.("transfer:claimed", handler);
+      } catch {
+        // If event subscription fails, fall back to polling
+        clearTimeout(timeout);
+        this.pollForTransferCompletion(transferId, timeoutMs).then(resolve);
+      }
+    });
+  }
+
+  /**
+   * Fallback polling method for transfer completion
+   * @private
+   */
+  private async pollForTransferCompletion(
+    transferId: string,
+    timeoutMs: number
+  ): Promise<boolean> {
+    const startTime = Date.now();
+    const pollIntervalMs = 500;
+
+    while (Date.now() - startTime < timeoutMs) {
+      try {
+        const transfer = await this._wallet.getTransfer(transferId);
+
+        if (transfer) {
+          if (transfer.status === "TRANSFER_STATUS_COMPLETED") {
+            return true;
+          }
+        }
+      } catch {
+        // Ignore errors and continue polling
+      }
+
+      await new Promise((resolve) => setTimeout(resolve, pollIntervalMs));
+    }
+
+    return false;
+  }
+
+  /**
+   * Get Lightning fee estimate for an invoice
+   * @private
+   */
+  private async getLightningFeeEstimate(invoice: string): Promise<number> {
+    try {
+      const feeEstimate = await (
+        this._wallet as any
+      ).getLightningSendFeeEstimate({
+        encodedInvoice: invoice,
+      });
+
+      // The fee estimate might be returned as a number or an object
+      if (typeof feeEstimate === "number") {
+        return feeEstimate;
+      }
+      if (feeEstimate?.fee || feeEstimate?.feeEstimate) {
+        return Number(feeEstimate.fee || feeEstimate.feeEstimate);
+      }
+
+      // Fallback to invoice amount-based estimate
+      const invoiceAmount = await this.decodeInvoiceAmount(invoice);
+      return Math.max(5, Math.ceil(invoiceAmount * 0.0017)); // 17 bps or 5 sats minimum
+    } catch {
+      // Fallback to invoice amount-based estimate
+      const invoiceAmount = await this.decodeInvoiceAmount(invoice);
+      return Math.max(5, Math.ceil(invoiceAmount * 0.0017));
+    }
+  }
+
+  /**
+   * Decode the amount from a Lightning invoice (in sats)
+   * @private
+   */
+  private async decodeInvoiceAmount(invoice: string): Promise<number> {
+    // Extract amount from BOLT11 invoice
+    // Format: ln[network][amount][multiplier]...
+    // Amount multipliers: m = milli (0.001), u = micro (0.000001), n = nano, p = pico
+
+    const lowerInvoice = invoice.toLowerCase();
+
+    // Find where the amount starts (after network prefix)
+    let amountStart = 0;
+    if (lowerInvoice.startsWith("lnbc")) {
+      amountStart = 4;
+    } else if (lowerInvoice.startsWith("lntb")) {
+      amountStart = 4;
+    } else if (lowerInvoice.startsWith("lnbcrt")) {
+      amountStart = 6;
+    } else if (lowerInvoice.startsWith("lntbs")) {
+      amountStart = 5;
+    } else {
+      // Unknown format, try to find amount
+      const match = lowerInvoice.match(/^ln[a-z]+/);
+      if (match) {
+        amountStart = match[0].length;
+      }
+    }
+
+    // Extract amount and multiplier
+    const afterPrefix = lowerInvoice.substring(amountStart);
+    const amountMatch = afterPrefix.match(/^(\d+)([munp]?)/);
+
+    if (!amountMatch || !amountMatch[1]) {
+      return 0; // Zero-amount invoice
+    }
+
+    const amount = parseInt(amountMatch[1], 10);
+    const multiplier = amountMatch[2] ?? "";
+
+    // Convert to satoshis (1 BTC = 100,000,000 sats)
+    // Invoice amounts are in BTC by default
+    let btcAmount: number;
+
+    switch (multiplier) {
+      case "m": // milli-BTC (0.001 BTC)
+        btcAmount = amount * 0.001;
+        break;
+      case "u": // micro-BTC (0.000001 BTC)
+        btcAmount = amount * 0.000001;
+        break;
+      case "n": // nano-BTC (0.000000001 BTC)
+        btcAmount = amount * 0.000000001;
+        break;
+      case "p": // pico-BTC (0.000000000001 BTC)
+        btcAmount = amount * 0.000000000001;
+        break;
+      default: // BTC
+        btcAmount = amount;
+        break;
+    }
+
+    // Convert BTC to sats
+    return Math.round(btcAmount * 100000000);
   }
 
   /**
