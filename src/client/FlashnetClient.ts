@@ -148,9 +148,9 @@ export interface PayLightningWithTokenOptions {
   invoice: string;
   /** Token identifier (hex or bech32m format) to use for payment */
   tokenAddress: string;
-  /** Maximum slippage for the AMM swap in basis points (default: 100 = 1%) */
+  /** Maximum slippage for the AMM swap in basis points (default: 500 = 5%) */
   maxSlippageBps?: number;
-  /** Maximum Lightning routing fee in sats (default: calculated as max(5, amount * 0.17%)) */
+  /** Maximum Lightning routing fee in sats (default: uses estimated fee from quote) */
   maxLightningFeeSats?: number;
   /** Prefer Spark transfers when possible (default: true) */
   preferSpark?: boolean;
@@ -158,8 +158,16 @@ export interface PayLightningWithTokenOptions {
   integratorFeeRateBps?: number;
   /** Integrator public key for fee collection (optional) */
   integratorPublicKey?: string;
-  /** Maximum time to wait for swap transfer completion in ms (default: 10000) */
+  /** Maximum time to wait for swap transfer completion in ms (default: 30000) */
   transferTimeoutMs?: number;
+  /** If true, attempt to swap BTC back to token if Lightning payment fails (default: false) */
+  rollbackOnFailure?: boolean;
+  /**
+   * If true, pay Lightning invoice immediately using existing BTC balance instead of waiting
+   * for the swap transfer to complete. The swap BTC will arrive asynchronously.
+   * Requires sufficient existing BTC balance in wallet. (default: false)
+   */
+  useExistingBtcBalance?: boolean;
 }
 
 /**
@@ -2889,12 +2897,14 @@ export class FlashnetClient {
     const {
       invoice,
       tokenAddress,
-      maxSlippageBps = 100, // 1% default
+      maxSlippageBps = 500, // 5% default
       maxLightningFeeSats,
       preferSpark = true,
       integratorFeeRateBps,
       integratorPublicKey,
-      transferTimeoutMs = 10000,
+      transferTimeoutMs = 30000, // 30s default
+      rollbackOnFailure = false,
+      useExistingBtcBalance = false,
     } = options;
 
     try {
@@ -2908,7 +2918,7 @@ export class FlashnetClient {
         }
       );
 
-      // Step 2: Check balance
+      // Step 2: Check token balance (always required)
       await this.checkBalance({
         balancesToCheck: [
           {
@@ -2918,6 +2928,20 @@ export class FlashnetClient {
         ],
         errorPrefix: "Insufficient token balance for Lightning payment: ",
       });
+
+      // Determine if we can pay immediately using existing BTC balance
+      let canPayImmediately = false;
+      if (useExistingBtcBalance) {
+        const invoiceAmountSats = await this.decodeInvoiceAmount(invoice);
+        const effectiveMaxLightningFee =
+          maxLightningFeeSats ?? quote.estimatedLightningFee;
+        const btcNeededForPayment =
+          invoiceAmountSats + effectiveMaxLightningFee;
+
+        // Check if we have enough BTC (don't throw if not, just fall back to waiting)
+        const balance = await this.getBalance();
+        canPayImmediately = balance.balance >= BigInt(btcNeededForPayment);
+      }
 
       // Step 3: Get pool details
       const pool = await this.getPool(quote.poolId);
@@ -2960,47 +2984,106 @@ export class FlashnetClient {
         };
       }
 
-      // Step 5: Wait for the transfer to complete
-      const transferComplete = await this.waitForTransferCompletion(
-        swapResponse.outboundTransferId,
-        transferTimeoutMs
-      );
+      // Step 5: Wait for the transfer to complete (unless paying immediately with existing BTC)
+      if (!canPayImmediately) {
+        const transferComplete = await this.waitForTransferCompletion(
+          swapResponse.outboundTransferId,
+          transferTimeoutMs
+        );
 
-      if (!transferComplete) {
+        if (!transferComplete) {
+          return {
+            success: false,
+            poolId: quote.poolId,
+            tokenAmountSpent: quote.tokenAmountRequired,
+            btcAmountReceived: swapResponse.amountOut || "0",
+            swapTransferId: swapResponse.outboundTransferId,
+            ammFeePaid: quote.estimatedAmmFee,
+            error: "Transfer did not complete within timeout",
+          };
+        }
+      }
+
+      // Step 6: Calculate Lightning fee limit - use the quoted estimate, not a recalculation
+      const effectiveMaxLightningFee =
+        maxLightningFeeSats ?? quote.estimatedLightningFee;
+
+      // Step 7: Pay the Lightning invoice
+      const btcReceived = swapResponse.amountOut || quote.btcAmountRequired;
+      try {
+        const lightningPayment = await (
+          this._wallet as any
+        ).payLightningInvoice({
+          invoice,
+          maxFeeSats: effectiveMaxLightningFee,
+          preferSpark,
+        });
+
+        return {
+          success: true,
+          poolId: quote.poolId,
+          tokenAmountSpent: quote.tokenAmountRequired,
+          btcAmountReceived: btcReceived,
+          swapTransferId: swapResponse.outboundTransferId,
+          lightningPaymentId: lightningPayment.id,
+          ammFeePaid: quote.estimatedAmmFee,
+          lightningFeePaid: effectiveMaxLightningFee,
+        };
+      } catch (lightningError) {
+        // Lightning payment failed after swap succeeded
+        const lightningErrorMessage =
+          lightningError instanceof Error
+            ? lightningError.message
+            : String(lightningError);
+
+        // Attempt rollback if requested
+        if (rollbackOnFailure) {
+          try {
+            const rollbackResult = await this.rollbackSwap(
+              quote.poolId,
+              btcReceived,
+              tokenAddress,
+              maxSlippageBps
+            );
+
+            if (rollbackResult.success) {
+              return {
+                success: false,
+                poolId: quote.poolId,
+                tokenAmountSpent: "0", // Rolled back
+                btcAmountReceived: "0",
+                swapTransferId: swapResponse.outboundTransferId,
+                ammFeePaid: quote.estimatedAmmFee,
+                error: `Lightning payment failed: ${lightningErrorMessage}. Funds rolled back to ${rollbackResult.tokenAmount} tokens.`,
+              };
+            }
+          } catch (rollbackError) {
+            const rollbackErrorMessage =
+              rollbackError instanceof Error
+                ? rollbackError.message
+                : String(rollbackError);
+            return {
+              success: false,
+              poolId: quote.poolId,
+              tokenAmountSpent: quote.tokenAmountRequired,
+              btcAmountReceived: btcReceived,
+              swapTransferId: swapResponse.outboundTransferId,
+              ammFeePaid: quote.estimatedAmmFee,
+              error: `Lightning payment failed: ${lightningErrorMessage}. Rollback also failed: ${rollbackErrorMessage}. BTC remains in wallet.`,
+            };
+          }
+        }
+
         return {
           success: false,
           poolId: quote.poolId,
           tokenAmountSpent: quote.tokenAmountRequired,
-          btcAmountReceived: swapResponse.amountOut || "0",
+          btcAmountReceived: btcReceived,
           swapTransferId: swapResponse.outboundTransferId,
           ammFeePaid: quote.estimatedAmmFee,
-          error: "Transfer did not complete within timeout",
+          error: `Lightning payment failed: ${lightningErrorMessage}. BTC (${btcReceived} sats) remains in wallet.`,
         };
       }
-
-      // Step 6: Calculate Lightning fee limit
-      const invoiceAmountSats = await this.decodeInvoiceAmount(invoice);
-      const effectiveMaxLightningFee =
-        maxLightningFeeSats ??
-        Math.max(5, Math.ceil(invoiceAmountSats * 0.0017)); // 17 bps or 5 sats minimum
-
-      // Step 7: Pay the Lightning invoice
-      const lightningPayment = await (this._wallet as any).payLightningInvoice({
-        invoice,
-        maxFeeSats: effectiveMaxLightningFee,
-        preferSpark,
-      });
-
-      return {
-        success: true,
-        poolId: quote.poolId,
-        tokenAmountSpent: quote.tokenAmountRequired,
-        btcAmountReceived: swapResponse.amountOut || quote.btcAmountRequired,
-        swapTransferId: swapResponse.outboundTransferId,
-        lightningPaymentId: lightningPayment.id,
-        ammFeePaid: quote.estimatedAmmFee,
-        lightningFeePaid: effectiveMaxLightningFee,
-      };
     } catch (error) {
       const errorMessage =
         error instanceof Error ? error.message : String(error);
@@ -3014,6 +3097,60 @@ export class FlashnetClient {
         error: errorMessage,
       };
     }
+  }
+
+  /**
+   * Attempt to rollback a swap by swapping BTC back to the original token
+   * @private
+   */
+  private async rollbackSwap(
+    poolId: string,
+    btcAmount: string,
+    tokenAddress: string,
+    maxSlippageBps: number
+  ): Promise<{ success: boolean; tokenAmount?: string }> {
+    const pool = await this.getPool(poolId);
+    const tokenHex = this.toHexTokenIdentifier(tokenAddress);
+
+    // Determine swap direction (BTC -> Token)
+    const tokenIsAssetA = pool.assetAAddress === tokenHex;
+    const assetInAddress = tokenIsAssetA
+      ? pool.assetBAddress
+      : pool.assetAAddress; // BTC
+    const assetOutAddress = tokenIsAssetA
+      ? pool.assetAAddress
+      : pool.assetBAddress; // Token
+
+    // Calculate expected token output and min amount with slippage
+    // For rollback, we accept more slippage since we're recovering from failure
+    const minAmountOut = "0"; // Accept any amount to ensure rollback succeeds
+
+    // Execute reverse swap
+    const swapResponse = await this.executeSwap({
+      poolId,
+      assetInAddress,
+      assetOutAddress,
+      amountIn: btcAmount,
+      maxSlippageBps: maxSlippageBps * 2, // Double slippage for rollback
+      minAmountOut,
+    });
+
+    if (!swapResponse.accepted) {
+      throw new Error(swapResponse.error || "Rollback swap not accepted");
+    }
+
+    // Wait for the rollback transfer
+    if (swapResponse.outboundTransferId) {
+      await this.waitForTransferCompletion(
+        swapResponse.outboundTransferId,
+        30000
+      );
+    }
+
+    return {
+      success: true,
+      tokenAmount: swapResponse.amountOut,
+    };
   }
 
   /**
