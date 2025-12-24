@@ -1,5 +1,6 @@
 import type { IssuerSparkWallet } from "@buildonspark/issuer-sdk";
 import type { SparkWallet } from "@buildonspark/spark-sdk";
+import { sha256 } from "@noble/hashes/sha2";
 import type { ApiClient } from "../api/client";
 import type {
   ChallengeRequestData,
@@ -53,9 +54,7 @@ export class AuthManager {
           ? getUint8ArrayFromHex(message.slice(2))
           : getUint8ArrayFromHex(message);
 
-        const messageHash = new Uint8Array(
-          await crypto.subtle.digest("SHA-256", messageBytes)
-        );
+        const messageHash = sha256(messageBytes);
 
         const signature = await this.signer.signMessage(messageHash);
         return getHexFromUint8Array(signature);
