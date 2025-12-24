@@ -96,6 +96,7 @@ import {
 } from "../types";
 import { compareDecimalStrings, generateNonce } from "../utils";
 import { AuthManager } from "../utils/auth";
+import { sha256 } from "@noble/hashes/sha2";
 import { getHexFromUint8Array } from "../utils/hex";
 import {
   generateAddLiquidityIntentMessage,
@@ -820,9 +821,7 @@ export class FlashnetClient {
       });
 
     // Sign intent
-    const messageHash = new Uint8Array(
-      await crypto.subtle.digest("SHA-256", intentMessage)
-    );
+    const messageHash = sha256(intentMessage);
     const signature = await (
       this._wallet as any
     ).config.signer.signMessageWithIdentityKey(messageHash, true);
@@ -1030,9 +1029,7 @@ export class FlashnetClient {
       nonce,
     });
 
-    const messageHash = new Uint8Array(
-      await crypto.subtle.digest("SHA-256", intentMessage)
-    );
+    const messageHash = sha256(intentMessage);
     const signature = await (
       this._wallet as any
     ).config.signer.signMessageWithIdentityKey(messageHash, true);
@@ -1116,9 +1113,7 @@ export class FlashnetClient {
       nonce,
     });
 
-    const messageHash = new Uint8Array(
-      await crypto.subtle.digest("SHA-256", intentMessage)
-    );
+    const messageHash = sha256(intentMessage);
     const signature = await (
       this._wallet as any
     ).config.signer.signMessageWithIdentityKey(messageHash, true);
@@ -1248,9 +1243,7 @@ export class FlashnetClient {
     });
 
     // Sign intent
-    const messageHash = new Uint8Array(
-      await crypto.subtle.digest("SHA-256", intentMessage)
-    );
+    const messageHash = sha256(intentMessage);
     const signature = await (
       this._wallet as any
     ).config.signer.signMessageWithIdentityKey(messageHash, true);
@@ -1426,9 +1419,7 @@ export class FlashnetClient {
         });
 
         // Sign intent
-        const messageHash = new Uint8Array(
-          await crypto.subtle.digest("SHA-256", intentMessage)
-        );
+        const messageHash = sha256(intentMessage);
         const signature = await (
           this._wallet as any
         ).config.signer.signMessageWithIdentityKey(messageHash, true);
@@ -1560,9 +1551,7 @@ export class FlashnetClient {
         });
 
         // Sign intent
-        const messageHash = new Uint8Array(
-          await crypto.subtle.digest("SHA-256", intentMessage)
-        );
+        const messageHash = sha256(intentMessage);
         const signature = await (
           this._wallet as any
         ).config.signer.signMessageWithIdentityKey(messageHash, true);
@@ -1667,9 +1656,7 @@ export class FlashnetClient {
     });
 
     // Sign intent
-    const messageHash = new Uint8Array(
-      await crypto.subtle.digest("SHA-256", intentMessage)
-    );
+    const messageHash = sha256(intentMessage);
     const signature = await (
       this._wallet as any
     ).config.signer.signMessageWithIdentityKey(messageHash, true);
@@ -1719,9 +1706,7 @@ export class FlashnetClient {
     });
 
     // Sign intent
-    const messageHash = new Uint8Array(
-      await crypto.subtle.digest("SHA-256", intentMessage)
-    );
+    const messageHash = sha256(intentMessage);
     const signature = await (
       this._wallet as any
     ).config.signer.signMessageWithIdentityKey(messageHash, true);
@@ -1788,9 +1773,7 @@ export class FlashnetClient {
     });
 
     // Sign intent
-    const messageHash = new Uint8Array(
-      await crypto.subtle.digest("SHA-256", intentMessage)
-    );
+    const messageHash = sha256(intentMessage);
     const signature = await (
       this._wallet as any
     ).config.signer.signMessageWithIdentityKey(messageHash, true);
@@ -1870,9 +1853,7 @@ export class FlashnetClient {
     });
 
     // Sign intent
-    const messageHash = new Uint8Array(
-      await crypto.subtle.digest("SHA-256", intentMessage)
-    );
+    const messageHash = sha256(intentMessage);
     const signature = await (
       this._wallet as any
     ).config.signer.signMessageWithIdentityKey(messageHash, true);
@@ -1945,9 +1926,7 @@ export class FlashnetClient {
       nonce,
     });
 
-    const messageHash = new Uint8Array(
-      await crypto.subtle.digest("SHA-256", intentMessage)
-    );
+    const messageHash = sha256(intentMessage);
     const signature = await (
       this._wallet as any
     ).config.signer.signMessageWithIdentityKey(messageHash, true);
@@ -2037,9 +2016,7 @@ export class FlashnetClient {
     });
 
     // Sign
-    const messageHash = new Uint8Array(
-      await crypto.subtle.digest("SHA-256", intentMessage)
-    );
+    const messageHash = sha256(intentMessage);
     const signature = await (
       this._wallet as any
     ).config.signer.signMessageWithIdentityKey(messageHash, true);
@@ -2073,9 +2050,7 @@ export class FlashnetClient {
       nonce,
     });
 
-    const messageHash = new Uint8Array(
-      await crypto.subtle.digest("SHA-256", intentMessage)
-    );
+    const messageHash = sha256(intentMessage);
     const signature = await (
       this._wallet as any
     ).config.signer.signMessageWithIdentityKey(messageHash, true);
@@ -2154,9 +2129,7 @@ export class FlashnetClient {
       nonce,
     });
 
-    const messageHash = new Uint8Array(
-      await crypto.subtle.digest("SHA-256", intentMessage)
-    );
+    const messageHash = sha256(intentMessage);
     const signature = await (
       this._wallet as any
     ).config.signer.signMessageWithIdentityKey(messageHash, true);
@@ -2751,9 +2724,7 @@ export class FlashnetClient {
       nonce,
     });
 
-    const messageHash = new Uint8Array(
-      await crypto.subtle.digest("SHA-256", intentMessage)
-    );
+    const messageHash = sha256(intentMessage);
     const signature = await (
       this._wallet as any
     ).config.signer.signMessageWithIdentityKey(messageHash, true);
