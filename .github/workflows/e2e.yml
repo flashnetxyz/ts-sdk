@@ -1,0 +1,48 @@
+name: E2E Tests
+
+on:
+  pull_request:
+    branches:
+      - main
+  workflow_dispatch:
+    inputs:
+      spark_network:
+        description: 'Spark network (REGTEST or MAINNET)'
+        required: false
+        default: 'REGTEST'
+
+# Required secrets:
+# - AMM_URL: Flashnet AMM gateway URL
+# - MEMPOOL_URL: Mempool API URL
+# - SPARKSCAN_URL: Sparkscan API URL
+# - FAUCET_URL: Spark faucet URL
+
+jobs:
+  e2e:
+    name: E2E Tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Install dependencies
+        run: bun install
+
+      - name: Build SDK
+        run: bun run build
+
+      - name: Run E2E tests
+        run: bun tests/e2e.ts
+        env:
+          AMM_URL: ${{ secrets.AMM_URL }}
+          MEMPOOL_URL: ${{ secrets.MEMPOOL_URL }}
+          SPARKSCAN_URL: ${{ secrets.SPARKSCAN_URL }}
+          FAUCET_URL: ${{ secrets.FAUCET_URL }}
+          SPARK_NETWORK: ${{ github.event.inputs.spark_network || 'REGTEST' }}
