@@ -96,7 +96,7 @@ import {
 } from "../types";
 import { compareDecimalStrings, generateNonce } from "../utils";
 import { AuthManager } from "../utils/auth";
-import { sha256 } from "@noble/hashes/sha2";
+import sha256 from "fast-sha256";
 import { getHexFromUint8Array } from "../utils/hex";
 import {
   generateAddLiquidityIntentMessage,

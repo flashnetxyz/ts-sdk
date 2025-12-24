@@ -24,8 +24,10 @@ import {
   TypedAmmApi,
   AuthManager,
 } from "../dist/esm/index.js";
-import { sha256 } from "@noble/hashes/sha2";
-import { bytesToHex } from "@noble/hashes/utils";
+import sha256 from "fast-sha256";
+import { getHexFromUint8Array } from "../src/utils/hex";
+
+const bytesToHex = getHexFromUint8Array;
 
 const AMM_URL = process.env.AMM_URL;
 const MEMPOOL_URL = process.env.MEMPOOL_URL;

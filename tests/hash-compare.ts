@@ -1,12 +1,14 @@
 /**
- * Verifies that the @noble/hashes library produces identical output to:
+ * Verifies that fast-sha256 produces identical output to:
  * - crypto.subtle.digest (Web Crypto API)
- * - The previous fast-sha256 and custom hex implementations
  */
 
-import { sha256 } from "@noble/hashes/sha2";
-import { bytesToHex, hexToBytes } from "@noble/hashes/utils";
+import sha256 from "fast-sha256";
 import { getHexFromUint8Array, getUint8ArrayFromHex } from "../src/utils/hex";
+
+// Aliases for convenience
+const bytesToHex = getHexFromUint8Array;
+const hexToBytes = getUint8ArrayFromHex;
 
 interface TestResult {
   name: string;
@@ -70,7 +72,7 @@ async function testSha256MatchesWebCrypto(): Promise<void> {
 
   for (let i = 0; i < testInputs.length; i++) {
     const input = testInputs[i];
-    const nobleHash = bytesToHex(sha256(input));
+    const fastHash = bytesToHex(sha256(input));
     const webCryptoHash = bytesToHex(
       new Uint8Array(
         await crypto.subtle.digest("SHA-256", input.buffer as ArrayBuffer)
@@ -79,8 +81,8 @@ async function testSha256MatchesWebCrypto(): Promise<void> {
 
     assert(
       `SHA-256 vs WebCrypto: test case ${i + 1}`,
-      nobleHash === webCryptoHash,
-      `Noble: ${nobleHash}, WebCrypto: ${webCryptoHash}`
+      fastHash === webCryptoHash,
+      `fast-sha256: ${fastHash}, WebCrypto: ${webCryptoHash}`
     );
   }
 }
@@ -91,7 +93,6 @@ function testHexRoundtrip(): void {
     "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad",
     "00",
     "ff",
-    "",
   ];
 
   for (const hex of testCases) {

@@ -1,6 +1,7 @@
 /**
  * Portable crypto utilities - works in browser, Node.js, and React Native
- * Aligned with @buildonspark/spark-sdk approach using @noble/hashes
+ * Uses fast-sha256 for cross-platform SHA-256 hashing
  */
-export { sha256 } from "@noble/hashes/sha2";
-export { bytesToHex, hexToBytes } from "@noble/hashes/utils";
+import sha256 from "fast-sha256";
+
+export { sha256 };

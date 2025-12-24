@@ -1,6 +1,6 @@
 import type { IssuerSparkWallet } from "@buildonspark/issuer-sdk";
 import type { SparkWallet } from "@buildonspark/spark-sdk";
-import { sha256 } from "@noble/hashes/sha2";
+import sha256 from "fast-sha256";
 import type { ApiClient } from "../api/client";
 import type {
   ChallengeRequestData,
