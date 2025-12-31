@@ -62,15 +62,7 @@
     "globals": ["Bun"]
   },
   "files": {
-    "includes": [
-      "src/**/*.ts",
-      "src/**/*.tsx",
-      "tests/**/*.ts",
-      "tests/**/*.js",
-      "tests/**/*.mjs",
-      "tests/**/*.cjs",
-      "index.ts"
-    ],
+    "includes": ["src/**/*.ts", "src/**/*.tsx", "index.ts"],
     "ignoreUnknown": true
   }
 }

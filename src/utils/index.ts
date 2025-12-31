@@ -1,6 +1,7 @@
 export * from "./auth";
 export * from "./intents";
 export * from "./spark-address";
+export * from "./tick-math";
 export * from "./tokenAddress";
 
 // Helper function to generate random nonce (browser-compatible)

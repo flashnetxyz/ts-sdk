@@ -13,18 +13,18 @@
 
 import { IssuerSparkWallet } from "@buildonspark/issuer-sdk";
 import { randomBytes } from "crypto";
+import sha256 from "fast-sha256";
 import {
-  FlashnetClient,
+  ApiClient,
+  AuthManager,
   BTC_ASSET_PUBKEY,
   encodeSparkAddressNew,
+  FlashnetClient,
   generateNonce,
   generatePoolSwapIntentMessage,
   generateRegisterHostIntentMessage,
-  ApiClient,
   TypedAmmApi,
-  AuthManager,
 } from "../dist/esm/index.js";
-import sha256 from "fast-sha256";
 import { getHexFromUint8Array } from "../src/utils/hex";
 
 const bytesToHex = getHexFromUint8Array;
@@ -69,9 +69,14 @@ const results: TestResult[] = [];
 
 function log(message: string, value?: unknown): void {
   if (value !== undefined) {
-    const stringified = typeof value === "bigint" ? value.toString() :
-      typeof value === "object" ? JSON.stringify(value, (_, v) => typeof v === "bigint" ? v.toString() : v) :
-      String(value);
+    const stringified =
+      typeof value === "bigint"
+        ? value.toString()
+        : typeof value === "object"
+          ? JSON.stringify(value, (_, v) =>
+              typeof v === "bigint" ? v.toString() : v
+            )
+          : String(value);
     console.log(`${message}: ${stringified}`);
   } else {
     console.log(message);
@@ -98,7 +103,9 @@ async function fundViaFaucet(
 
   if (!resp.ok) {
     const data = await resp.json().catch(() => ({}));
-    throw new Error(`Faucet error ${resp.status}: ${(data as { error?: string }).error || "unknown"}`);
+    throw new Error(
+      `Faucet error ${resp.status}: ${(data as { error?: string }).error || "unknown"}`
+    );
   }
 
   const deadline = Date.now() + 60_000;
@@ -229,7 +236,10 @@ async function main(): Promise<void> {
       nonce,
     });
     const hash = sha256(intent);
-    const sig = await (wallet as any).config.signer.signMessageWithIdentityKey(hash, true);
+    const sig = await (wallet as any).config.signer.signMessageWithIdentityKey(
+      hash,
+      true
+    );
     await typed.registerHost({
       namespace,
       minFeeBps: HOST_FEE_BPS,
@@ -290,7 +300,10 @@ async function main(): Promise<void> {
     });
 
     const hash = sha256(intent);
-    const sig = await (wallet as any).config.signer.signMessageWithIdentityKey(hash, true);
+    const sig = await (wallet as any).config.signer.signMessageWithIdentityKey(
+      hash,
+      true
+    );
 
     const resp = await typed.executeSwap({
       userPublicKey: userPub,
@@ -308,7 +321,10 @@ async function main(): Promise<void> {
     });
 
     if (!resp.accepted) throw new Error(resp.error || "Swap rejected");
-    log("Swap result", { amountOut: resp.amountOut, transferId: resp.outboundTransferId });
+    log("Swap result", {
+      amountOut: resp.amountOut,
+      transferId: resp.outboundTransferId,
+    });
   });
 
   // Stress test: 3 swaps in each direction
@@ -344,7 +360,9 @@ async function main(): Promise<void> {
         });
 
         const hash = sha256(intent);
-        const sig = await (wallet as any).config.signer.signMessageWithIdentityKey(hash, true);
+        const sig = await (
+          wallet as any
+        ).config.signer.signMessageWithIdentityKey(hash, true);
 
         const resp = await typed.executeSwap({
           userPublicKey: userPub,
@@ -363,14 +381,16 @@ async function main(): Promise<void> {
 
         if (resp.accepted) {
           successCount++;
-          if ((i + 1) % 10 === 0) log(`BTC->Token swap ${i + 1}/${SWAP_COUNT}`, resp.amountOut);
+          if ((i + 1) % 10 === 0)
+            log(`BTC->Token swap ${i + 1}/${SWAP_COUNT}`, resp.amountOut);
         }
       } catch (e) {
         log(`Swap ${i + 1} failed`, e instanceof Error ? e.message : String(e));
       }
     }
     log(`BTC->Token swaps completed`, `${successCount}/${SWAP_COUNT}`);
-    if (successCount < SWAP_COUNT / 2) throw new Error(`Too many failures: ${successCount}/${SWAP_COUNT}`);
+    if (successCount < SWAP_COUNT / 2)
+      throw new Error(`Too many failures: ${successCount}/${SWAP_COUNT}`);
   });
 
   await runTest(`Execute ${SWAP_COUNT} swaps: Token -> BTC`, async () => {
@@ -403,7 +423,9 @@ async function main(): Promise<void> {
         });
 
         const hash = sha256(intent);
-        const sig = await (wallet as any).config.signer.signMessageWithIdentityKey(hash, true);
+        const sig = await (
+          wallet as any
+        ).config.signer.signMessageWithIdentityKey(hash, true);
 
         const resp = await typed.executeSwap({
           userPublicKey: userPub,
@@ -422,14 +444,16 @@ async function main(): Promise<void> {
 
         if (resp.accepted) {
           successCount++;
-          if ((i + 1) % 10 === 0) log(`Token->BTC swap ${i + 1}/${SWAP_COUNT}`, resp.amountOut);
+          if ((i + 1) % 10 === 0)
+            log(`Token->BTC swap ${i + 1}/${SWAP_COUNT}`, resp.amountOut);
         }
       } catch (e) {
         log(`Swap ${i + 1} failed`, e instanceof Error ? e.message : String(e));
       }
     }
     log(`Token->BTC swaps completed`, `${successCount}/${SWAP_COUNT}`);
-    if (successCount < SWAP_COUNT / 2) throw new Error(`Too many failures: ${successCount}/${SWAP_COUNT}`);
+    if (successCount < SWAP_COUNT / 2)
+      throw new Error(`Too many failures: ${successCount}/${SWAP_COUNT}`);
   });
 
   await runTest("Get pool details", async () => {
@@ -453,7 +477,9 @@ async function main(): Promise<void> {
     const balance = await wallet.getBalance();
     let tokenBal = 0n;
     for (const [, t] of balance.tokenBalances.entries()) {
-      const hex = Buffer.from(t.tokenMetadata.rawTokenIdentifier).toString("hex");
+      const hex = Buffer.from(t.tokenMetadata.rawTokenIdentifier).toString(
+        "hex"
+      );
       if (hex === tokenIdentifierHex) {
         tokenBal = t.balance;
         break;
@@ -461,7 +487,9 @@ async function main(): Promise<void> {
     }
 
     if (tokenBal < CLAWBACK_AMOUNT) {
-      throw new Error(`Insufficient token balance for clawback test: ${tokenBal}`);
+      throw new Error(
+        `Insufficient token balance for clawback test: ${tokenBal}`
+      );
     }
 
     const transferId = await wallet.transferTokens({
@@ -511,7 +539,9 @@ async function main(): Promise<void> {
     else failed++;
   }
 
-  console.log(`\nTotal: ${results.length} | Passed: ${passed} | Failed: ${failed}`);
+  console.log(
+    `\nTotal: ${results.length} | Passed: ${passed} | Failed: ${failed}`
+  );
 
   if (failed > 0) {
     console.log("\nFailed tests:");
