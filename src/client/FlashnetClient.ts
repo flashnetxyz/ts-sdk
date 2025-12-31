@@ -24,14 +24,20 @@ import {
   type ClawbackResponse,
   type ClientEnvironment,
   type ClientNetworkConfig,
+  type CollectFeesRequest,
+  type CollectFeesResponse,
   type Condition,
   type ConfirmDepositResponse,
   type ConfirmInitialDepositRequest,
+  type CreateConcentratedPoolRequest,
+  type CreateConcentratedPoolResponse,
   type CreateConstantProductPoolRequest,
   type CreateEscrowRequest,
   type CreateEscrowResponse,
   type CreatePoolResponse,
   type CreateSingleSidedPoolRequest,
+  type DecreaseLiquidityRequest,
+  type DecreaseLiquidityResponse,
   type EscrowCondition,
   type EscrowRecipient,
   type EscrowState,
@@ -57,8 +63,12 @@ import {
   type GetPoolIntegratorFeesResponse,
   getClientEnvironmentFromLegacy,
   getSparkNetworkFromLegacy,
+  type IncreaseLiquidityRequest,
+  type IncreaseLiquidityResponse,
   type ListClawbackableTransfersQuery,
   type ListClawbackableTransfersResponse,
+  type ListConcentratedPositionsQuery,
+  type ListConcentratedPositionsResponse,
   type ListGlobalSwapsQuery,
   type ListGlobalSwapsResponse,
   type ListPoolSwapsQuery,
@@ -72,6 +82,10 @@ import {
   Network,
   type NetworkType,
   type PoolDetailsResponse,
+  type PoolLiquidityResponse,
+  type PoolTicksResponse,
+  type RebalancePositionRequest,
+  type RebalancePositionResponse,
   type RegisterHostRequest,
   type RegisterHostResponse,
   type RemoveLiquidityRequest,
@@ -102,12 +116,17 @@ import {
   generateAddLiquidityIntentMessage,
   generateClaimEscrowIntentMessage,
   generateClawbackIntentMessage,
+  generateCollectFeesIntentMessage,
   generateConstantProductPoolInitializationIntentMessage,
+  generateCreateConcentratedPoolIntentMessage,
   generateCreateEscrowIntentMessage,
+  generateDecreaseLiquidityIntentMessage,
   generateFundEscrowIntentMessage,
+  generateIncreaseLiquidityIntentMessage,
   generatePoolConfirmInitialDepositIntentMessage,
   generatePoolInitializationIntentMessage,
   generatePoolSwapIntentMessage,
+  generateRebalancePositionIntentMessage,
   generateRegisterHostIntentMessage,
   generateRemoveLiquidityIntentMessage,
   generateRouteSwapIntentMessage,
@@ -3918,5 +3937,512 @@ ${relaxed.toString()} (50% relaxed), provided minAmountOut ${minAmountOut.toStri
     if (!isAllowed) {
       throw new Error(`Asset B is not allowed for pool creation: ${assetBHex}`);
     }
+  }
+
+  // ===== V3 Concentrated Liquidity Operations =====
+
+  /**
+   * Create a V3 concentrated liquidity pool
+   *
+   * Concentrated liquidity pools allow LPs to provide liquidity within specific
+   * price ranges (tick ranges) for higher capital efficiency.
+   *
+   * @param params Pool creation parameters
+   * @param params.assetAAddress - Address of asset A (base asset)
+   * @param params.assetBAddress - Address of asset B (quote asset)
+   * @param params.tickSpacing - Tick spacing (common values: 10, 60, 200)
+   * @param params.initialPrice - Initial price of asset A in terms of asset B
+   * @param params.lpFeeRateBps - LP fee rate in basis points
+   * @param params.hostFeeRateBps - Host fee rate in basis points
+   * @param params.hostNamespace - Optional host namespace
+   * @param params.poolOwnerPublicKey - Optional pool owner (defaults to wallet pubkey)
+   */
+  async createConcentratedPool(params: {
+    assetAAddress: string;
+    assetBAddress: string;
+    tickSpacing: number;
+    initialPrice: string;
+    lpFeeRateBps: number;
+    hostFeeRateBps: number;
+    hostNamespace?: string;
+    poolOwnerPublicKey?: string;
+  }): Promise<CreateConcentratedPoolResponse> {
+    await this.ensureInitialized();
+
+    await this.ensureAmmOperationAllowed("allow_pool_creation");
+    await this.assertAllowedAssetBForPoolCreation(
+      this.toHexTokenIdentifier(params.assetBAddress)
+    );
+
+    const poolOwnerPublicKey = params.poolOwnerPublicKey ?? this.publicKey;
+
+    // Generate intent
+    const nonce = generateNonce();
+    const intentMessage = generateCreateConcentratedPoolIntentMessage({
+      poolOwnerPublicKey,
+      assetAAddress: this.toHexTokenIdentifier(params.assetAAddress),
+      assetBAddress: this.toHexTokenIdentifier(params.assetBAddress),
+      tickSpacing: params.tickSpacing,
+      initialPrice: params.initialPrice,
+      lpFeeRateBps: params.lpFeeRateBps.toString(),
+      hostFeeRateBps: params.hostFeeRateBps.toString(),
+      nonce,
+    });
+
+    // Sign intent
+    const messageHash = sha256(intentMessage);
+    const signature = await (
+      this._wallet as any
+    ).config.signer.signMessageWithIdentityKey(messageHash, true);
+
+    const request: CreateConcentratedPoolRequest = {
+      poolOwnerPublicKey,
+      assetAAddress: this.toHexTokenIdentifier(params.assetAAddress),
+      assetBAddress: this.toHexTokenIdentifier(params.assetBAddress),
+      tickSpacing: params.tickSpacing,
+      initialPrice: params.initialPrice,
+      lpFeeRateBps: params.lpFeeRateBps.toString(),
+      hostFeeRateBps: params.hostFeeRateBps.toString(),
+      hostNamespace: params.hostNamespace,
+      nonce,
+      signature: getHexFromUint8Array(signature),
+    };
+
+    return this.typedApi.createConcentratedPool(request);
+  }
+
+  /**
+   * Add liquidity to a V3 concentrated position
+   *
+   * Increases liquidity within a specific tick range. If the position doesn't exist,
+   * a new position is created.
+   *
+   * @param params Position parameters
+   * @param params.poolId - Pool ID (LP identity public key)
+   * @param params.tickLower - Lower tick of the position
+   * @param params.tickUpper - Upper tick of the position
+   * @param params.amountADesired - Desired amount of asset A to add
+   * @param params.amountBDesired - Desired amount of asset B to add
+   * @param params.amountAMin - Minimum amount of asset A (slippage protection)
+   * @param params.amountBMin - Minimum amount of asset B (slippage protection)
+   */
+  async increaseLiquidity(params: {
+    poolId: string;
+    tickLower: number;
+    tickUpper: number;
+    amountADesired: string;
+    amountBDesired: string;
+    amountAMin: string;
+    amountBMin: string;
+  }): Promise<IncreaseLiquidityResponse> {
+    await this.ensureInitialized();
+
+    await this.ensureAmmOperationAllowed("allow_add_liquidity");
+
+    // Get pool details to know asset addresses
+    const pool = await this.getPool(params.poolId);
+
+    // Transfer assets to pool
+    const lpSparkAddress = encodeSparkAddressNew({
+      identityPublicKey: params.poolId,
+      network: this.sparkNetwork,
+    });
+
+    const [assetATransferId, assetBTransferId] = await this.transferAssets<2>(
+      [
+        {
+          receiverSparkAddress: lpSparkAddress,
+          assetAddress: pool.assetAAddress,
+          amount: params.amountADesired,
+        },
+        {
+          receiverSparkAddress: lpSparkAddress,
+          assetAddress: pool.assetBAddress,
+          amount: params.amountBDesired,
+        },
+      ],
+      "Insufficient balance for adding V3 liquidity: "
+    );
+
+    // Execute with auto-clawback on failure
+    return this.executeWithAutoClawback(
+      async () => {
+        // Generate intent
+        const nonce = generateNonce();
+        const intentMessage = generateIncreaseLiquidityIntentMessage({
+          userPublicKey: this.publicKey,
+          lpIdentityPublicKey: params.poolId,
+          tickLower: params.tickLower,
+          tickUpper: params.tickUpper,
+          assetASparkTransferId: assetATransferId,
+          assetBSparkTransferId: assetBTransferId,
+          amountADesired: params.amountADesired,
+          amountBDesired: params.amountBDesired,
+          amountAMin: params.amountAMin,
+          amountBMin: params.amountBMin,
+          nonce,
+        });
+
+        // Sign intent
+        const messageHash = sha256(intentMessage);
+        const signature = await (
+          this._wallet as any
+        ).config.signer.signMessageWithIdentityKey(messageHash, true);
+
+        const request: IncreaseLiquidityRequest = {
+          poolId: params.poolId,
+          tickLower: params.tickLower,
+          tickUpper: params.tickUpper,
+          assetASparkTransferId: assetATransferId,
+          assetBSparkTransferId: assetBTransferId,
+          amountADesired: params.amountADesired,
+          amountBDesired: params.amountBDesired,
+          amountAMin: params.amountAMin,
+          amountBMin: params.amountBMin,
+          nonce,
+          signature: getHexFromUint8Array(signature),
+        };
+
+        const response = await this.typedApi.increaseLiquidity(request);
+
+        if (!response.accepted) {
+          const errorMessage =
+            response.error || "Increase liquidity rejected by the AMM";
+          const hasRefund = !!(
+            response.amountARefund || response.amountBRefund
+          );
+          const refundInfo = hasRefund
+            ? ` Refunds: Asset A: ${response.amountARefund || "0"}, Asset B: ${response.amountBRefund || "0"}`
+            : "";
+
+          throw new FlashnetError(`${errorMessage}.${refundInfo}`, {
+            response: {
+              errorCode: hasRefund ? "FSAG-4203" : "UNKNOWN",
+              errorCategory: hasRefund ? "Business" : "System",
+              message: `${errorMessage}.${refundInfo}`,
+              requestId: response.requestId || "",
+              timestamp: new Date().toISOString(),
+              service: "amm-gateway",
+              severity: "Error",
+            },
+            httpStatus: 400,
+            transferIds: hasRefund ? [] : [assetATransferId, assetBTransferId],
+            lpIdentityPublicKey: params.poolId,
+          });
+        }
+
+        return response;
+      },
+      [assetATransferId, assetBTransferId],
+      params.poolId
+    );
+  }
+
+  /**
+   * Remove liquidity from a V3 concentrated position
+   *
+   * Decreases liquidity from a specific tick range position.
+   *
+   * @param params Position parameters
+   * @param params.poolId - Pool ID (LP identity public key)
+   * @param params.tickLower - Lower tick of the position
+   * @param params.tickUpper - Upper tick of the position
+   * @param params.liquidityToRemove - Amount of liquidity to remove (use "0" to remove all)
+   * @param params.amountAMin - Minimum amount of asset A to receive (slippage protection)
+   * @param params.amountBMin - Minimum amount of asset B to receive (slippage protection)
+   */
+  async decreaseLiquidity(params: {
+    poolId: string;
+    tickLower: number;
+    tickUpper: number;
+    liquidityToRemove: string;
+    amountAMin: string;
+    amountBMin: string;
+  }): Promise<DecreaseLiquidityResponse> {
+    await this.ensureInitialized();
+
+    await this.ensureAmmOperationAllowed("allow_withdraw_liquidity");
+
+    // Generate intent
+    const nonce = generateNonce();
+    const intentMessage = generateDecreaseLiquidityIntentMessage({
+      userPublicKey: this.publicKey,
+      lpIdentityPublicKey: params.poolId,
+      tickLower: params.tickLower,
+      tickUpper: params.tickUpper,
+      liquidityToRemove: params.liquidityToRemove,
+      amountAMin: params.amountAMin,
+      amountBMin: params.amountBMin,
+      nonce,
+    });
+
+    // Sign intent
+    const messageHash = sha256(intentMessage);
+    const signature = await (
+      this._wallet as any
+    ).config.signer.signMessageWithIdentityKey(messageHash, true);
+
+    const request: DecreaseLiquidityRequest = {
+      poolId: params.poolId,
+      tickLower: params.tickLower,
+      tickUpper: params.tickUpper,
+      liquidityToRemove: params.liquidityToRemove,
+      amountAMin: params.amountAMin,
+      amountBMin: params.amountBMin,
+      nonce,
+      signature: getHexFromUint8Array(signature),
+    };
+
+    const response = await this.typedApi.decreaseLiquidity(request);
+
+    if (!response.accepted) {
+      const errorMessage =
+        response.error || "Decrease liquidity rejected by the AMM";
+      throw new Error(errorMessage);
+    }
+
+    return response;
+  }
+
+  /**
+   * Collect accumulated fees from a V3 position
+   *
+   * Collects fees earned from trading activity without removing liquidity.
+   *
+   * @param params Position parameters
+   * @param params.poolId - Pool ID (LP identity public key)
+   * @param params.tickLower - Lower tick of the position
+   * @param params.tickUpper - Upper tick of the position
+   */
+  async collectFees(params: {
+    poolId: string;
+    tickLower: number;
+    tickUpper: number;
+  }): Promise<CollectFeesResponse> {
+    await this.ensureInitialized();
+
+    await this.ensureAmmOperationAllowed("allow_withdraw_fees");
+
+    // Generate intent
+    const nonce = generateNonce();
+    const intentMessage = generateCollectFeesIntentMessage({
+      userPublicKey: this.publicKey,
+      lpIdentityPublicKey: params.poolId,
+      tickLower: params.tickLower,
+      tickUpper: params.tickUpper,
+      nonce,
+    });
+
+    // Sign intent
+    const messageHash = sha256(intentMessage);
+    const signature = await (
+      this._wallet as any
+    ).config.signer.signMessageWithIdentityKey(messageHash, true);
+
+    const request: CollectFeesRequest = {
+      poolId: params.poolId,
+      tickLower: params.tickLower,
+      tickUpper: params.tickUpper,
+      nonce,
+      signature: getHexFromUint8Array(signature),
+    };
+
+    const response = await this.typedApi.collectFees(request);
+
+    if (!response.accepted) {
+      const errorMessage = response.error || "Collect fees rejected by the AMM";
+      throw new Error(errorMessage);
+    }
+
+    return response;
+  }
+
+  /**
+   * Rebalance a V3 position to a new tick range
+   *
+   * Atomically moves liquidity from an old position to a new tick range.
+   * Optionally can add additional funds during rebalancing.
+   *
+   * @param params Rebalance parameters
+   * @param params.poolId - Pool ID (LP identity public key)
+   * @param params.oldTickLower - Lower tick of the current position
+   * @param params.oldTickUpper - Upper tick of the current position
+   * @param params.newTickLower - Lower tick for the new position
+   * @param params.newTickUpper - Upper tick for the new position
+   * @param params.liquidityToMove - Amount of liquidity to move (use "0" to move all)
+   * @param params.additionalAmountA - Optional additional asset A to add
+   * @param params.additionalAmountB - Optional additional asset B to add
+   */
+  async rebalancePosition(params: {
+    poolId: string;
+    oldTickLower: number;
+    oldTickUpper: number;
+    newTickLower: number;
+    newTickUpper: number;
+    liquidityToMove: string;
+    additionalAmountA?: string;
+    additionalAmountB?: string;
+  }): Promise<RebalancePositionResponse> {
+    await this.ensureInitialized();
+
+    await this.ensureAmmOperationAllowed("allow_add_liquidity");
+
+    // Get pool details
+    const pool = await this.getPool(params.poolId);
+
+    // Transfer additional assets if provided
+    let assetATransferId: string | undefined;
+    let assetBTransferId: string | undefined;
+
+    const lpSparkAddress = encodeSparkAddressNew({
+      identityPublicKey: params.poolId,
+      network: this.sparkNetwork,
+    });
+
+    if (params.additionalAmountA && BigInt(params.additionalAmountA) > 0n) {
+      assetATransferId = await this.transferAsset(
+        {
+          receiverSparkAddress: lpSparkAddress,
+          assetAddress: pool.assetAAddress,
+          amount: params.additionalAmountA,
+        },
+        "Insufficient balance for rebalance (Asset A): "
+      );
+    }
+
+    if (params.additionalAmountB && BigInt(params.additionalAmountB) > 0n) {
+      assetBTransferId = await this.transferAsset(
+        {
+          receiverSparkAddress: lpSparkAddress,
+          assetAddress: pool.assetBAddress,
+          amount: params.additionalAmountB,
+        },
+        "Insufficient balance for rebalance (Asset B): "
+      );
+    }
+
+    // Collect transfer IDs for potential clawback
+    const transferIds: string[] = [];
+    if (assetATransferId) {
+      transferIds.push(assetATransferId);
+    }
+    if (assetBTransferId) {
+      transferIds.push(assetBTransferId);
+    }
+
+    // Execute (with auto-clawback if we have transfers)
+    const executeRebalance = async () => {
+      // Generate intent
+      const nonce = generateNonce();
+      const intentMessage = generateRebalancePositionIntentMessage({
+        userPublicKey: this.publicKey,
+        lpIdentityPublicKey: params.poolId,
+        oldTickLower: params.oldTickLower,
+        oldTickUpper: params.oldTickUpper,
+        newTickLower: params.newTickLower,
+        newTickUpper: params.newTickUpper,
+        liquidityToMove: params.liquidityToMove,
+        assetASparkTransferId: assetATransferId,
+        assetBSparkTransferId: assetBTransferId,
+        additionalAmountA: params.additionalAmountA,
+        additionalAmountB: params.additionalAmountB,
+        nonce,
+      });
+
+      // Sign intent
+      const messageHash = sha256(intentMessage);
+      const signature = await (
+        this._wallet as any
+      ).config.signer.signMessageWithIdentityKey(messageHash, true);
+
+      const request: RebalancePositionRequest = {
+        poolId: params.poolId,
+        oldTickLower: params.oldTickLower,
+        oldTickUpper: params.oldTickUpper,
+        newTickLower: params.newTickLower,
+        newTickUpper: params.newTickUpper,
+        liquidityToMove: params.liquidityToMove,
+        assetASparkTransferId: assetATransferId,
+        assetBSparkTransferId: assetBTransferId,
+        additionalAmountA: params.additionalAmountA,
+        additionalAmountB: params.additionalAmountB,
+        nonce,
+        signature: getHexFromUint8Array(signature),
+      };
+
+      const response = await this.typedApi.rebalancePosition(request);
+
+      if (!response.accepted) {
+        const errorMessage =
+          response.error || "Rebalance position rejected by the AMM";
+
+        throw new FlashnetError(errorMessage, {
+          response: {
+            errorCode: "UNKNOWN",
+            errorCategory: "System",
+            message: errorMessage,
+            requestId: response.requestId || "",
+            timestamp: new Date().toISOString(),
+            service: "amm-gateway",
+            severity: "Error",
+          },
+          httpStatus: 400,
+          transferIds,
+          lpIdentityPublicKey: params.poolId,
+        });
+      }
+
+      return response;
+    };
+
+    // Use auto-clawback if we made transfers
+    if (transferIds.length > 0) {
+      return this.executeWithAutoClawback(
+        executeRebalance,
+        transferIds,
+        params.poolId
+      );
+    }
+
+    return executeRebalance();
+  }
+
+  /**
+   * List V3 concentrated liquidity positions
+   *
+   * @param query Optional query parameters
+   * @param query.poolId - Filter by pool ID
+   * @param query.page - Page number (default: 1)
+   * @param query.pageSize - Page size (default: 20, max: 100)
+   */
+  async listConcentratedPositions(
+    query?: ListConcentratedPositionsQuery
+  ): Promise<ListConcentratedPositionsResponse> {
+    await this.ensureInitialized();
+    return this.typedApi.listConcentratedPositions(query);
+  }
+
+  /**
+   * Get pool liquidity distribution for visualization
+   *
+   * Returns aggregated liquidity ranges for visualizing the liquidity distribution.
+   *
+   * @param poolId - Pool ID (LP identity public key)
+   */
+  async getPoolLiquidity(poolId: string): Promise<PoolLiquidityResponse> {
+    await this.ensureInitialized();
+    return this.typedApi.getPoolLiquidity(poolId);
+  }
+
+  /**
+   * Get pool ticks for simulation
+   *
+   * Returns all initialized ticks with their liquidity deltas for swap simulation.
+   *
+   * @param poolId - Pool ID (LP identity public key)
+   */
+  async getPoolTicks(poolId: string): Promise<PoolTicksResponse> {
+    await this.ensureInitialized();
+    return this.typedApi.getPoolTicks(poolId);
   }
 }

@@ -68,12 +68,18 @@ export {
   generateAddLiquidityIntentMessage,
   generateClaimEscrowIntentMessage,
   generateClawbackIntentMessage,
+  // V3 Concentrated Liquidity intent generators
+  generateCollectFeesIntentMessage,
   generateConstantProductPoolInitializationIntentMessage,
+  generateCreateConcentratedPoolIntentMessage,
   generateCreateEscrowIntentMessage,
+  generateDecreaseLiquidityIntentMessage,
   generateFundEscrowIntentMessage,
+  generateIncreaseLiquidityIntentMessage,
   generatePoolConfirmInitialDepositIntentMessage,
   generatePoolInitializationIntentMessage,
   generatePoolSwapIntentMessage,
+  generateRebalancePositionIntentMessage,
   generateRegisterHostIntentMessage,
   generateRemoveLiquidityIntentMessage,
   generateRouteSwapIntentMessage,
@@ -101,7 +107,24 @@ export {
   looksLikePublicKey,
   type SparkAddressFormat,
 } from "./src/utils/spark-address";
-
+// Export V3 tick math utilities
+export {
+  type HumanPriceToTickOptions,
+  humanPriceToPoolPrice,
+  humanPriceToTick,
+  poolPriceToHumanPrice,
+  priceToTick,
+  roundTick,
+  roundTickDown,
+  roundTickUp,
+  type TickRange,
+  type TickRangeFromPricesOptions,
+  type TickToHumanPriceOptions,
+  tickRangeFromPrices,
+  tickToHumanPrice,
+  tickToPrice,
+  V3TickMath,
+} from "./src/utils/tick-math";
 // Export token address utilities (new and legacy)
 export {
   decodeHumanReadableTokenIdentifier,
