@@ -19,6 +19,7 @@ import type {
   ValidateIncreaseLiquidityData,
   ValidateRebalancePositionData,
   ValidateRouteSwapData,
+  ValidateWithdrawBalanceData,
 } from "../types";
 
 /**
@@ -497,6 +498,29 @@ export function generateRebalancePositionIntentMessage(params: {
     assetBSparkTransferId: params.assetBSparkTransferId ?? null,
     additionalAmountA: params.additionalAmountA ?? null,
     additionalAmountB: params.additionalAmountB ?? null,
+    nonce: params.nonce,
+  };
+
+  return new TextEncoder().encode(JSON.stringify(intentMessage));
+}
+
+/**
+ * Generate the intent message for withdrawing free balance from a V3 pool
+ * @param params Parameters for withdrawing balance
+ * @returns The serialized intent message as Uint8Array
+ */
+export function generateWithdrawBalanceIntentMessage(params: {
+  userPublicKey: string;
+  lpIdentityPublicKey: string;
+  amountA: string;
+  amountB: string;
+  nonce: string;
+}): Uint8Array {
+  const intentMessage: ValidateWithdrawBalanceData = {
+    userPublicKey: params.userPublicKey,
+    lpIdentityPublicKey: params.lpIdentityPublicKey,
+    amountA: params.amountA,
+    amountB: params.amountB,
     nonce: params.nonce,
   };
 

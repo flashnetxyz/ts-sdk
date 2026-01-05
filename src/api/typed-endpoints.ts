@@ -647,6 +647,57 @@ export class TypedAmmApi {
       `/v1/concentrated/pools/${poolId}/ticks`
     );
   }
+
+  /**
+   * Get user's free balance for a specific V3 pool
+   * @GET /v1/concentrated/balance/{poolId}
+   * @requires Bearer token
+   */
+  async getConcentratedBalance(
+    poolId: string
+  ): Promise<Types.GetBalanceResponse> {
+    return this.client.ammGet<Types.GetBalanceResponse>(
+      `/v1/concentrated/balance/${poolId}`
+    );
+  }
+
+  /**
+   * Get user's free balances across all V3 pools
+   * @GET /v1/concentrated/balances
+   * @requires Bearer token
+   */
+  async getConcentratedBalances(): Promise<Types.GetBalancesResponse> {
+    return this.client.ammGet<Types.GetBalancesResponse>(
+      "/v1/concentrated/balances"
+    );
+  }
+
+  /**
+   * Get user's free balance for a specific V3 pool (via balances endpoint)
+   * @GET /v1/concentrated/balances/{poolId}
+   * @requires Bearer token
+   */
+  async getConcentratedBalanceByPool(
+    poolId: string
+  ): Promise<Types.GetBalancesResponse> {
+    return this.client.ammGet<Types.GetBalancesResponse>(
+      `/v1/concentrated/balances/${poolId}`
+    );
+  }
+
+  /**
+   * Withdraw free balance from a V3 pool to user's Spark wallet
+   * @POST /v1/concentrated/balance/withdraw
+   * @requires Bearer token
+   */
+  async withdrawConcentratedBalance(
+    request: Types.WithdrawBalanceRequest
+  ): Promise<Types.WithdrawBalanceResponse> {
+    return this.client.ammPost<Types.WithdrawBalanceResponse>(
+      "/v1/concentrated/balance/withdraw",
+      request
+    );
+  }
 }
 
 /**

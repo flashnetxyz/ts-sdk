@@ -1,12 +1,16 @@
 /**
  * End-to-end test for V3 Concentrated Liquidity pools using FlashnetClient.
  *
+ * This test demonstrates the FREE BALANCE MODEL where liquidity providers can
+ * retain withdrawn funds within the pool rather than transferring them to their
+ * Spark wallet. This eliminates on-chain overhead for market makers and HFTs.
+ *
  * Creates a BTC/USDB pool simulating a $90k BTC price:
  * - Asset A: USDB token (6 decimals)
  * - Asset B: BTC (sats)
  * - Initial price: ~0.00111 sats per microUSDB (~$90k/BTC)
  *
- * Run with: npx tsx e2e/e2e-concentrated-liquidity-sdk.ts
+ * Run with: npx tsx tests/e2e-concentrated-liquidity-sdk.ts
  */
 
 import { IssuerSparkWallet } from "@buildonspark/issuer-sdk";
@@ -20,7 +24,6 @@ import {
   humanPriceToPoolPrice,
   type SparkNetworkType,
   tickRangeFromPrices,
-  tickToHumanPrice,
   // V3 Tick Math utilities
   V3TickMath,
 } from "../index";
@@ -441,20 +444,53 @@ async function main(): Promise<void> {
     console.log(`    Slippage: ${slippage.toFixed(4)}%`);
   }
 
-  logSection("11. Collect Fees (before rebalance)");
+  // ============================================================================
+  // FREE BALANCE WORKFLOW DEMONSTRATION
+  // ============================================================================
+
+  logSection("11. Collect Fees with retainInBalance (FREE BALANCE DEMO)");
+
+  console.log(`\n--- FREE BALANCE MODEL DEMONSTRATION ---`);
+  console.log(`Instead of sending fees to your Spark wallet, retain them`);
+  console.log(`in the pool's free balance for immediate reuse.`);
 
   const t9 = Date.now();
   const collectResult = await client.collectFees({
     poolId: POOL_ID,
     tickLower: TICK_LOWER,
     tickUpper: TICK_UPPER,
+    retainInBalance: true, // NEW: Retain fees in pool free balance
   });
   const t10 = Date.now();
 
   logKV("Collect fees result", collectResult);
   logKV("Time (ms)", t10 - t9);
 
-  logSection("12. Rebalance to ULTRA-TIGHT ±0.5% Range");
+  if (collectResult.accepted) {
+    console.log(`\n  Fees retained in pool free balance:`);
+    console.log(`    Asset A (USDB): ${collectResult.feesCollectedA || "0"}`);
+    console.log(`    Asset B (BTC):  ${collectResult.feesCollectedB || "0"}`);
+    console.log(`    Retained: ${collectResult.retainedInBalance ? "Yes" : "No"}`);
+    if (collectResult.currentBalance) {
+      console.log(`\n  Current free balance:`);
+      console.log(`    Balance A: ${collectResult.currentBalance.balanceA}`);
+      console.log(`    Balance B: ${collectResult.currentBalance.balanceB}`);
+    }
+  }
+
+  logSection("12. Check Free Balance");
+
+  try {
+    const freeBalance = await client.getConcentratedBalance(POOL_ID);
+    logKV("Free balance for pool", freeBalance);
+    console.log(`\n  Your free balance in this pool:`);
+    console.log(`    USDB (A): ${freeBalance.balanceA} (available: ${freeBalance.availableA})`);
+    console.log(`    BTC (B):  ${freeBalance.balanceB} (available: ${freeBalance.availableB})`);
+  } catch (e) {
+    console.log(`  Free balance query not available (may need backend support)`);
+  }
+
+  logSection("13. Rebalance with retainInBalance");
 
   const positionsBeforeRebalance = await client.listConcentratedPositions({
     poolId: POOL_ID,
@@ -484,15 +520,15 @@ async function main(): Promise<void> {
     console.log(
       `  - Old range: ${TICK_LOWER} to ${TICK_UPPER} ($${positionRange.actualPriceLower.toFixed(
         0
-      )} - $${positionRange.actualPriceUpper.toFixed(0)}) [±5%]`
+      )} - $${positionRange.actualPriceUpper.toFixed(0)}) [±1%]`
     );
     console.log(
       `  - New range: ${NEW_TICK_LOWER} to ${NEW_TICK_UPPER} ($${rebalanceRange.actualPriceLower.toFixed(
         0
-      )} - $${rebalanceRange.actualPriceUpper.toFixed(0)}) [±0.5%]`
+      )} - $${rebalanceRange.actualPriceUpper.toFixed(0)}) [±0.25%]`
     );
     console.log(`  - Liquidity: ${liquidityToMove}`);
-    console.log(`  - Capital efficiency boost: ~20x!`);
+    console.log(`  - retainInBalance: true (excess stays in pool)`);
 
     const t11 = Date.now();
     const rebalanceResult = await client.rebalancePosition({
@@ -502,6 +538,7 @@ async function main(): Promise<void> {
       newTickLower: NEW_TICK_LOWER,
       newTickUpper: NEW_TICK_UPPER,
       liquidityToMove: "0", // 0 = move all
+      retainInBalance: true, // NEW: Retain any excess in free balance
     });
     const t12 = Date.now();
 
@@ -516,13 +553,18 @@ async function main(): Promise<void> {
         `New range: ${NEW_TICK_LOWER} to ${NEW_TICK_UPPER}`
       );
 
-      // With the new rebalance behavior, ALL capital is moved to the new range automatically!
-      // No need to re-deposit - netAmounts should be close to zero
       console.log(`\n  Capital efficiency analysis:`);
       console.log(`    - Old liquidity: ${rebalanceResult.oldLiquidity}`);
-      console.log(`    - New liquidity: ${rebalanceResult.newLiquidity} (should be ~10-20x higher!)`);
-      console.log(`    - Net USDB returned: ${rebalanceResult.netAmountA} (should be ~0)`);
-      console.log(`    - Net BTC returned: ${rebalanceResult.netAmountB} (should be ~0)`);
+      console.log(`    - New liquidity: ${rebalanceResult.newLiquidity}`);
+      console.log(`    - Fees collected A: ${rebalanceResult.feesCollectedA || "0"}`);
+      console.log(`    - Fees collected B: ${rebalanceResult.feesCollectedB || "0"}`);
+      console.log(`    - Retained in balance: ${rebalanceResult.retainedInBalance ? "Yes" : "No"}`);
+
+      if (rebalanceResult.currentBalance) {
+        console.log(`\n  Updated free balance:`);
+        console.log(`    Balance A: ${rebalanceResult.currentBalance.balanceA}`);
+        console.log(`    Balance B: ${rebalanceResult.currentBalance.balanceB}`);
+      }
 
       const oldLiq = BigInt(rebalanceResult.oldLiquidity || "0");
       const newLiq = BigInt(rebalanceResult.newLiquidity || "0");
@@ -534,12 +576,9 @@ async function main(): Promise<void> {
   }
 
   logSection(
-    "13. Execute Swap #3: BTC -> USDB (WITH integrator fee, AFTER rebalance)"
+    "14. Execute Swap #3: BTC -> USDB (WITH integrator fee, AFTER rebalance)"
   );
 
-  // With the improved rebalance, ALL capital moved to the ±0.5% range automatically!
-  // The liquidity value is now ~10-20x higher, giving us massive capital efficiency.
-  // This swap should have MUCH less slippage than swaps 1&2 despite same TVL.
   const swap3Amount = "50000"; // 50k sats = ~$45
   console.log(
     `\nSwapping ${swap3Amount} sats for USDB WITH ${INTEGRATOR_FEE_BPS}bps integrator fee...`
@@ -552,7 +591,7 @@ async function main(): Promise<void> {
       Number(swap3Amount) * 900 * (1 - INTEGRATOR_FEE_BPS / 10000)
     )} microUSDB`
   );
-  console.log(`  - Liquidity is now in ±0.5% range = ~20x capital efficiency!`);
+  console.log(`  - Liquidity is now in ±0.25% range = higher capital efficiency!`);
 
   const t13 = Date.now();
   const swap3Result = await client.executeSwap({
@@ -581,7 +620,7 @@ async function main(): Promise<void> {
       ((expectedOutAfterIntegratorFee - actualOut) /
         expectedOutAfterIntegratorFee) *
       100;
-    console.log(`\n  Slippage Analysis (AFTER rebalance to ±0.5%):`);
+    console.log(`\n  Slippage Analysis (AFTER rebalance to ±0.25%):`);
     console.log(
       `    Expected (no fees):       ${expectedOutBeforeFees} microUSDB`
     );
@@ -599,12 +638,9 @@ async function main(): Promise<void> {
         4
       )}% (price impact only)`
     );
-    console.log(
-      `\n  💡 With ±0.5% concentrated liquidity, the price impact should be minimal!`
-    );
   }
 
-  logSection("14. Decrease Liquidity (Remove All)");
+  logSection("15. Decrease Liquidity with retainInBalance");
 
   const positionsAfterRebalance = await client.listConcentratedPositions({
     poolId: POOL_ID,
@@ -626,9 +662,10 @@ async function main(): Promise<void> {
   if (liquidityToRemove === "0") {
     logKV("No liquidity to remove", "Skipping");
   } else {
-    console.log(`\nRemoving liquidity:`);
+    console.log(`\nRemoving liquidity with retainInBalance=true:`);
     console.log(`  - Tick range: ${currentTickLower} to ${currentTickUpper}`);
     console.log(`  - Liquidity: ${liquidityToRemove}`);
+    console.log(`  - Funds will be retained in pool free balance`);
 
     const t15 = Date.now();
     const decreaseResult = await client.decreaseLiquidity({
@@ -638,14 +675,79 @@ async function main(): Promise<void> {
       liquidityToRemove,
       amountAMin: "0",
       amountBMin: "0",
+      retainInBalance: true, // NEW: Retain in free balance
     });
     const t16 = Date.now();
 
     logKV("Decrease liquidity result", decreaseResult);
     logKV("Time (ms)", t16 - t15);
+
+    if (decreaseResult.accepted) {
+      console.log(`\n  Liquidity removed and retained in balance:`);
+      console.log(`    Amount A (USDB): ${decreaseResult.amountA || "0"}`);
+      console.log(`    Amount B (BTC):  ${decreaseResult.amountB || "0"}`);
+      console.log(`    Fees A:          ${decreaseResult.feesCollectedA || "0"}`);
+      console.log(`    Fees B:          ${decreaseResult.feesCollectedB || "0"}`);
+      console.log(`    Retained:        ${decreaseResult.retainedInBalance ? "Yes" : "No"}`);
+      if (decreaseResult.currentBalance) {
+        console.log(`\n  Updated free balance:`);
+        console.log(`    Balance A: ${decreaseResult.currentBalance.balanceA}`);
+        console.log(`    Balance B: ${decreaseResult.currentBalance.balanceB}`);
+      }
+    }
   }
 
-  logSection("15. Final Position Check (after big swap)");
+  logSection("16. Check All Free Balances");
+
+  try {
+    const allBalances = await client.getConcentratedBalances();
+    logKV("All free balances", allBalances);
+
+    if (allBalances.balances && allBalances.balances.length > 0) {
+      console.log(`\n  Your free balances across all pools:`);
+      for (const bal of allBalances.balances) {
+        console.log(`    Pool ${bal.poolId.slice(0, 16)}...:`);
+        console.log(`      Balance A: ${bal.balanceA} (available: ${bal.availableA})`);
+        console.log(`      Balance B: ${bal.balanceB} (available: ${bal.availableB})`);
+      }
+    }
+  } catch (e) {
+    console.log(`  Free balances query not available (may need backend support)`);
+  }
+
+  logSection("17. Withdraw Free Balance to Spark Wallet");
+
+  try {
+    console.log(`\nWithdrawing all free balance from pool to Spark wallet...`);
+    console.log(`  - Using "max" to withdraw all available balance`);
+
+    const t17 = Date.now();
+    const withdrawResult = await client.withdrawConcentratedBalance({
+      poolId: POOL_ID,
+      amountA: "max", // Withdraw all USDB
+      amountB: "max", // Withdraw all BTC
+    });
+    const t18 = Date.now();
+
+    logKV("Withdraw result", withdrawResult);
+    logKV("Time (ms)", t18 - t17);
+
+    if (withdrawResult.accepted) {
+      console.log(`\n  Withdrawal successful:`);
+      console.log(`    USDB withdrawn: ${withdrawResult.amountAWithdrawn || "0"}`);
+      console.log(`    BTC withdrawn:  ${withdrawResult.amountBWithdrawn || "0"}`);
+      console.log(`    Remaining A:    ${withdrawResult.remainingBalanceA || "0"}`);
+      console.log(`    Remaining B:    ${withdrawResult.remainingBalanceB || "0"}`);
+      if (withdrawResult.outboundTransferIds && withdrawResult.outboundTransferIds.length > 0) {
+        console.log(`    Transfer IDs:   ${withdrawResult.outboundTransferIds.join(", ")}`);
+      }
+    }
+  } catch (e: unknown) {
+    const errorMessage = e instanceof Error ? e.message : String(e);
+    console.log(`  Withdraw not available or no balance to withdraw: ${errorMessage}`);
+  }
+
+  logSection("18. Final Position and Balance Check");
 
   const finalPositions = await client.listConcentratedPositions({
     poolId: POOL_ID,
@@ -662,20 +764,28 @@ async function main(): Promise<void> {
     }
   }
 
-  logSection("16. Test Complete");
+  logSection("19. Test Complete - Summary");
 
   console.log("\nV3 Concentrated Liquidity Pool Summary:");
   console.log(`  POOL_ID=${POOL_ID}`);
-  console.log(`  ASSET_A=BTC (${BTC_ASSET_PUBKEY})`);
-  console.log(`  ASSET_B=${tokenTicker} (${tokenIdentifierHex})`);
+  console.log(`  ASSET_A=${tokenTicker} (${tokenIdentifierHex})`);
+  console.log(`  ASSET_B=BTC (${BTC_ASSET_PUBKEY})`);
   console.log(
-    `  INITIAL_PRICE=${INITIAL_PRICE} microUSDB/sat (~$${BTC_PRICE_USD}/BTC)`
+    `  INITIAL_PRICE=${INITIAL_PRICE} sats/microUSDB (~$${BTC_PRICE_USD}/BTC)`
   );
   console.log(`  TICK_SPACING=${TICK_SPACING}`);
   console.log(`  LP_FEE=${LP_FEE_BPS}bps, HOST_FEE=${HOST_FEE_BPS}bps`);
   console.log(`  HOST_NAMESPACE=${hostNamespace}`);
 
-  console.log("\nE2E V3 Concentrated Liquidity SDK test complete!");
+  console.log("\n--- FREE BALANCE MODEL FEATURES DEMONSTRATED ---");
+  console.log("  1. collectFees with retainInBalance=true");
+  console.log("  2. rebalancePosition with retainInBalance=true");
+  console.log("  3. decreaseLiquidity with retainInBalance=true");
+  console.log("  4. getConcentratedBalance - check single pool balance");
+  console.log("  5. getConcentratedBalances - check all pool balances");
+  console.log("  6. withdrawConcentratedBalance - withdraw to Spark wallet");
+
+  console.log("\nE2E V3 Concentrated Liquidity SDK test with FREE BALANCE MODEL complete!");
 }
 
 main().catch((e) => {

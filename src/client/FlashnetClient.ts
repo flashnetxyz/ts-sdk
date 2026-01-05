@@ -104,10 +104,14 @@ import {
   type SparkNetworkType,
   type SwapResponse,
   type TransferAssetRecipient,
+  type WithdrawBalanceRequest,
+  type WithdrawBalanceResponse,
   type WithdrawHostFeesRequest,
   type WithdrawHostFeesResponse,
   type WithdrawIntegratorFeesRequest,
   type WithdrawIntegratorFeesResponse,
+  type GetBalanceResponse,
+  type GetBalancesResponse,
 } from "../types";
 import { compareDecimalStrings, generateNonce } from "../utils";
 import { AuthManager } from "../utils/auth";
@@ -130,6 +134,7 @@ import {
   generateRegisterHostIntentMessage,
   generateRemoveLiquidityIntentMessage,
   generateRouteSwapIntentMessage,
+  generateWithdrawBalanceIntentMessage,
   generateWithdrawHostFeesIntentMessage,
   generateWithdrawIntegratorFeesIntentMessage,
 } from "../utils/intents";
@@ -4025,6 +4030,9 @@ ${relaxed.toString()} (50% relaxed), provided minAmountOut ${minAmountOut.toStri
    * @param params.amountBDesired - Desired amount of asset B to add
    * @param params.amountAMin - Minimum amount of asset A (slippage protection)
    * @param params.amountBMin - Minimum amount of asset B (slippage protection)
+   * @param params.useFreeBalanceA - If true, use free balance from pool for asset A instead of Spark transfer
+   * @param params.useFreeBalanceB - If true, use free balance from pool for asset B instead of Spark transfer
+   * @param params.retainExcessInBalance - If true, retain any excess amounts in pool free balance instead of refunding via Spark
    */
   async increaseLiquidity(params: {
     poolId: string;
@@ -4034,6 +4042,9 @@ ${relaxed.toString()} (50% relaxed), provided minAmountOut ${minAmountOut.toStri
     amountBDesired: string;
     amountAMin: string;
     amountBMin: string;
+    useFreeBalanceA?: boolean;
+    useFreeBalanceB?: boolean;
+    retainExcessInBalance?: boolean;
   }): Promise<IncreaseLiquidityResponse> {
     await this.ensureInitialized();
 
@@ -4042,100 +4053,121 @@ ${relaxed.toString()} (50% relaxed), provided minAmountOut ${minAmountOut.toStri
     // Get pool details to know asset addresses
     const pool = await this.getPool(params.poolId);
 
-    // Transfer assets to pool
+    // Transfer assets to pool (unless using free balance)
     const lpSparkAddress = encodeSparkAddressNew({
       identityPublicKey: params.poolId,
       network: this.sparkNetwork,
     });
 
-    const [assetATransferId, assetBTransferId] = await this.transferAssets<2>(
-      [
+    let assetATransferId = "";
+    let assetBTransferId = "";
+    const transferIds: string[] = [];
+
+    // Transfer asset A if not using free balance
+    if (!params.useFreeBalanceA && BigInt(params.amountADesired) > 0n) {
+      assetATransferId = await this.transferAsset(
         {
           receiverSparkAddress: lpSparkAddress,
           assetAddress: pool.assetAAddress,
           amount: params.amountADesired,
         },
+        "Insufficient balance for adding V3 liquidity (Asset A): "
+      );
+      transferIds.push(assetATransferId);
+    }
+
+    // Transfer asset B if not using free balance
+    if (!params.useFreeBalanceB && BigInt(params.amountBDesired) > 0n) {
+      assetBTransferId = await this.transferAsset(
         {
           receiverSparkAddress: lpSparkAddress,
           assetAddress: pool.assetBAddress,
           amount: params.amountBDesired,
         },
-      ],
-      "Insufficient balance for adding V3 liquidity: "
-    );
+        "Insufficient balance for adding V3 liquidity (Asset B): "
+      );
+      transferIds.push(assetBTransferId);
+    }
 
-    // Execute with auto-clawback on failure
-    return this.executeWithAutoClawback(
-      async () => {
-        // Generate intent
-        const nonce = generateNonce();
-        const intentMessage = generateIncreaseLiquidityIntentMessage({
-          userPublicKey: this.publicKey,
+    const executeIncrease = async () => {
+      // Generate intent
+      const nonce = generateNonce();
+      const intentMessage = generateIncreaseLiquidityIntentMessage({
+        userPublicKey: this.publicKey,
+        lpIdentityPublicKey: params.poolId,
+        tickLower: params.tickLower,
+        tickUpper: params.tickUpper,
+        assetASparkTransferId: assetATransferId,
+        assetBSparkTransferId: assetBTransferId,
+        amountADesired: params.amountADesired,
+        amountBDesired: params.amountBDesired,
+        amountAMin: params.amountAMin,
+        amountBMin: params.amountBMin,
+        nonce,
+      });
+
+      // Sign intent
+      const messageHash = sha256(intentMessage);
+      const signature = await (
+        this._wallet as any
+      ).config.signer.signMessageWithIdentityKey(messageHash, true);
+
+      const request: IncreaseLiquidityRequest = {
+        poolId: params.poolId,
+        tickLower: params.tickLower,
+        tickUpper: params.tickUpper,
+        assetASparkTransferId: assetATransferId,
+        assetBSparkTransferId: assetBTransferId,
+        amountADesired: params.amountADesired,
+        amountBDesired: params.amountBDesired,
+        amountAMin: params.amountAMin,
+        amountBMin: params.amountBMin,
+        useFreeBalanceA: params.useFreeBalanceA,
+        useFreeBalanceB: params.useFreeBalanceB,
+        retainExcessInBalance: params.retainExcessInBalance,
+        nonce,
+        signature: getHexFromUint8Array(signature),
+      };
+
+      const response = await this.typedApi.increaseLiquidity(request);
+
+      if (!response.accepted) {
+        const errorMessage =
+          response.error || "Increase liquidity rejected by the AMM";
+        const hasRefund = !!(response.amountARefund || response.amountBRefund);
+        const refundInfo = hasRefund
+          ? ` Refunds: Asset A: ${response.amountARefund || "0"}, Asset B: ${response.amountBRefund || "0"}`
+          : "";
+
+        throw new FlashnetError(`${errorMessage}.${refundInfo}`, {
+          response: {
+            errorCode: hasRefund ? "FSAG-4203" : "UNKNOWN",
+            errorCategory: hasRefund ? "Business" : "System",
+            message: `${errorMessage}.${refundInfo}`,
+            requestId: response.requestId || "",
+            timestamp: new Date().toISOString(),
+            service: "amm-gateway",
+            severity: "Error",
+          },
+          httpStatus: 400,
+          transferIds: hasRefund ? [] : transferIds,
           lpIdentityPublicKey: params.poolId,
-          tickLower: params.tickLower,
-          tickUpper: params.tickUpper,
-          assetASparkTransferId: assetATransferId,
-          assetBSparkTransferId: assetBTransferId,
-          amountADesired: params.amountADesired,
-          amountBDesired: params.amountBDesired,
-          amountAMin: params.amountAMin,
-          amountBMin: params.amountBMin,
-          nonce,
         });
+      }
 
-        // Sign intent
-        const messageHash = sha256(intentMessage);
-        const signature = await (
-          this._wallet as any
-        ).config.signer.signMessageWithIdentityKey(messageHash, true);
+      return response;
+    };
 
-        const request: IncreaseLiquidityRequest = {
-          poolId: params.poolId,
-          tickLower: params.tickLower,
-          tickUpper: params.tickUpper,
-          assetASparkTransferId: assetATransferId,
-          assetBSparkTransferId: assetBTransferId,
-          amountADesired: params.amountADesired,
-          amountBDesired: params.amountBDesired,
-          amountAMin: params.amountAMin,
-          amountBMin: params.amountBMin,
-          nonce,
-          signature: getHexFromUint8Array(signature),
-        };
+    // Execute with auto-clawback if we made transfers
+    if (transferIds.length > 0) {
+      return this.executeWithAutoClawback(
+        executeIncrease,
+        transferIds,
+        params.poolId
+      );
+    }
 
-        const response = await this.typedApi.increaseLiquidity(request);
-
-        if (!response.accepted) {
-          const errorMessage =
-            response.error || "Increase liquidity rejected by the AMM";
-          const hasRefund = !!(
-            response.amountARefund || response.amountBRefund
-          );
-          const refundInfo = hasRefund
-            ? ` Refunds: Asset A: ${response.amountARefund || "0"}, Asset B: ${response.amountBRefund || "0"}`
-            : "";
-
-          throw new FlashnetError(`${errorMessage}.${refundInfo}`, {
-            response: {
-              errorCode: hasRefund ? "FSAG-4203" : "UNKNOWN",
-              errorCategory: hasRefund ? "Business" : "System",
-              message: `${errorMessage}.${refundInfo}`,
-              requestId: response.requestId || "",
-              timestamp: new Date().toISOString(),
-              service: "amm-gateway",
-              severity: "Error",
-            },
-            httpStatus: 400,
-            transferIds: hasRefund ? [] : [assetATransferId, assetBTransferId],
-            lpIdentityPublicKey: params.poolId,
-          });
-        }
-
-        return response;
-      },
-      [assetATransferId, assetBTransferId],
-      params.poolId
-    );
+    return executeIncrease();
   }
 
   /**
@@ -4150,6 +4182,7 @@ ${relaxed.toString()} (50% relaxed), provided minAmountOut ${minAmountOut.toStri
    * @param params.liquidityToRemove - Amount of liquidity to remove (use "0" to remove all)
    * @param params.amountAMin - Minimum amount of asset A to receive (slippage protection)
    * @param params.amountBMin - Minimum amount of asset B to receive (slippage protection)
+   * @param params.retainInBalance - If true, retain withdrawn assets in pool free balance instead of sending via Spark
    */
   async decreaseLiquidity(params: {
     poolId: string;
@@ -4158,6 +4191,7 @@ ${relaxed.toString()} (50% relaxed), provided minAmountOut ${minAmountOut.toStri
     liquidityToRemove: string;
     amountAMin: string;
     amountBMin: string;
+    retainInBalance?: boolean;
   }): Promise<DecreaseLiquidityResponse> {
     await this.ensureInitialized();
 
@@ -4189,6 +4223,7 @@ ${relaxed.toString()} (50% relaxed), provided minAmountOut ${minAmountOut.toStri
       liquidityToRemove: params.liquidityToRemove,
       amountAMin: params.amountAMin,
       amountBMin: params.amountBMin,
+      retainInBalance: params.retainInBalance,
       nonce,
       signature: getHexFromUint8Array(signature),
     };
@@ -4213,11 +4248,13 @@ ${relaxed.toString()} (50% relaxed), provided minAmountOut ${minAmountOut.toStri
    * @param params.poolId - Pool ID (LP identity public key)
    * @param params.tickLower - Lower tick of the position
    * @param params.tickUpper - Upper tick of the position
+   * @param params.retainInBalance - If true, retain collected fees in pool free balance instead of sending via Spark
    */
   async collectFees(params: {
     poolId: string;
     tickLower: number;
     tickUpper: number;
+    retainInBalance?: boolean;
   }): Promise<CollectFeesResponse> {
     await this.ensureInitialized();
 
@@ -4243,6 +4280,7 @@ ${relaxed.toString()} (50% relaxed), provided minAmountOut ${minAmountOut.toStri
       poolId: params.poolId,
       tickLower: params.tickLower,
       tickUpper: params.tickUpper,
+      retainInBalance: params.retainInBalance,
       nonce,
       signature: getHexFromUint8Array(signature),
     };
@@ -4272,6 +4310,7 @@ ${relaxed.toString()} (50% relaxed), provided minAmountOut ${minAmountOut.toStri
    * @param params.liquidityToMove - Amount of liquidity to move (use "0" to move all)
    * @param params.additionalAmountA - Optional additional asset A to add
    * @param params.additionalAmountB - Optional additional asset B to add
+   * @param params.retainInBalance - If true, retain any excess amounts in pool free balance instead of sending via Spark
    */
   async rebalancePosition(params: {
     poolId: string;
@@ -4282,6 +4321,7 @@ ${relaxed.toString()} (50% relaxed), provided minAmountOut ${minAmountOut.toStri
     liquidityToMove: string;
     additionalAmountA?: string;
     additionalAmountB?: string;
+    retainInBalance?: boolean;
   }): Promise<RebalancePositionResponse> {
     await this.ensureInitialized();
 
@@ -4366,6 +4406,7 @@ ${relaxed.toString()} (50% relaxed), provided minAmountOut ${minAmountOut.toStri
         assetBSparkTransferId: assetBTransferId,
         additionalAmountA: params.additionalAmountA,
         additionalAmountB: params.additionalAmountB,
+        retainInBalance: params.retainInBalance,
         nonce,
         signature: getHexFromUint8Array(signature),
       };
@@ -4444,5 +4485,83 @@ ${relaxed.toString()} (50% relaxed), provided minAmountOut ${minAmountOut.toStri
   async getPoolTicks(poolId: string): Promise<PoolTicksResponse> {
     await this.ensureInitialized();
     return this.typedApi.getPoolTicks(poolId);
+  }
+
+  // ===== V3 Free Balance Methods =====
+
+  /**
+   * Get user's free balance for a specific V3 pool
+   *
+   * Returns the user's current free balance in the pool, which can be used for
+   * liquidity operations without needing to transfer from the wallet.
+   *
+   * @param poolId - Pool ID (LP identity public key)
+   */
+  async getConcentratedBalance(poolId: string): Promise<GetBalanceResponse> {
+    await this.ensureInitialized();
+    return this.typedApi.getConcentratedBalance(poolId);
+  }
+
+  /**
+   * Get user's free balances across all V3 pools
+   *
+   * Returns all free balances for the authenticated user across all V3 pools.
+   */
+  async getConcentratedBalances(): Promise<GetBalancesResponse> {
+    await this.ensureInitialized();
+    return this.typedApi.getConcentratedBalances();
+  }
+
+  /**
+   * Withdraw free balance from a V3 pool to user's Spark wallet
+   *
+   * Withdraws accumulated free balance from a pool. Use "0" to skip an asset,
+   * or "max" to withdraw all available balance of that asset.
+   *
+   * @param params Withdrawal parameters
+   * @param params.poolId - Pool ID (LP identity public key)
+   * @param params.amountA - Amount of asset A to withdraw ("0" to skip, "max" to withdraw all)
+   * @param params.amountB - Amount of asset B to withdraw ("0" to skip, "max" to withdraw all)
+   */
+  async withdrawConcentratedBalance(params: {
+    poolId: string;
+    amountA: string;
+    amountB: string;
+  }): Promise<WithdrawBalanceResponse> {
+    await this.ensureInitialized();
+
+    // Generate intent
+    const nonce = generateNonce();
+    const intentMessage = generateWithdrawBalanceIntentMessage({
+      userPublicKey: this.publicKey,
+      lpIdentityPublicKey: params.poolId,
+      amountA: params.amountA,
+      amountB: params.amountB,
+      nonce,
+    });
+
+    // Sign intent
+    const messageHash = sha256(intentMessage);
+    const signature = await (
+      this._wallet as any
+    ).config.signer.signMessageWithIdentityKey(messageHash, true);
+
+    const request: WithdrawBalanceRequest = {
+      poolId: params.poolId,
+      amountA: params.amountA,
+      amountB: params.amountB,
+      nonce,
+      signature: getHexFromUint8Array(signature),
+    };
+
+    const response = await this.typedApi.withdrawConcentratedBalance(request);
+
+    if (!response.accepted) {
+      const errorMessage =
+        response.error || "Withdraw balance rejected by the AMM";
+      throw new Error(errorMessage);
+    }
+
+    return response;
   }
 }
