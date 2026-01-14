@@ -1,5 +1,6 @@
 import type { IssuerSparkWallet } from "@buildonspark/issuer-sdk";
 import type { SparkWallet } from "@buildonspark/spark-sdk";
+import sha256 from "fast-sha256";
 import { ApiClient } from "../api/client";
 import { TypedAmmApi } from "../api/typed-endpoints";
 import {
@@ -96,7 +97,6 @@ import {
 } from "../types";
 import { compareDecimalStrings, generateNonce } from "../utils";
 import { AuthManager } from "../utils/auth";
-import sha256 from "fast-sha256";
 import { getHexFromUint8Array } from "../utils/hex";
 import {
   generateAddLiquidityIntentMessage,
@@ -606,8 +606,7 @@ export class FlashnetClient {
 
   /**
    * Convert a token identifier into the raw hex string form expected by the Flashnet backend.
-   * If the identifier is the BTC constant or already a hex string, it is returned unchanged.
-   * If it is in Bech32m human-readable form, it is decoded to hex.
+   * Handles BTC constant, hex strings, and Bech32m human-readable format.
    */
   private toHexTokenIdentifier(tokenIdentifier: string): string {
     if (tokenIdentifier === BTC_ASSET_PUBKEY) {
@@ -2777,8 +2776,22 @@ export class FlashnetClient {
     // Decode the invoice to get the amount
     const invoiceAmountSats = await this.decodeInvoiceAmount(invoice);
     if (!invoiceAmountSats || invoiceAmountSats <= 0) {
-      throw new Error(
-        "Unable to decode invoice amount. Zero-amount invoices are not supported for token payments."
+      throw new FlashnetError(
+        "Unable to decode invoice amount. Zero-amount invoices are not supported for token payments.",
+        {
+          response: {
+            errorCode: "FSAG-1002",
+            errorCategory: "Validation",
+            message:
+              "Unable to decode invoice amount. Zero-amount invoices are not supported for token payments.",
+            requestId: "",
+            timestamp: new Date().toISOString(),
+            service: "sdk",
+            severity: "Error",
+            remediation:
+              "Provide a valid BOLT11 invoice with a non-zero amount.",
+          },
+        }
       );
     }
 
@@ -2805,11 +2818,19 @@ export class FlashnetClient {
     // Check BTC minimum (output from swap)
     const btcMinAmount = minAmounts.get(BTC_ASSET_PUBKEY.toLowerCase());
     if (btcMinAmount && totalBtcNeeded < btcMinAmount) {
-      throw new Error(
-        `Invoice amount too small. Flashnet minimum BTC output is ${btcMinAmount} sats, ` +
-          `but invoice + lightning fee totals only ${totalBtcNeeded} sats. ` +
-          `Please use an invoice of at least ${btcMinAmount} sats.`
-      );
+      const msg = `Invoice amount too small. Minimum BTC output is ${btcMinAmount} sats, but invoice + lightning fee totals only ${totalBtcNeeded} sats.`;
+      throw new FlashnetError(msg, {
+        response: {
+          errorCode: "FSAG-1003",
+          errorCategory: "Validation",
+          message: msg,
+          requestId: "",
+          timestamp: new Date().toISOString(),
+          service: "sdk",
+          severity: "Error",
+          remediation: `Use an invoice of at least ${btcMinAmount} sats.`,
+        },
+      });
     }
 
     // Find the best pool to swap token -> BTC
@@ -2826,11 +2847,19 @@ export class FlashnetClient {
       tokenMinAmount &&
       BigInt(poolQuote.tokenAmountRequired) < tokenMinAmount
     ) {
-      throw new Error(
-        `Token amount too small. Flashnet minimum input is ${tokenMinAmount} units, ` +
-          `but calculated amount is only ${poolQuote.tokenAmountRequired} units. ` +
-          `Please use a larger invoice amount.`
-      );
+      const msg = `Token amount too small. Minimum input is ${tokenMinAmount} units, but calculated amount is only ${poolQuote.tokenAmountRequired} units.`;
+      throw new FlashnetError(msg, {
+        response: {
+          errorCode: "FSAG-1003",
+          errorCategory: "Validation",
+          message: msg,
+          requestId: "",
+          timestamp: new Date().toISOString(),
+          service: "sdk",
+          severity: "Error",
+          remediation: "Use a larger invoice amount.",
+        },
+      });
     }
 
     // Calculate the BTC variable fee adjustment (how much extra we're requesting)
@@ -3149,6 +3178,8 @@ export class FlashnetClient {
     const btcHex = BTC_ASSET_PUBKEY;
 
     // Find all pools that have this token paired with BTC
+    // Note: The API may return the same pool for both filter combinations,
+    // so we need to deduplicate and determine tokenIsAssetA from actual pool data
     const poolsWithTokenAsA = await this.listPools({
       assetAAddress: tokenHex,
       assetBAddress: btcHex,
@@ -3159,15 +3190,64 @@ export class FlashnetClient {
       assetBAddress: tokenHex,
     });
 
-    const allPools = [
-      ...poolsWithTokenAsA.pools.map((p) => ({ ...p, tokenIsAssetA: true })),
-      ...poolsWithTokenAsB.pools.map((p) => ({ ...p, tokenIsAssetA: false })),
-    ];
+    // Deduplicate pools by poolId and determine tokenIsAssetA from actual pool addresses
+    const poolMap = new Map<
+      string,
+      { pool: (typeof poolsWithTokenAsA.pools)[0]; tokenIsAssetA: boolean }
+    >();
+
+    for (const p of [...poolsWithTokenAsA.pools, ...poolsWithTokenAsB.pools]) {
+      if (!poolMap.has(p.lpPublicKey)) {
+        // Determine tokenIsAssetA from actual pool asset addresses, not from which query returned it
+        const tokenIsAssetA =
+          p.assetAAddress?.toLowerCase() === tokenHex.toLowerCase();
+        poolMap.set(p.lpPublicKey, { pool: p, tokenIsAssetA });
+      }
+    }
+
+    const allPools = Array.from(poolMap.values()).map(
+      ({ pool, tokenIsAssetA }) => ({
+        ...pool,
+        tokenIsAssetA,
+      })
+    );
 
     if (allPools.length === 0) {
-      throw new Error(
-        `No liquidity pool found for token ${tokenAddress} paired with BTC`
+      throw new FlashnetError(
+        `No liquidity pool found for token ${tokenAddress} paired with BTC`,
+        {
+          response: {
+            errorCode: "FSAG-4001",
+            errorCategory: "Business",
+            message: `No liquidity pool found for token ${tokenAddress} paired with BTC`,
+            requestId: "",
+            timestamp: new Date().toISOString(),
+            service: "sdk",
+            severity: "Error",
+          },
+        }
       );
+    }
+
+    // Pre-check: Get minimum amounts to provide clear error if invoice is too small
+    const minAmounts = await this.getMinAmountsMap();
+    const btcMinAmount = minAmounts.get(BTC_ASSET_PUBKEY.toLowerCase());
+
+    // Check if the BTC amount needed is below the minimum
+    if (btcMinAmount && BigInt(btcAmountNeeded) < btcMinAmount) {
+      const msg = `Invoice amount too small. Minimum ${btcMinAmount} sats required, but invoice only requires ${btcAmountNeeded} sats.`;
+      throw new FlashnetError(msg, {
+        response: {
+          errorCode: "FSAG-1003",
+          errorCategory: "Validation",
+          message: msg,
+          requestId: "",
+          timestamp: new Date().toISOString(),
+          service: "sdk",
+          severity: "Error",
+          remediation: `Use an invoice with at least ${btcMinAmount} sats.`,
+        },
+      });
     }
 
     // Find the best pool (lowest token cost for the required BTC)
@@ -3180,6 +3260,13 @@ export class FlashnetClient {
       priceImpactPct: string;
       warningMessage?: string;
     } | null = null;
+
+    // Track errors for each pool to provide better diagnostics
+    const poolErrors: Array<{
+      poolId: string;
+      error: string;
+      btcReserve?: string;
+    }> = [];
 
     for (const pool of allPools) {
       try {
@@ -3225,15 +3312,53 @@ export class FlashnetClient {
               priceImpactPct: simulation.priceImpactPct || "0",
               warningMessage: simulation.warningMessage,
             };
+          } else {
+            // Simulation output was insufficient
+            const btcReserve = pool.tokenIsAssetA
+              ? poolDetails.assetBReserve
+              : poolDetails.assetAReserve;
+            poolErrors.push({
+              poolId: pool.lpPublicKey,
+              error: `Simulation output (${simulation.amountOut} sats) < required (${btcAmountNeeded} sats)`,
+              btcReserve,
+            });
           }
         }
-      } catch {}
+      } catch (e) {
+        // Capture pool errors for diagnostics
+        const errorMessage = e instanceof Error ? e.message : String(e);
+        poolErrors.push({
+          poolId: pool.lpPublicKey,
+          error: errorMessage,
+        });
+      }
     }
 
     if (!bestPool || !bestSimulation) {
-      throw new Error(
-        `No pool has sufficient liquidity for ${btcAmountNeeded} sats`
-      );
+      let errorMessage = `No pool has sufficient liquidity for ${btcAmountNeeded} sats`;
+      if (poolErrors.length > 0) {
+        const details = poolErrors
+          .map((pe) => {
+            const reserveInfo = pe.btcReserve
+              ? ` (BTC reserve: ${pe.btcReserve})`
+              : "";
+            return `  - Pool ${pe.poolId.slice(0, 12)}...${reserveInfo}: ${pe.error}`;
+          })
+          .join("\n");
+        errorMessage += `\n\nPool evaluation details:\n${details}`;
+      }
+      throw new FlashnetError(errorMessage, {
+        response: {
+          errorCode: "FSAG-4201",
+          errorCategory: "Business",
+          message: errorMessage,
+          requestId: "",
+          timestamp: new Date().toISOString(),
+          service: "sdk",
+          severity: "Error",
+          remediation: "Try a smaller amount or wait for more liquidity.",
+        },
+      });
     }
 
     const poolDetails = await this.getPool(bestPool.lpPublicKey);
