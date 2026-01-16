@@ -241,8 +241,11 @@ async function main(): Promise<void> {
     namespace: hostNamespace,
     minFeeBps: HOST_FEE_BPS,
   });
+  if (!hostResult.namespace) {
+    throw new Error(`Host registration failed: ${JSON.stringify(hostResult)}`);
+  }
   logKV("Host namespace", hostNamespace);
-  logKV("Host registration", hostResult.namespace ? "Success" : "Failed");
+  logKV("Host registration", "Success");
 
   logSection("4. Create USDB Token (6 decimals)");
 
@@ -395,15 +398,17 @@ async function main(): Promise<void> {
   logKV("Swap #1 result", swap1Result);
   logKV("Time (ms)", t6 - t5);
 
-  if (swap1Result.accepted && swap1Result.amountOut) {
-    const expectedOut = Number(swap1Amount) * 900;
-    const actualOut = Number(swap1Result.amountOut);
-    const slippage = ((expectedOut - actualOut) / expectedOut) * 100;
-    console.log(`\n  Slippage Analysis:`);
-    console.log(`    Expected: ${expectedOut} microUSDB`);
-    console.log(`    Actual:   ${actualOut} microUSDB`);
-    console.log(`    Slippage: ${slippage.toFixed(4)}%`);
+  if (!swap1Result.accepted) {
+    throw new Error(`Swap #1 failed: ${swap1Result.error || "unknown error"}`);
   }
+
+  const expectedOut1 = Number(swap1Amount) * 900;
+  const actualOut1 = Number(swap1Result.amountOut);
+  const slippage1 = ((expectedOut1 - actualOut1) / expectedOut1) * 100;
+  console.log(`\n  Slippage Analysis:`);
+  console.log(`    Expected: ${expectedOut1} microUSDB`);
+  console.log(`    Actual:   ${actualOut1} microUSDB`);
+  console.log(`    Slippage: ${slippage1.toFixed(4)}%`);
 
   logSection("10. Execute Swap #2: USDB -> BTC (NO integrator)");
 
@@ -433,15 +438,17 @@ async function main(): Promise<void> {
   logKV("Swap #2 result", swap2Result);
   logKV("Time (ms)", t8 - t7);
 
-  if (swap2Result.accepted && swap2Result.amountOut) {
-    const expectedOut = Math.floor(Number(swap2Amount) / 900);
-    const actualOut = Number(swap2Result.amountOut);
-    const slippage = ((expectedOut - actualOut) / expectedOut) * 100;
-    console.log(`\n  Slippage Analysis:`);
-    console.log(`    Expected: ${expectedOut} sats`);
-    console.log(`    Actual:   ${actualOut} sats`);
-    console.log(`    Slippage: ${slippage.toFixed(4)}%`);
+  if (!swap2Result.accepted) {
+    throw new Error(`Swap #2 failed: ${swap2Result.error || "unknown error"}`);
   }
+
+  const expectedOut2 = Math.floor(Number(swap2Amount) / 900);
+  const actualOut2 = Number(swap2Result.amountOut);
+  const slippage2 = ((expectedOut2 - actualOut2) / expectedOut2) * 100;
+  console.log(`\n  Slippage Analysis:`);
+  console.log(`    Expected: ${expectedOut2} sats`);
+  console.log(`    Actual:   ${actualOut2} sats`);
+  console.log(`    Slippage: ${slippage2.toFixed(4)}%`);
 
   // Free Balance Workflow Demonstration
 
@@ -461,29 +468,27 @@ async function main(): Promise<void> {
   logKV("Collect fees result", collectResult);
   logKV("Time (ms)", t10 - t9);
 
-  if (collectResult.accepted) {
-    console.log(`\n  Fees retained in pool free balance:`);
-    console.log(`    Asset A (USDB): ${collectResult.feesCollectedA || "0"}`);
-    console.log(`    Asset B (BTC):  ${collectResult.feesCollectedB || "0"}`);
-    console.log(`    Retained: ${collectResult.retainedInBalance ? "Yes" : "No"}`);
-    if (collectResult.currentBalance) {
-      console.log(`\n  Current free balance:`);
-      console.log(`    Balance A: ${collectResult.currentBalance.balanceA}`);
-      console.log(`    Balance B: ${collectResult.currentBalance.balanceB}`);
-    }
+  if (!collectResult.accepted) {
+    throw new Error(`Collect fees failed: ${collectResult.error || "unknown error"}`);
+  }
+
+  console.log(`\n  Fees retained in pool free balance:`);
+  console.log(`    Asset A (USDB): ${collectResult.feesCollectedA || "0"}`);
+  console.log(`    Asset B (BTC):  ${collectResult.feesCollectedB || "0"}`);
+  console.log(`    Retained: ${collectResult.retainedInBalance ? "Yes" : "No"}`);
+  if (collectResult.currentBalance) {
+    console.log(`\n  Current free balance:`);
+    console.log(`    Balance A: ${collectResult.currentBalance.balanceA}`);
+    console.log(`    Balance B: ${collectResult.currentBalance.balanceB}`);
   }
 
   logSection("12. Check Free Balance");
 
-  try {
-    const freeBalance = await client.getConcentratedBalance(POOL_ID);
-    logKV("Free balance for pool", freeBalance);
-    console.log(`\n  Your free balance in this pool:`);
-    console.log(`    USDB (A): ${freeBalance.balanceA} (available: ${freeBalance.availableA})`);
-    console.log(`    BTC (B):  ${freeBalance.balanceB} (available: ${freeBalance.availableB})`);
-  } catch (e) {
-    console.log(`  Free balance query not available (may need backend support)`);
-  }
+  const freeBalance = await client.getConcentratedBalance(POOL_ID);
+  logKV("Free balance for pool", freeBalance);
+  console.log(`\n  Your free balance in this pool:`);
+  console.log(`    USDB (A): ${freeBalance.balanceA} (available: ${freeBalance.availableA})`);
+  console.log(`    BTC (B):  ${freeBalance.balanceB} (available: ${freeBalance.availableB})`);
 
   logSection("13. Rebalance with retainInBalance");
 
@@ -540,33 +545,35 @@ async function main(): Promise<void> {
     logKV("Rebalance result", rebalanceResult);
     logKV("Time (ms)", t12 - t11);
 
-    if (rebalanceResult.accepted) {
-      currentTickLower = NEW_TICK_LOWER;
-      currentTickUpper = NEW_TICK_UPPER;
-      logKV(
-        "Position rebalanced",
-        `New range: ${NEW_TICK_LOWER} to ${NEW_TICK_UPPER}`
-      );
+    if (!rebalanceResult.accepted) {
+      throw new Error(`Rebalance failed: ${rebalanceResult.error || "unknown error"}`);
+    }
 
-      console.log(`\n  Capital efficiency analysis:`);
-      console.log(`    - Old liquidity: ${rebalanceResult.oldLiquidity}`);
-      console.log(`    - New liquidity: ${rebalanceResult.newLiquidity}`);
-      console.log(`    - Fees collected A: ${rebalanceResult.feesCollectedA || "0"}`);
-      console.log(`    - Fees collected B: ${rebalanceResult.feesCollectedB || "0"}`);
-      console.log(`    - Retained in balance: ${rebalanceResult.retainedInBalance ? "Yes" : "No"}`);
+    currentTickLower = NEW_TICK_LOWER;
+    currentTickUpper = NEW_TICK_UPPER;
+    logKV(
+      "Position rebalanced",
+      `New range: ${NEW_TICK_LOWER} to ${NEW_TICK_UPPER}`
+    );
 
-      if (rebalanceResult.currentBalance) {
-        console.log(`\n  Updated free balance:`);
-        console.log(`    Balance A: ${rebalanceResult.currentBalance.balanceA}`);
-        console.log(`    Balance B: ${rebalanceResult.currentBalance.balanceB}`);
-      }
+    console.log(`\n  Capital efficiency analysis:`);
+    console.log(`    - Old liquidity: ${rebalanceResult.oldLiquidity}`);
+    console.log(`    - New liquidity: ${rebalanceResult.newLiquidity}`);
+    console.log(`    - Fees collected A: ${rebalanceResult.feesCollectedA || "0"}`);
+    console.log(`    - Fees collected B: ${rebalanceResult.feesCollectedB || "0"}`);
+    console.log(`    - Retained in balance: ${rebalanceResult.retainedInBalance ? "Yes" : "No"}`);
 
-      const oldLiq = BigInt(rebalanceResult.oldLiquidity || "0");
-      const newLiq = BigInt(rebalanceResult.newLiquidity || "0");
-      if (oldLiq > 0n) {
-        const multiplier = Number(newLiq) / Number(oldLiq);
-        console.log(`    - Liquidity multiplier: ${multiplier.toFixed(1)}x`);
-      }
+    if (rebalanceResult.currentBalance) {
+      console.log(`\n  Updated free balance:`);
+      console.log(`    Balance A: ${rebalanceResult.currentBalance.balanceA}`);
+      console.log(`    Balance B: ${rebalanceResult.currentBalance.balanceB}`);
+    }
+
+    const oldLiq = BigInt(rebalanceResult.oldLiquidity || "0");
+    const newLiq = BigInt(rebalanceResult.newLiquidity || "0");
+    if (oldLiq > 0n) {
+      const multiplier = Number(newLiq) / Number(oldLiq);
+      console.log(`    - Liquidity multiplier: ${multiplier.toFixed(1)}x`);
     }
   }
 
@@ -604,36 +611,38 @@ async function main(): Promise<void> {
   logKV("Swap #3 result", swap3Result);
   logKV("Time (ms)", t14 - t13);
 
-  if (swap3Result.accepted && swap3Result.amountOut) {
-    const expectedOutBeforeFees = Number(swap3Amount) * 900;
-    const expectedOutAfterIntegratorFee =
-      expectedOutBeforeFees * (1 - INTEGRATOR_FEE_BPS / 10000);
-    const actualOut = Number(swap3Result.amountOut);
-    const slippageFromIdeal =
-      ((expectedOutBeforeFees - actualOut) / expectedOutBeforeFees) * 100;
-    const slippageFromExpected =
-      ((expectedOutAfterIntegratorFee - actualOut) /
-        expectedOutAfterIntegratorFee) *
-      100;
-    console.log(`\n  Slippage Analysis (AFTER rebalance to ±0.25%):`);
-    console.log(
-      `    Expected (no fees):       ${expectedOutBeforeFees} microUSDB`
-    );
-    console.log(
-      `    Expected (after ${INTEGRATOR_FEE_BPS}bps fee): ${Math.floor(
-        expectedOutAfterIntegratorFee
-      )} microUSDB`
-    );
-    console.log(`    Actual:                   ${actualOut} microUSDB`);
-    console.log(
-      `    Total slippage from ideal: ${slippageFromIdeal.toFixed(4)}%`
-    );
-    console.log(
-      `    Slippage beyond fees:      ${slippageFromExpected.toFixed(
-        4
-      )}% (price impact only)`
-    );
+  if (!swap3Result.accepted) {
+    throw new Error(`Swap #3 failed: ${swap3Result.error || "unknown error"}`);
   }
+
+  const expectedOutBeforeFees = Number(swap3Amount) * 900;
+  const expectedOutAfterIntegratorFee =
+    expectedOutBeforeFees * (1 - INTEGRATOR_FEE_BPS / 10000);
+  const actualOut3 = Number(swap3Result.amountOut);
+  const slippageFromIdeal =
+    ((expectedOutBeforeFees - actualOut3) / expectedOutBeforeFees) * 100;
+  const slippageFromExpected =
+    ((expectedOutAfterIntegratorFee - actualOut3) /
+      expectedOutAfterIntegratorFee) *
+    100;
+  console.log(`\n  Slippage Analysis (AFTER rebalance to ±0.25%):`);
+  console.log(
+    `    Expected (no fees):       ${expectedOutBeforeFees} microUSDB`
+  );
+  console.log(
+    `    Expected (after ${INTEGRATOR_FEE_BPS}bps fee): ${Math.floor(
+      expectedOutAfterIntegratorFee
+    )} microUSDB`
+  );
+  console.log(`    Actual:                   ${actualOut3} microUSDB`);
+  console.log(
+    `    Total slippage from ideal: ${slippageFromIdeal.toFixed(4)}%`
+  );
+  console.log(
+    `    Slippage beyond fees:      ${slippageFromExpected.toFixed(
+      4
+    )}% (price impact only)`
+  );
 
   logSection("15. Decrease Liquidity with retainInBalance");
 
@@ -677,69 +686,64 @@ async function main(): Promise<void> {
     logKV("Decrease liquidity result", decreaseResult);
     logKV("Time (ms)", t16 - t15);
 
-    if (decreaseResult.accepted) {
-      console.log(`\n  Liquidity removed and retained in balance:`);
-      console.log(`    Amount A (USDB): ${decreaseResult.amountA || "0"}`);
-      console.log(`    Amount B (BTC):  ${decreaseResult.amountB || "0"}`);
-      console.log(`    Fees A:          ${decreaseResult.feesCollectedA || "0"}`);
-      console.log(`    Fees B:          ${decreaseResult.feesCollectedB || "0"}`);
-      console.log(`    Retained:        ${decreaseResult.retainedInBalance ? "Yes" : "No"}`);
-      if (decreaseResult.currentBalance) {
-        console.log(`\n  Updated free balance:`);
-        console.log(`    Balance A: ${decreaseResult.currentBalance.balanceA}`);
-        console.log(`    Balance B: ${decreaseResult.currentBalance.balanceB}`);
-      }
+    if (!decreaseResult.accepted) {
+      throw new Error(`Decrease liquidity failed: ${decreaseResult.error || "unknown error"}`);
+    }
+
+    console.log(`\n  Liquidity removed and retained in balance:`);
+    console.log(`    Amount A (USDB): ${decreaseResult.amountA || "0"}`);
+    console.log(`    Amount B (BTC):  ${decreaseResult.amountB || "0"}`);
+    console.log(`    Fees A:          ${decreaseResult.feesCollectedA || "0"}`);
+    console.log(`    Fees B:          ${decreaseResult.feesCollectedB || "0"}`);
+    console.log(`    Retained:        ${decreaseResult.retainedInBalance ? "Yes" : "No"}`);
+    if (decreaseResult.currentBalance) {
+      console.log(`\n  Updated free balance:`);
+      console.log(`    Balance A: ${decreaseResult.currentBalance.balanceA}`);
+      console.log(`    Balance B: ${decreaseResult.currentBalance.balanceB}`);
     }
   }
 
   logSection("16. Check All Free Balances");
 
-  try {
-    const allBalances = await client.getConcentratedBalances();
-    logKV("All free balances", allBalances);
+  const allBalances = await client.getConcentratedBalances();
+  logKV("All free balances", allBalances);
 
-    if (allBalances.balances && allBalances.balances.length > 0) {
-      console.log(`\n  Your free balances across all pools:`);
-      for (const bal of allBalances.balances) {
-        console.log(`    Pool ${bal.poolId.slice(0, 16)}...:`);
-        console.log(`      Balance A: ${bal.balanceA} (available: ${bal.availableA})`);
-        console.log(`      Balance B: ${bal.balanceB} (available: ${bal.availableB})`);
-      }
+  if (allBalances.balances && allBalances.balances.length > 0) {
+    console.log(`\n  Your free balances across all pools:`);
+    for (const bal of allBalances.balances) {
+      console.log(`    Pool ${bal.poolId.slice(0, 16)}...:`);
+      console.log(`      Balance A: ${bal.balanceA} (available: ${bal.availableA})`);
+      console.log(`      Balance B: ${bal.balanceB} (available: ${bal.availableB})`);
     }
-  } catch (e) {
-    console.log(`  Free balances query not available (may need backend support)`);
   }
 
   logSection("17. Withdraw Free Balance to Spark Wallet");
 
-  try {
-    console.log(`\nWithdrawing all free balance from pool to Spark wallet...`);
-    console.log(`  - Using "max" to withdraw all available balance`);
+  console.log(`\nWithdrawing all free balance from pool to Spark wallet...`);
+  console.log(`  - Using "max" to withdraw all available balance`);
 
-    const t17 = Date.now();
-    const withdrawResult = await client.withdrawConcentratedBalance({
-      poolId: POOL_ID,
-      amountA: "max", // Withdraw all USDB
-      amountB: "max", // Withdraw all BTC
-    });
-    const t18 = Date.now();
+  const t17 = Date.now();
+  const withdrawResult = await client.withdrawConcentratedBalance({
+    poolId: POOL_ID,
+    amountA: "max", // Withdraw all USDB
+    amountB: "max", // Withdraw all BTC
+  });
+  const t18 = Date.now();
 
-    logKV("Withdraw result", withdrawResult);
-    logKV("Time (ms)", t18 - t17);
+  logKV("Withdraw result", withdrawResult);
+  logKV("Time (ms)", t18 - t17);
 
-    if (withdrawResult.accepted) {
-      console.log(`\n  Withdrawal successful:`);
-      console.log(`    USDB withdrawn: ${withdrawResult.amountAWithdrawn || "0"}`);
-      console.log(`    BTC withdrawn:  ${withdrawResult.amountBWithdrawn || "0"}`);
-      console.log(`    Remaining A:    ${withdrawResult.remainingBalanceA || "0"}`);
-      console.log(`    Remaining B:    ${withdrawResult.remainingBalanceB || "0"}`);
-      if (withdrawResult.outboundTransferIds && withdrawResult.outboundTransferIds.length > 0) {
-        console.log(`    Transfer IDs:   ${withdrawResult.outboundTransferIds.join(", ")}`);
-      }
-    }
-  } catch (e: unknown) {
-    const errorMessage = e instanceof Error ? e.message : String(e);
-    console.log(`  Withdraw not available or no balance to withdraw: ${errorMessage}`);
+  if (!withdrawResult.accepted) {
+    throw new Error(`Withdraw failed: ${withdrawResult.error || "unknown error"}`);
+  }
+
+  console.log(`\n  Withdrawal successful:`);
+  console.log(`    USDB withdrawn: ${withdrawResult.amountAWithdrawn || "0"}`);
+  console.log(`    BTC withdrawn:  ${withdrawResult.amountBWithdrawn || "0"}`);
+  console.log(`    Remaining A:    ${withdrawResult.remainingBalanceA || "0"}`);
+  console.log(`    Remaining B:    ${withdrawResult.remainingBalanceB || "0"}`);
+  if (withdrawResult.outboundTransferIds && withdrawResult.outboundTransferIds.length > 0) {
+    console.log(`    Transfer IDs:   ${withdrawResult.outboundTransferIds.join(", ")}`);
   }
 
   logSection("18. Final Position and Balance Check");
