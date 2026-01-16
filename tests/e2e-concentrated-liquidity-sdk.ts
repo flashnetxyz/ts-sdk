@@ -35,6 +35,11 @@ const SPARKSCAN_URL = process.env.SPARKSCAN_URL;
 const SPARK_NETWORK = process.env.SPARK_NETWORK || "REGTEST";
 const FAUCET_URL = process.env.FAUCET_URL;
 
+if (!AMM_URL || !MEMPOOL_URL || !SPARKSCAN_URL || !FAUCET_URL) {
+  console.error("Missing required environment variables: AMM_URL, MEMPOOL_URL, SPARKSCAN_URL, FAUCET_URL");
+  process.exit(1);
+}
+
 
 // Pool assets
 const BTC_DECIMALS = 8; // sats

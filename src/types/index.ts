@@ -85,7 +85,7 @@ export interface FlashnetClientLegacyConfig {
   autoAuthenticate?: boolean;
 }
 
-// ===== BACKWARD COMPATIBILITY TYPES =====
+// BACKWARD COMPATIBILITY TYPES
 
 /**
  * @deprecated Use SparkNetworkType for Spark networks and ClientEnvironment for client configuration
@@ -98,7 +98,7 @@ export type NetworkType =
   | "SIGNET"
   | "LOCAL";
 
-// ===== TYPE CONVERSION UTILITIES =====
+// TYPE CONVERSION UTILITIES
 
 /**
  * Maps legacy NetworkType to SparkNetworkType
@@ -177,7 +177,7 @@ export interface Signer {
   signMessage(message: Uint8Array): Promise<Uint8Array>;
 }
 
-// ===== Generated from OpenAPI Specification =====
+// Generated from OpenAPI Specification
 
 // Authentication types
 export interface ChallengeRequest {
@@ -736,7 +736,7 @@ export interface SettlementPingResponse {
   gatewayTimestamp: string;
 }
 
-// ===== Config Endpoints Types =====
+// Config Endpoints Types
 
 export type FeatureName =
   | "master_kill_switch"
@@ -1060,7 +1060,7 @@ export interface TransferAssetRecipient {
   amount: string;
 }
 
-// ===== Escrow Types =====
+// Escrow Types
 
 // --- Escrow Intent Validation Data ---
 
@@ -1264,7 +1264,7 @@ export interface FundEscrowRequest {
   signature: string;
 }
 
-// ===== CLAWBACK TYPES =====
+// CLAWBACK TYPES
 
 export interface ClawbackRequest {
   senderPublicKey: string;
@@ -1383,7 +1383,7 @@ export interface ClawbackResponse {
   error?: string;
 }
 
-// ===== VALIDATION UTILITIES =====
+// VALIDATION UTILITIES
 
 /**
  * Validation result interface for client-side validations
@@ -1467,7 +1467,7 @@ export function calculateThresholdPercentage(
   }
 }
 
-// ===== V3 CONCENTRATED LIQUIDITY TYPES =====
+// V3 CONCENTRATED LIQUIDITY TYPES
 
 // --- V3 Intent Validation Data Types ---
 
@@ -1927,6 +1927,6 @@ export interface ValidateWithdrawBalanceData {
   nonce: string;
 }
 
-// ===== Error Types =====
+// Error Types
 // Re-export all error types from errors module
 export * from "./errors";

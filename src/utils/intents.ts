@@ -348,7 +348,7 @@ export function generateClawbackIntentMessage(params: {
   return new TextEncoder().encode(JSON.stringify(signingPayload));
 }
 
-// ===== V3 CONCENTRATED LIQUIDITY INTENT GENERATORS =====
+// V3 CONCENTRATED LIQUIDITY INTENT GENERATORS
 
 /**
  * Generate the intent message for creating a concentrated liquidity pool (V3)

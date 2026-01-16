@@ -34,7 +34,7 @@ export interface SparkAddressDataNew {
   network: SparkNetworkType;
 }
 
-// ===== BACKWARD COMPATIBILITY LAYER =====
+// BACKWARD COMPATIBILITY LAYER
 
 /**
  * @deprecated Use SparkAddressNetworkPrefix instead
@@ -321,7 +321,7 @@ export function convertSparkAddressToSparkNetwork(
   }
 }
 
-// ===== BACKWARD COMPATIBILITY FUNCTIONS =====
+// BACKWARD COMPATIBILITY FUNCTIONS
 
 /**
  * Encodes a public key and network into a Spark address

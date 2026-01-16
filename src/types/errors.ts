@@ -10,7 +10,7 @@
  *   - 5000–5999: System/Service
  */
 
-// ===== Clawback Result Types =====
+// Clawback Result Types
 
 /**
  * Result of an automatic clawback attempt for a single transfer
@@ -52,7 +52,7 @@ export interface AutoClawbackSummary {
   unrecoveredTransferIds: string[];
 }
 
-// ===== Error Codes =====
+// Error Codes
 
 /**
  * All Flashnet AMM Gateway error codes
@@ -124,7 +124,7 @@ export type ErrorRecoveryStrategy =
   /** No funds at risk - typically read operations or auth errors before transfers */
   | "none";
 
-// ===== Error Metadata =====
+// Error Metadata
 
 export interface ErrorCodeMetadata {
   httpStatus: number;
@@ -141,7 +141,7 @@ export interface ErrorCodeMetadata {
  */
 export const ERROR_CODE_METADATA: Record<FlashnetErrorCode, ErrorCodeMetadata> =
   {
-    // ===== Validation Errors (1000-1999) - Clawback Required =====
+    // Validation Errors (1000-1999) - Clawback Required
     "FSAG-1000": {
       httpStatus: 400,
       category: "Validation",
@@ -193,7 +193,7 @@ export const ERROR_CODE_METADATA: Record<FlashnetErrorCode, ErrorCodeMetadata> =
       isRetryable: false,
     },
 
-    // ===== Security/Auth Errors (2000-2999) - Clawback Required =====
+    // Security/Auth Errors (2000-2999) - Clawback Required
     "FSAG-2001": {
       httpStatus: 403,
       category: "Security",
@@ -253,7 +253,7 @@ export const ERROR_CODE_METADATA: Record<FlashnetErrorCode, ErrorCodeMetadata> =
       isRetryable: false,
     },
 
-    // ===== Infrastructure/External Errors (3000-3999) - Clawback Recommended =====
+    // Infrastructure/External Errors (3000-3999) - Clawback Recommended
     "FSAG-3001": {
       httpStatus: 503,
       category: "Infrastructure",
@@ -364,7 +364,7 @@ export const ERROR_CODE_METADATA: Record<FlashnetErrorCode, ErrorCodeMetadata> =
       isRetryable: true,
     },
 
-    // ===== Business/AMM Logic Errors (4000-4999) - Auto Refund =====
+    // Business/AMM Logic Errors (4000-4999) - Auto Refund
     "FSAG-4001": {
       httpStatus: 404,
       category: "Business",
@@ -465,7 +465,7 @@ export const ERROR_CODE_METADATA: Record<FlashnetErrorCode, ErrorCodeMetadata> =
       isRetryable: false,
     },
 
-    // ===== System/Service Errors (5000-5999) - Clawback Required =====
+    // System/Service Errors (5000-5999) - Clawback Required
     "FSAG-5001": {
       httpStatus: 500,
       category: "System",
@@ -516,7 +516,7 @@ export const ERROR_CODE_METADATA: Record<FlashnetErrorCode, ErrorCodeMetadata> =
     },
   };
 
-// ===== Helper Functions =====
+// Helper Functions
 
 /**
  * Check if a string is a valid FlashnetErrorCode
@@ -578,7 +578,7 @@ export function getCategoryFromCodeRange(
   }
 }
 
-// ===== FlashnetError Class =====
+// FlashnetError Class
 
 /**
  * Raw error response from the AMM Gateway API
@@ -742,7 +742,7 @@ export class FlashnetError extends Error {
     }
   }
 
-  // ===== Recovery Status Methods =====
+  // Recovery Status Methods
 
   /**
    * Returns true if funds were sent and clawback is required
@@ -781,7 +781,7 @@ export class FlashnetError extends Error {
     return this.transferIds.length > 0 && this.recovery !== "auto_refund";
   }
 
-  // ===== Category Check Methods =====
+  // Category Check Methods
 
   isValidationError(): boolean {
     return this.category === "Validation";
@@ -803,7 +803,7 @@ export class FlashnetError extends Error {
     return this.category === "System";
   }
 
-  // ===== Specific Error Checks =====
+  // Specific Error Checks
 
   isSlippageError(): boolean {
     return this.errorCode === "FSAG-4202";
@@ -825,7 +825,7 @@ export class FlashnetError extends Error {
     return this.errorCode === "FSAG-4401";
   }
 
-  // ===== Clawback Status Methods =====
+  // Clawback Status Methods
 
   /**
    * Returns true if automatic clawback was attempted
@@ -878,7 +878,7 @@ export class FlashnetError extends Error {
     return this.clawbackSummary?.unrecoveredTransferIds ?? this.transferIds;
   }
 
-  // ===== Formatting Methods =====
+  // Formatting Methods
 
   /**
    * Get a formatted string for logging

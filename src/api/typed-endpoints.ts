@@ -7,7 +7,7 @@ import type { ApiClient } from "./client";
 export class TypedAmmApi {
   constructor(private client: ApiClient) {}
 
-  // ===== Authentication Endpoints =====
+  // Authentication Endpoints
 
   /**
    * Request authentication challenge
@@ -33,7 +33,7 @@ export class TypedAmmApi {
     );
   }
 
-  // ===== Host Endpoints =====
+  // Host Endpoints
 
   /**
    * Register a new host
@@ -113,7 +113,7 @@ export class TypedAmmApi {
     );
   }
 
-  // ===== Pool Endpoints =====
+  // Pool Endpoints
 
   /**
    * Create constant product pool
@@ -202,7 +202,7 @@ export class TypedAmmApi {
     );
   }
 
-  // ===== Liquidity Endpoints =====
+  // Liquidity Endpoints
 
   /**
    * Add liquidity to pool
@@ -258,7 +258,7 @@ export class TypedAmmApi {
     );
   }
 
-  // ===== Swap Endpoints =====
+  // Swap Endpoints
 
   /**
    * Execute swap
@@ -324,7 +324,7 @@ export class TypedAmmApi {
     );
   }
 
-  // ===== Route Swap Endpoints =====
+  // Route Swap Endpoints
 
   /**
    * Execute route swap
@@ -353,7 +353,7 @@ export class TypedAmmApi {
     );
   }
 
-  // ===== Integrator Endpoints =====
+  // Integrator Endpoints
 
   /**
    * Get integrator fees across all pools
@@ -408,7 +408,7 @@ export class TypedAmmApi {
     );
   }
 
-  // ===== Escrow Endpoints =====
+  // Escrow Endpoints
 
   /**
    * Create a new escrow contract
@@ -460,7 +460,7 @@ export class TypedAmmApi {
     return this.client.ammGet<Types.EscrowState>(`/v1/escrows/${escrowId}`);
   }
 
-  // ===== Status Endpoints =====
+  // Status Endpoints
 
   /**
    * Ping settlement service
@@ -470,7 +470,7 @@ export class TypedAmmApi {
     return this.client.ammGet<Types.SettlementPingResponse>("/v1/ping");
   }
 
-  // ===== Config Endpoints =====
+  // Config Endpoints
 
   /**
    * Get feature status flags
@@ -502,7 +502,7 @@ export class TypedAmmApi {
     );
   }
 
-  // ===== Clawback Endpoint =====
+  // Clawback Endpoint
   /**
    * Clawback stuck funds sent to an LP wallet
    * @POST /v1/clawback
@@ -542,7 +542,7 @@ export class TypedAmmApi {
     );
   }
 
-  // ===== V3 Concentrated Liquidity Endpoints =====
+  // V3 Concentrated Liquidity Endpoints
 
   /**
    * Create a new concentrated liquidity pool (V3)

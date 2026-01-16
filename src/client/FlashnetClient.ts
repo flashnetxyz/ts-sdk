@@ -55,6 +55,8 @@ import {
   FlashnetError,
   type FundEscrowRequest,
   type FundEscrowResponse,
+  type GetBalanceResponse,
+  type GetBalancesResponse,
   type GetHostFeesRequest,
   type GetHostFeesResponse,
   type GetHostResponse,
@@ -110,8 +112,6 @@ import {
   type WithdrawHostFeesResponse,
   type WithdrawIntegratorFeesRequest,
   type WithdrawIntegratorFeesResponse,
-  type GetBalanceResponse,
-  type GetBalancesResponse,
 } from "../types";
 import { compareDecimalStrings, generateNonce } from "../utils";
 import { AuthManager } from "../utils/auth";
@@ -750,7 +750,7 @@ export class FlashnetClient {
     }
   }
 
-  // ===== Pool Operations =====
+  // Pool Operations
 
   /**
    * List pools with optional filters
@@ -1152,7 +1152,7 @@ export class FlashnetClient {
     return this.typedApi.confirmInitialDeposit(request);
   }
 
-  // ===== Swap Operations =====
+  // Swap Operations
 
   /**
    * Simulate a swap without executing it
@@ -1494,7 +1494,7 @@ export class FlashnetClient {
     );
   }
 
-  // ===== Liquidity Operations =====
+  // Liquidity Operations
 
   /**
    * Simulate adding liquidity
@@ -1704,7 +1704,7 @@ export class FlashnetClient {
     return response;
   }
 
-  // ===== Host Operations =====
+  // Host Operations
 
   /**
    * Register as a host
@@ -1909,7 +1909,7 @@ export class FlashnetClient {
     return this.typedApi.getIntegratorFees();
   }
 
-  // ===== Escrow Operations =====
+  // Escrow Operations
 
   /**
    * Creates a new escrow contract.
@@ -2098,7 +2098,7 @@ export class FlashnetClient {
     return this.typedApi.getEscrow(escrowId);
   }
 
-  // ===== Swap History =====
+  // Swap History
 
   /**
    * Get swaps for a specific pool
@@ -2133,7 +2133,7 @@ export class FlashnetClient {
     return this.typedApi.getUserSwaps(user, query);
   }
 
-  // ===== Clawback =====
+  // Clawback
   /**
    * Request clawback of a stuck inbound transfer to an LP wallet
    */
@@ -2356,7 +2356,7 @@ export class FlashnetClient {
     }
   }
 
-  // ===== Clawback Monitor =====
+  // Clawback Monitor
 
   /**
    * Start a background job that periodically polls for clawbackable transfers
@@ -2516,7 +2516,7 @@ export class FlashnetClient {
     };
   }
 
-  // ===== Token Address Operations =====
+  // Token Address Operations
 
   /**
    * Encode a token identifier into a human-readable token address using the client's Spark network
@@ -2572,9 +2572,9 @@ export class FlashnetClient {
     return decodeSparkHumanReadableTokenIdentifier(address, this.sparkNetwork);
   }
 
-  // ===== Status =====
+  // Status
 
-  // ===== Config Inspection =====
+  // Config Inspection
   /**
    * Get raw feature status list (cached briefly)
    */
@@ -2641,7 +2641,7 @@ export class FlashnetClient {
     return this.typedApi.ping();
   }
 
-  // ===== Helper Methods =====
+  // Helper Methods
 
   /**
    * Performs asset transfer using generalized asset address for both BTC and tokens.
@@ -2775,7 +2775,7 @@ export class FlashnetClient {
     }
   }
 
-  // ===== Lightning Payment with Token =====
+  // Lightning Payment with Token
 
   /**
    * Get a quote for paying a Lightning invoice with a token.
@@ -3697,7 +3697,7 @@ export class FlashnetClient {
     await this._wallet.cleanupConnections();
   }
 
-  // ===== Config and Policy Enforcement Helpers =====
+  // Config and Policy Enforcement Helpers
 
   private async ensureAmmOperationAllowed(
     requiredFeature: FeatureName
@@ -3944,7 +3944,7 @@ ${relaxed.toString()} (50% relaxed), provided minAmountOut ${minAmountOut.toStri
     }
   }
 
-  // ===== V3 Concentrated Liquidity Operations =====
+  // V3 Concentrated Liquidity Operations
 
   /**
    * Create a V3 concentrated liquidity pool
@@ -4487,7 +4487,7 @@ ${relaxed.toString()} (50% relaxed), provided minAmountOut ${minAmountOut.toStri
     return this.typedApi.getPoolTicks(poolId);
   }
 
-  // ===== V3 Free Balance Methods =====
+  // V3 Free Balance Methods
 
   /**
    * Get user's free balance for a specific V3 pool

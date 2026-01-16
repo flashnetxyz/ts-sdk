@@ -85,9 +85,9 @@ export function roundTick(tick: number, tickSpacing: number): number {
   return Math.round(tick / tickSpacing) * tickSpacing;
 }
 
-// ============================================================================
+//
 // Human-Readable Price Conversions
-// ============================================================================
+//
 
 export interface HumanPriceToTickOptions {
   /**
@@ -231,9 +231,9 @@ export function tickToHumanPrice(options: TickToHumanPriceOptions): number {
   }
 }
 
-// ============================================================================
+//
 // Tick Range Helpers
-// ============================================================================
+//
 
 export interface TickRangeFromPricesOptions {
   /**
@@ -355,9 +355,9 @@ export function tickRangeFromPrices(
   };
 }
 
-// ============================================================================
+//
 // Pool Price Calculation from Amount
-// ============================================================================
+//
 
 /**
  * Calculate the pool price needed for a given position configuration.
@@ -413,9 +413,9 @@ export function poolPriceToHumanPrice(
   }
 }
 
-// ============================================================================
+//
 // Convenience exports
-// ============================================================================
+//
 
 /**
  * V3 tick math utilities namespace for cleaner imports.
