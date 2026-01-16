@@ -85,7 +85,7 @@ export interface FlashnetClientLegacyConfig {
   autoAuthenticate?: boolean;
 }
 
-// ===== BACKWARD COMPATIBILITY TYPES =====
+// BACKWARD COMPATIBILITY TYPES
 
 /**
  * @deprecated Use SparkNetworkType for Spark networks and ClientEnvironment for client configuration
@@ -98,7 +98,7 @@ export type NetworkType =
   | "SIGNET"
   | "LOCAL";
 
-// ===== TYPE CONVERSION UTILITIES =====
+// TYPE CONVERSION UTILITIES
 
 /**
  * Maps legacy NetworkType to SparkNetworkType
@@ -177,7 +177,7 @@ export interface Signer {
   signMessage(message: Uint8Array): Promise<Uint8Array>;
 }
 
-// ===== Generated from OpenAPI Specification =====
+// Generated from OpenAPI Specification
 
 // Authentication types
 export interface ChallengeRequest {
@@ -736,7 +736,7 @@ export interface SettlementPingResponse {
   gatewayTimestamp: string;
 }
 
-// ===== Config Endpoints Types =====
+// Config Endpoints Types
 
 export type FeatureName =
   | "master_kill_switch"
@@ -1060,7 +1060,7 @@ export interface TransferAssetRecipient {
   amount: string;
 }
 
-// ===== Escrow Types =====
+// Escrow Types
 
 // --- Escrow Intent Validation Data ---
 
@@ -1264,7 +1264,7 @@ export interface FundEscrowRequest {
   signature: string;
 }
 
-// ===== CLAWBACK TYPES =====
+// CLAWBACK TYPES
 
 export interface ClawbackRequest {
   senderPublicKey: string;
@@ -1383,7 +1383,7 @@ export interface ClawbackResponse {
   error?: string;
 }
 
-// ===== VALIDATION UTILITIES =====
+// VALIDATION UTILITIES
 
 /**
  * Validation result interface for client-side validations
@@ -1467,6 +1467,466 @@ export function calculateThresholdPercentage(
   }
 }
 
-// ===== Error Types =====
+// V3 CONCENTRATED LIQUIDITY TYPES
+
+// --- V3 Intent Validation Data Types ---
+
+/**
+ * Data for validating a create concentrated pool intent.
+ */
+export interface ValidateConcentratedPoolData {
+  poolOwnerPublicKey: string;
+  assetAAddress: string;
+  assetBAddress: string;
+  tickSpacing: number;
+  initialPrice: string;
+  lpFeeRateBps: string;
+  hostFeeRateBps: string;
+  nonce: string;
+}
+
+/**
+ * Data for validating an increase liquidity intent.
+ */
+export interface ValidateIncreaseLiquidityData {
+  userPublicKey: string;
+  lpIdentityPublicKey: string;
+  tickLower: number;
+  tickUpper: number;
+  assetASparkTransferId: string;
+  assetBSparkTransferId: string;
+  amountADesired: string;
+  amountBDesired: string;
+  amountAMin: string;
+  amountBMin: string;
+  nonce: string;
+}
+
+/**
+ * Data for validating a decrease liquidity intent.
+ */
+export interface ValidateDecreaseLiquidityData {
+  userPublicKey: string;
+  lpIdentityPublicKey: string;
+  tickLower: number;
+  tickUpper: number;
+  liquidityToRemove: string;
+  amountAMin: string;
+  amountBMin: string;
+  nonce: string;
+}
+
+/**
+ * Data for validating a collect fees intent.
+ */
+export interface ValidateCollectFeesData {
+  userPublicKey: string;
+  lpIdentityPublicKey: string;
+  tickLower: number;
+  tickUpper: number;
+  nonce: string;
+}
+
+/**
+ * Data for validating a rebalance position intent.
+ * Note: Optional fields serialize as null (not omitted) to match TEE's proto serde behavior.
+ */
+export interface ValidateRebalancePositionData {
+  userPublicKey: string;
+  lpIdentityPublicKey: string;
+  oldTickLower: number;
+  oldTickUpper: number;
+  newTickLower: number;
+  newTickUpper: number;
+  liquidityToMove: string;
+  assetASparkTransferId: string | null;
+  assetBSparkTransferId: string | null;
+  additionalAmountA: string | null;
+  additionalAmountB: string | null;
+  nonce: string;
+}
+
+// --- V3 Request Types ---
+
+/**
+ * Request body for creating a new concentrated liquidity pool.
+ */
+export interface CreateConcentratedPoolRequest {
+  poolOwnerPublicKey: string;
+  assetAAddress: string;
+  assetBAddress: string;
+  tickSpacing: number;
+  initialPrice: string;
+  lpFeeRateBps: string;
+  hostFeeRateBps: string;
+  hostNamespace?: string;
+  nonce: string;
+  signature: string;
+}
+
+/**
+ * Request body for increasing liquidity in a concentrated position.
+ */
+export interface IncreaseLiquidityRequest {
+  poolId: string;
+  tickLower: number;
+  tickUpper: number;
+  assetASparkTransferId: string;
+  assetBSparkTransferId: string;
+  amountADesired: string;
+  amountBDesired: string;
+  amountAMin: string;
+  amountBMin: string;
+  /** Use free balance from pool for asset A instead of Spark transfer. */
+  useFreeBalanceA?: boolean;
+  /** Use free balance from pool for asset B instead of Spark transfer. */
+  useFreeBalanceB?: boolean;
+  /** Retain any excess amounts in free balance instead of refunding via Spark. */
+  retainExcessInBalance?: boolean;
+  nonce: string;
+  signature: string;
+}
+
+/**
+ * Request body for decreasing liquidity in a concentrated position.
+ */
+export interface DecreaseLiquidityRequest {
+  poolId: string;
+  tickLower: number;
+  tickUpper: number;
+  liquidityToRemove: string;
+  amountAMin: string;
+  amountBMin: string;
+  /** Retain withdrawn assets in free balance instead of sending via Spark. */
+  retainInBalance?: boolean;
+  nonce: string;
+  signature: string;
+}
+
+/**
+ * Request body for collecting accumulated fees from a position.
+ */
+export interface CollectFeesRequest {
+  poolId: string;
+  tickLower: number;
+  tickUpper: number;
+  /** Retain collected fees in free balance instead of sending via Spark. */
+  retainInBalance?: boolean;
+  nonce: string;
+  signature: string;
+}
+
+/**
+ * Request body for rebalancing a position to a new tick range.
+ */
+export interface RebalancePositionRequest {
+  poolId: string;
+  oldTickLower: number;
+  oldTickUpper: number;
+  newTickLower: number;
+  newTickUpper: number;
+  liquidityToMove: string;
+  assetASparkTransferId?: string;
+  assetBSparkTransferId?: string;
+  additionalAmountA?: string;
+  additionalAmountB?: string;
+  /** Retain any excess amounts in free balance instead of sending via Spark. */
+  retainInBalance?: boolean;
+  nonce: string;
+  signature: string;
+}
+
+// --- V3 Response Types ---
+
+/**
+ * Information about a user's free balance in a V3 pool.
+ */
+export interface V3FreeBalanceInfo {
+  balanceA: string;
+  balanceB: string;
+}
+
+/**
+ * Response for concentrated pool creation.
+ */
+export interface CreateConcentratedPoolResponse {
+  poolId: string;
+  initialTick: number;
+  message: string;
+}
+
+/**
+ * Response for increasing liquidity.
+ */
+export interface IncreaseLiquidityResponse {
+  requestId: string;
+  accepted: boolean;
+  liquidityAdded?: string;
+  amountAUsed?: string;
+  amountBUsed?: string;
+  amountARefund?: string;
+  amountBRefund?: string;
+  /** Whether excess was retained in free balance. */
+  retainedInBalance?: boolean;
+  /** Current free balance after operation (if retainedInBalance is true). */
+  currentBalance?: V3FreeBalanceInfo;
+  error?: string;
+}
+
+/**
+ * Response for decreasing liquidity.
+ */
+export interface DecreaseLiquidityResponse {
+  requestId: string;
+  accepted: boolean;
+  liquidityRemoved?: string;
+  amountA?: string;
+  amountB?: string;
+  feesCollectedA?: string;
+  feesCollectedB?: string;
+  outboundTransferIds?: string[];
+  /** Whether assets were retained in free balance. */
+  retainedInBalance?: boolean;
+  /** Current free balance after operation (if retainedInBalance is true). */
+  currentBalance?: V3FreeBalanceInfo;
+  error?: string;
+}
+
+/**
+ * Response for collecting fees.
+ */
+export interface CollectFeesResponse {
+  requestId: string;
+  accepted: boolean;
+  feesCollectedA?: string;
+  feesCollectedB?: string;
+  assetAAddress?: string;
+  assetBAddress?: string;
+  outboundTransferIds?: string[];
+  /** Whether fees were retained in free balance. */
+  retainedInBalance?: boolean;
+  /** Current free balance after operation (if retainedInBalance is true). */
+  currentBalance?: V3FreeBalanceInfo;
+  error?: string;
+}
+
+/**
+ * Response for rebalancing a position.
+ */
+export interface RebalancePositionResponse {
+  requestId: string;
+  accepted: boolean;
+  oldLiquidity?: string;
+  newLiquidity?: string;
+  netAmountA?: string;
+  netAmountB?: string;
+  feesCollectedA?: string;
+  feesCollectedB?: string;
+  /** Spark transfer IDs for outbound assets (net amounts and fees sent to user). */
+  outboundTransferIds?: string[];
+  /** Whether excess was retained in free balance. */
+  retainedInBalance?: boolean;
+  /** Current free balance after operation (if retainedInBalance is true). */
+  currentBalance?: V3FreeBalanceInfo;
+  error?: string;
+}
+
+// --- V3 Position Types ---
+
+/**
+ * Query parameters for listing positions.
+ */
+export interface ListConcentratedPositionsQuery {
+  poolId?: string;
+  page?: number;
+  pageSize?: number;
+}
+
+/**
+ * A single concentrated liquidity position.
+ */
+export interface ConcentratedPosition {
+  poolId: string;
+  owner: string;
+  tickLower: number;
+  tickUpper: number;
+  liquidity: string;
+  uncollectedFeesA: string;
+  uncollectedFeesB: string;
+  assetAAddress: string;
+  assetBAddress: string;
+  inRange: boolean;
+  createdAt?: string;
+}
+
+/**
+ * Response for listing positions.
+ */
+export interface ListConcentratedPositionsResponse {
+  positions: ConcentratedPosition[];
+  totalCount: number;
+  page: number;
+  pageSize: number;
+}
+
+// --- V3 Pool Liquidity Types ---
+
+/**
+ * Status of a liquidity range relative to current price.
+ */
+export type RangeStatus = "below_price" | "in_range" | "above_price";
+
+/**
+ * A liquidity range representing aggregated positions at a tick range.
+ */
+export interface LiquidityRange {
+  tickLower: number;
+  tickUpper: number;
+  priceLower: string;
+  priceUpper: string;
+  liquidity: string;
+  amountA: string;
+  amountB: string;
+  status: RangeStatus;
+}
+
+/**
+ * Response for pool liquidity distribution (visualization endpoint).
+ */
+export interface PoolLiquidityResponse {
+  poolId: string;
+  assetAAddress: string;
+  assetBAddress: string;
+  currentTick: number;
+  currentPrice: string;
+  currentSqrtPriceX96: string;
+  tickSpacing: number;
+  activeLiquidity: string;
+  totalReserveA: string;
+  totalReserveB: string;
+  ranges: LiquidityRange[];
+}
+
+// --- V3 Pool Ticks Types ---
+
+/**
+ * A tick with its liquidity delta for simulation.
+ */
+export interface TickData {
+  tick: number;
+  liquidityNet: string;
+  liquidityGross: string;
+  sqrtPriceX96: string;
+}
+
+/**
+ * Response for pool ticks (simulation endpoint).
+ */
+export interface PoolTicksResponse {
+  poolId: string;
+  assetAAddress: string;
+  assetBAddress: string;
+  currentTick: number;
+  currentSqrtPriceX96: string;
+  currentLiquidity: string;
+  tickSpacing: number;
+  lpFeeBps: number;
+  ticks: TickData[];
+}
+
+// --- V3 Free Balance Types ---
+
+/**
+ * A single pool balance entry with total, available, and locked amounts.
+ */
+export interface PoolBalanceEntry {
+  /** Pool ID (LP identity public key). */
+  poolId: string;
+  /** Total balance of asset A in atomic units. */
+  balanceA: string;
+  /** Total balance of asset B in atomic units. */
+  balanceB: string;
+  /** Available balance of asset A (total minus in-flight locks). */
+  availableA: string;
+  /** Available balance of asset B (total minus in-flight locks). */
+  availableB: string;
+  /** Currently locked balance of asset A (in-flight operations). */
+  lockedA: string;
+  /** Currently locked balance of asset B (in-flight operations). */
+  lockedB: string;
+  /** Asset A address. */
+  assetAAddress: string;
+  /** Asset B address. */
+  assetBAddress: string;
+}
+
+/**
+ * Response for getting a single pool balance.
+ */
+export interface GetBalanceResponse {
+  requestId: string;
+  poolId: string;
+  balanceA: string;
+  balanceB: string;
+  availableA: string;
+  availableB: string;
+  lockedA: string;
+  lockedB: string;
+  assetAAddress: string;
+  assetBAddress: string;
+}
+
+/**
+ * Response for getting all free balances across pools.
+ */
+export interface GetBalancesResponse {
+  requestId: string;
+  balances: PoolBalanceEntry[];
+}
+
+/**
+ * Request body for withdrawing free balance from a V3 pool.
+ */
+export interface WithdrawBalanceRequest {
+  /** Pool ID (LP identity public key). */
+  poolId: string;
+  /** Amount of asset A to withdraw. Use "0" to skip, "max" to withdraw all available. */
+  amountA: string;
+  /** Amount of asset B to withdraw. Use "0" to skip, "max" to withdraw all available. */
+  amountB: string;
+  /** Unique nonce for replay protection. */
+  nonce: string;
+  /** Hex-encoded signature of the nonce. */
+  signature: string;
+}
+
+/**
+ * Response for withdrawing free balance.
+ */
+export interface WithdrawBalanceResponse {
+  requestId: string;
+  accepted: boolean;
+  amountAWithdrawn?: string;
+  amountBWithdrawn?: string;
+  assetAAddress?: string;
+  assetBAddress?: string;
+  remainingBalanceA?: string;
+  remainingBalanceB?: string;
+  outboundTransferIds?: string[];
+  error?: string;
+}
+
+/**
+ * Data for validating a withdraw balance intent.
+ */
+export interface ValidateWithdrawBalanceData {
+  userPublicKey: string;
+  lpIdentityPublicKey: string;
+  amountA: string;
+  amountB: string;
+  nonce: string;
+}
+
+// Error Types
 // Re-export all error types from errors module
 export * from "./errors";

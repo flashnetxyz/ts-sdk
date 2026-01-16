@@ -7,7 +7,7 @@ import type { ApiClient } from "./client";
 export class TypedAmmApi {
   constructor(private client: ApiClient) {}
 
-  // ===== Authentication Endpoints =====
+  // Authentication Endpoints
 
   /**
    * Request authentication challenge
@@ -33,7 +33,7 @@ export class TypedAmmApi {
     );
   }
 
-  // ===== Host Endpoints =====
+  // Host Endpoints
 
   /**
    * Register a new host
@@ -113,7 +113,7 @@ export class TypedAmmApi {
     );
   }
 
-  // ===== Pool Endpoints =====
+  // Pool Endpoints
 
   /**
    * Create constant product pool
@@ -202,7 +202,7 @@ export class TypedAmmApi {
     );
   }
 
-  // ===== Liquidity Endpoints =====
+  // Liquidity Endpoints
 
   /**
    * Add liquidity to pool
@@ -258,7 +258,7 @@ export class TypedAmmApi {
     );
   }
 
-  // ===== Swap Endpoints =====
+  // Swap Endpoints
 
   /**
    * Execute swap
@@ -324,7 +324,7 @@ export class TypedAmmApi {
     );
   }
 
-  // ===== Route Swap Endpoints =====
+  // Route Swap Endpoints
 
   /**
    * Execute route swap
@@ -353,7 +353,7 @@ export class TypedAmmApi {
     );
   }
 
-  // ===== Integrator Endpoints =====
+  // Integrator Endpoints
 
   /**
    * Get integrator fees across all pools
@@ -408,7 +408,7 @@ export class TypedAmmApi {
     );
   }
 
-  // ===== Escrow Endpoints =====
+  // Escrow Endpoints
 
   /**
    * Create a new escrow contract
@@ -460,7 +460,7 @@ export class TypedAmmApi {
     return this.client.ammGet<Types.EscrowState>(`/v1/escrows/${escrowId}`);
   }
 
-  // ===== Status Endpoints =====
+  // Status Endpoints
 
   /**
    * Ping settlement service
@@ -470,7 +470,7 @@ export class TypedAmmApi {
     return this.client.ammGet<Types.SettlementPingResponse>("/v1/ping");
   }
 
-  // ===== Config Endpoints =====
+  // Config Endpoints
 
   /**
    * Get feature status flags
@@ -502,7 +502,7 @@ export class TypedAmmApi {
     );
   }
 
-  // ===== Clawback Endpoint =====
+  // Clawback Endpoint
   /**
    * Clawback stuck funds sent to an LP wallet
    * @POST /v1/clawback
@@ -539,6 +539,163 @@ export class TypedAmmApi {
     return this.client.ammGet<Types.ListClawbackableTransfersResponse>(
       "/v1/clawback-transfers/list",
       { params: query as any }
+    );
+  }
+
+  // V3 Concentrated Liquidity Endpoints
+
+  /**
+   * Create a new concentrated liquidity pool (V3)
+   * @POST /v1/pools/concentrated
+   * @requires Bearer token
+   */
+  async createConcentratedPool(
+    request: Types.CreateConcentratedPoolRequest
+  ): Promise<Types.CreateConcentratedPoolResponse> {
+    return this.client.ammPost<Types.CreateConcentratedPoolResponse>(
+      "/v1/pools/concentrated",
+      request
+    );
+  }
+
+  /**
+   * Increase liquidity in a V3 concentrated position
+   * @POST /v1/concentrated/liquidity/increase
+   * @requires Bearer token
+   */
+  async increaseLiquidity(
+    request: Types.IncreaseLiquidityRequest
+  ): Promise<Types.IncreaseLiquidityResponse> {
+    return this.client.ammPost<Types.IncreaseLiquidityResponse>(
+      "/v1/concentrated/liquidity/increase",
+      request
+    );
+  }
+
+  /**
+   * Decrease liquidity in a V3 concentrated position
+   * @POST /v1/concentrated/liquidity/decrease
+   * @requires Bearer token
+   */
+  async decreaseLiquidity(
+    request: Types.DecreaseLiquidityRequest
+  ): Promise<Types.DecreaseLiquidityResponse> {
+    return this.client.ammPost<Types.DecreaseLiquidityResponse>(
+      "/v1/concentrated/liquidity/decrease",
+      request
+    );
+  }
+
+  /**
+   * Collect accumulated fees from a V3 position
+   * @POST /v1/concentrated/fees/collect
+   * @requires Bearer token
+   */
+  async collectFees(
+    request: Types.CollectFeesRequest
+  ): Promise<Types.CollectFeesResponse> {
+    return this.client.ammPost<Types.CollectFeesResponse>(
+      "/v1/concentrated/fees/collect",
+      request
+    );
+  }
+
+  /**
+   * Rebalance a V3 position to a new tick range
+   * @POST /v1/concentrated/positions/rebalance
+   * @requires Bearer token
+   */
+  async rebalancePosition(
+    request: Types.RebalancePositionRequest
+  ): Promise<Types.RebalancePositionResponse> {
+    return this.client.ammPost<Types.RebalancePositionResponse>(
+      "/v1/concentrated/positions/rebalance",
+      request
+    );
+  }
+
+  /**
+   * List V3 concentrated liquidity positions
+   * @GET /v1/concentrated/positions
+   * @requires Bearer token
+   */
+  async listConcentratedPositions(
+    query?: Types.ListConcentratedPositionsQuery
+  ): Promise<Types.ListConcentratedPositionsResponse> {
+    return this.client.ammGet<Types.ListConcentratedPositionsResponse>(
+      "/v1/concentrated/positions",
+      { params: query as any }
+    );
+  }
+
+  /**
+   * Get pool liquidity distribution for visualization
+   * @GET /v1/concentrated/pools/{poolId}/liquidity
+   */
+  async getPoolLiquidity(poolId: string): Promise<Types.PoolLiquidityResponse> {
+    return this.client.ammGet<Types.PoolLiquidityResponse>(
+      `/v1/concentrated/pools/${poolId}/liquidity`
+    );
+  }
+
+  /**
+   * Get pool ticks for simulation
+   * @GET /v1/concentrated/pools/{poolId}/ticks
+   */
+  async getPoolTicks(poolId: string): Promise<Types.PoolTicksResponse> {
+    return this.client.ammGet<Types.PoolTicksResponse>(
+      `/v1/concentrated/pools/${poolId}/ticks`
+    );
+  }
+
+  /**
+   * Get user's free balance for a specific V3 pool
+   * @GET /v1/concentrated/balance/{poolId}
+   * @requires Bearer token
+   */
+  async getConcentratedBalance(
+    poolId: string
+  ): Promise<Types.GetBalanceResponse> {
+    return this.client.ammGet<Types.GetBalanceResponse>(
+      `/v1/concentrated/balance/${poolId}`
+    );
+  }
+
+  /**
+   * Get user's free balances across all V3 pools
+   * @GET /v1/concentrated/balances
+   * @requires Bearer token
+   */
+  async getConcentratedBalances(): Promise<Types.GetBalancesResponse> {
+    return this.client.ammGet<Types.GetBalancesResponse>(
+      "/v1/concentrated/balances"
+    );
+  }
+
+  /**
+   * Get user's free balance for a specific V3 pool (via balances endpoint)
+   * @GET /v1/concentrated/balances/{poolId}
+   * @requires Bearer token
+   */
+  async getConcentratedBalanceByPool(
+    poolId: string
+  ): Promise<Types.GetBalancesResponse> {
+    return this.client.ammGet<Types.GetBalancesResponse>(
+      `/v1/concentrated/balances/${poolId}`
+    );
+  }
+
+  /**
+   * Withdraw free balance from a V3 pool to user's Spark wallet
+   * @POST /v1/concentrated/balance/withdraw
+   * @requires Bearer token
+   */
+  async withdrawConcentratedBalance(
+    request: Types.WithdrawBalanceRequest
+  ): Promise<Types.WithdrawBalanceResponse> {
+    return this.client.ammPost<Types.WithdrawBalanceResponse>(
+      "/v1/concentrated/balance/withdraw",
+      request
     );
   }
 }

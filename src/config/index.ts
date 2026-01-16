@@ -197,7 +197,7 @@ export function getClientEnvironmentName(
   return "custom";
 }
 
-// ===== BACKWARD COMPATIBILITY LAYER =====
+// BACKWARD COMPATIBILITY LAYER
 
 /**
  * @deprecated Use CLIENT_NETWORK_CONFIGS with getClientNetworkConfig() instead

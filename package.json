@@ -1,6 +1,6 @@
 {
   "name": "@flashnet/sdk",
-  "version": "0.4.4",
+  "version": "0.5.0",
   "main": "./dist/cjs/index.js",
   "module": "./dist/esm/index.js",
   "types": "./dist/esm/index.d.ts",
@@ -54,6 +54,9 @@
     "test:cjs": "node tests/test-cjs.cjs",
     "test:bun": "bun tests/test-bun.js",
     "test:modular": "node tests/test-modular.mjs",
+    "test:e2e": "npx tsx tests/e2e.ts",
+    "test:e2e:v3": "npx tsx tests/e2e-concentrated-liquidity-sdk.ts",
+    "test:e2e:all": "npm run test:e2e && npm run test:e2e:v3",
     "lint": "biome check .",
     "lint:fix": "biome check --write .",
     "format": "biome format --write .",
@@ -62,8 +65,8 @@
   },
   "devDependencies": {
     "@biomejs/biome": "2.0.5",
-    "@buildonspark/issuer-sdk": "^0.1.0",
-    "@buildonspark/spark-sdk": "^0.5.0",
+    "@buildonspark/issuer-sdk": "^0.1.4",
+    "@buildonspark/spark-sdk": "^0.5.4",
     "@rollup/plugin-typescript": "^12.1.4",
     "@types/bun": "latest",
     "@types/jest": "^30.0.0",

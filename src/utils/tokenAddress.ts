@@ -109,7 +109,7 @@ export function decodeSparkHumanReadableTokenIdentifier(
   }
 }
 
-// ===== BACKWARD COMPATIBILITY LAYER =====
+// BACKWARD COMPATIBILITY LAYER
 
 /**
  * @deprecated Use SparkHumanReadableTokenIdentifierNetworkPrefix instead

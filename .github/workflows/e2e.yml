@@ -39,7 +39,7 @@ jobs:
         run: bun run build
 
       - name: Run E2E tests
-        run: bun tests/e2e.ts
+        run: npm run test:e2e:all
         env:
           AMM_URL: ${{ secrets.AMM_URL }}
           MEMPOOL_URL: ${{ secrets.MEMPOOL_URL }}
