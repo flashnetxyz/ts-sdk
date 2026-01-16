@@ -29,15 +29,12 @@ import {
 } from "../index";
 
 // Network configuration - hardcoded for local dev
-const AMM_URL = process.env.AMM_URL;
+const AMM_URL = process.env.AMM_URL || "http://localhost:8090";
 const MEMPOOL_URL = process.env.MEMPOOL_URL;
 const SPARKSCAN_URL = process.env.SPARKSCAN_URL;
 const SPARK_NETWORK = process.env.SPARK_NETWORK || "REGTEST";
 const FAUCET_URL = process.env.FAUCET_URL;
 
-// ============================================================================
-// Pool Configuration - Using V3TickMath utilities
-// ============================================================================
 
 // Pool assets
 const BTC_DECIMALS = 8; // sats
@@ -51,9 +48,9 @@ const BTC_PRICE_USD = 90000;
 const POSITION_PRICE_LOWER = 89100; // $89.1k BTC (-1%)
 const POSITION_PRICE_UPPER = 90900; // $90.9k BTC (+1%)
 
-// ULTRA-TIGHT REBALANCE RANGE: ±0.25% around $90k for maximum capital efficiency
-const REBALANCE_PRICE_LOWER = 89775; // $89.775k BTC (-0.25%)
-const REBALANCE_PRICE_UPPER = 90225; // $90.225k BTC (+0.25%)
+// TIGHT REBALANCE RANGE: ±0.5% around $90k for capital efficiency
+const REBALANCE_PRICE_LOWER = 89550; // $89.55k BTC (-0.5%)
+const REBALANCE_PRICE_UPPER = 90450; // $90.45k BTC (+0.5%)
 
 // Calculate pool price and ticks using V3TickMath
 // For USDB/BTC pool: base=BTC (asset B), quote=USDB (asset A)
@@ -94,20 +91,17 @@ const HOST_FEE_BPS = 10;
 const INTEGRATOR_FEE_BPS = 50; // 0.5% for integrator swap
 
 // Faucet and liquidity amounts
-const FAUCET_FUND_SATS = 1_000_000; // 1M sats
-const BTC_LIQUIDITY = "400000"; // 400k sats for liquidity
-const USDB_LIQUIDITY = "360000000"; // 360M microUSDB = $360 (matching 400k sats at ~$90k)
+const FAUCET_FUND_SATS = 100_000; // 100k sats (faucet max)
+const BTC_LIQUIDITY = "20000"; // 20k sats for liquidity (leaves room for fees)
+const USDB_LIQUIDITY = "18000000"; // 18M microUSDB = $18 (matching 20k sats at ~$90k)
 
 // Token supply
 const INITIAL_USDB_SUPPLY = BigInt(10_000_000_000_000); // 10M USDB (with 6 decimals)
 
-// ---------- Utility Functions ----------
+// Utility Functions
 
 function logSection(title: string): void {
-  const line = "=".repeat(60);
-  console.log("\n" + line);
-  console.log(title);
-  console.log(line);
+  console.log(`\n[${title}]`);
 }
 
 function logKV(label: string, value?: unknown): void {
@@ -136,14 +130,14 @@ function generateRandomTicker(): string {
   return `USD${num}`; // 5 bytes, e.g. USD42
 }
 
-// ---------- New Faucet Integration ----------
+// Faucet Integration
 
 interface FaucetResult {
-  results: Array<{
-    recipient: string;
-    amount_sent: number;
-    txid: string;
-  }>;
+  success: boolean;
+  txid: string;
+  amount: number;
+  address: string;
+  error?: string;
 }
 
 async function fundViaFaucet(
@@ -154,13 +148,14 @@ async function fundViaFaucet(
   const before = await wallet.getBalance();
   const startSats = before.balance;
 
-  logKV("Faucet request", { recipient: sparkAddress, amount_sats: amountSats });
+  logKV("Faucet request", { address: sparkAddress, amount: amountSats });
 
   const resp = await fetch(`${FAUCET_URL}/fund`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
-      funding_requests: [{ amount_sats: amountSats, recipient: sparkAddress }],
+      address: sparkAddress,
+      amount: amountSats,
     }),
   });
 
@@ -172,14 +167,13 @@ async function fundViaFaucet(
   const result: FaucetResult = await resp.json();
   logKV("Faucet response", result);
 
-  if (!result.results || result.results.length === 0) {
-    throw new Error("No results from faucet");
+  if (!result.success) {
+    throw new Error(`Faucet failed: ${result.error || JSON.stringify(result)}`);
   }
-  const fundResult = result.results[0];
-  if (!fundResult.txid) {
-    throw new Error(`Faucet failed: ${JSON.stringify(fundResult)}`);
+  if (!result.txid) {
+    throw new Error(`Faucet failed: no txid in response`);
   }
-  logKV("Faucet txid", fundResult.txid);
+  logKV("Faucet txid", result.txid);
 
   // Wait for wallet balance to reflect funding
   const deadline = Date.now() + 60_000;
@@ -201,7 +195,7 @@ async function fundViaFaucet(
   throw new Error("Faucet funds not detected in wallet within timeout");
 }
 
-// ---------- Main Test ----------
+// Main Test
 
 async function main(): Promise<void> {
   logSection("1. Create Wallet");
@@ -444,15 +438,11 @@ async function main(): Promise<void> {
     console.log(`    Slippage: ${slippage.toFixed(4)}%`);
   }
 
-  // ============================================================================
-  // FREE BALANCE WORKFLOW DEMONSTRATION
-  // ============================================================================
+  // Free Balance Workflow Demonstration
 
   logSection("11. Collect Fees with retainInBalance (FREE BALANCE DEMO)");
 
-  console.log(`\n--- FREE BALANCE MODEL DEMONSTRATION ---`);
-  console.log(`Instead of sending fees to your Spark wallet, retain them`);
-  console.log(`in the pool's free balance for immediate reuse.`);
+  console.log(`Retaining fees in pool free balance instead of transferring to Spark wallet`);
 
   const t9 = Date.now();
   const collectResult = await client.collectFees({
@@ -579,7 +569,7 @@ async function main(): Promise<void> {
     "14. Execute Swap #3: BTC -> USDB (WITH integrator fee, AFTER rebalance)"
   );
 
-  const swap3Amount = "50000"; // 50k sats = ~$45
+  const swap3Amount = "5000"; // 5k sats = ~$4.5
   console.log(
     `\nSwapping ${swap3Amount} sats for USDB WITH ${INTEGRATOR_FEE_BPS}bps integrator fee...`
   );
@@ -777,15 +767,8 @@ async function main(): Promise<void> {
   console.log(`  LP_FEE=${LP_FEE_BPS}bps, HOST_FEE=${HOST_FEE_BPS}bps`);
   console.log(`  HOST_NAMESPACE=${hostNamespace}`);
 
-  console.log("\n--- FREE BALANCE MODEL FEATURES DEMONSTRATED ---");
-  console.log("  1. collectFees with retainInBalance=true");
-  console.log("  2. rebalancePosition with retainInBalance=true");
-  console.log("  3. decreaseLiquidity with retainInBalance=true");
-  console.log("  4. getConcentratedBalance - check single pool balance");
-  console.log("  5. getConcentratedBalances - check all pool balances");
-  console.log("  6. withdrawConcentratedBalance - withdraw to Spark wallet");
-
-  console.log("\nE2E V3 Concentrated Liquidity SDK test with FREE BALANCE MODEL complete!");
+  console.log("\nTest completed successfully");
+  process.exit(0);
 }
 
 main().catch((e) => {

@@ -84,7 +84,7 @@ function log(message: string, value?: unknown): void {
 }
 
 function section(title: string): void {
-  console.log(`\n${title}\n`);
+  console.log(`\n[${title}]`);
 }
 
 async function fundViaFaucet(
