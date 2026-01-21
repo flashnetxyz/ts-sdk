@@ -1577,10 +1577,8 @@ export interface IncreaseLiquidityRequest {
   amountBDesired: string;
   amountAMin: string;
   amountBMin: string;
-  /** Use free balance from pool for asset A instead of Spark transfer. */
-  useFreeBalanceA?: boolean;
-  /** Use free balance from pool for asset B instead of Spark transfer. */
-  useFreeBalanceB?: boolean;
+  /** Use free balance from pool instead of Spark transfers. */
+  useFreeBalance?: boolean;
   /** Retain any excess amounts in free balance instead of refunding via Spark. */
   retainExcessInBalance?: boolean;
   nonce: string;

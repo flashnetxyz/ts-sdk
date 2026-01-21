@@ -3366,7 +3366,9 @@ export class FlashnetClient {
             const reserveInfo = pe.btcReserve
               ? ` (BTC reserve: ${pe.btcReserve})`
               : "";
-            return `  - Pool ${pe.poolId.slice(0, 12)}...${reserveInfo}: ${pe.error}`;
+            return `  - Pool ${pe.poolId.slice(0, 12)}...${reserveInfo}: ${
+              pe.error
+            }`;
           })
           .join("\n");
         errorMessage += `\n\nPool evaluation details:\n${details}`;
@@ -4030,8 +4032,7 @@ ${relaxed.toString()} (50% relaxed), provided minAmountOut ${minAmountOut.toStri
    * @param params.amountBDesired - Desired amount of asset B to add
    * @param params.amountAMin - Minimum amount of asset A (slippage protection)
    * @param params.amountBMin - Minimum amount of asset B (slippage protection)
-   * @param params.useFreeBalanceA - If true, use free balance from pool for asset A instead of Spark transfer
-   * @param params.useFreeBalanceB - If true, use free balance from pool for asset B instead of Spark transfer
+   * @param params.useFreeBalance - If true, use free balance from pool instead of Spark transfers
    * @param params.retainExcessInBalance - If true, retain any excess amounts in pool free balance instead of refunding via Spark
    */
   async increaseLiquidity(params: {
@@ -4042,8 +4043,7 @@ ${relaxed.toString()} (50% relaxed), provided minAmountOut ${minAmountOut.toStri
     amountBDesired: string;
     amountAMin: string;
     amountBMin: string;
-    useFreeBalanceA?: boolean;
-    useFreeBalanceB?: boolean;
+    useFreeBalance?: boolean;
     retainExcessInBalance?: boolean;
   }): Promise<IncreaseLiquidityResponse> {
     await this.ensureInitialized();
@@ -4063,30 +4063,31 @@ ${relaxed.toString()} (50% relaxed), provided minAmountOut ${minAmountOut.toStri
     let assetBTransferId = "";
     const transferIds: string[] = [];
 
-    // Transfer asset A if not using free balance
-    if (!params.useFreeBalanceA && BigInt(params.amountADesired) > 0n) {
-      assetATransferId = await this.transferAsset(
-        {
-          receiverSparkAddress: lpSparkAddress,
-          assetAddress: pool.assetAAddress,
-          amount: params.amountADesired,
-        },
-        "Insufficient balance for adding V3 liquidity (Asset A): "
-      );
-      transferIds.push(assetATransferId);
-    }
+    // Transfer assets if not using free balance
+    if (!params.useFreeBalance) {
+      if (BigInt(params.amountADesired) > 0n) {
+        assetATransferId = await this.transferAsset(
+          {
+            receiverSparkAddress: lpSparkAddress,
+            assetAddress: pool.assetAAddress,
+            amount: params.amountADesired,
+          },
+          "Insufficient balance for adding V3 liquidity (Asset A): "
+        );
+        transferIds.push(assetATransferId);
+      }
 
-    // Transfer asset B if not using free balance
-    if (!params.useFreeBalanceB && BigInt(params.amountBDesired) > 0n) {
-      assetBTransferId = await this.transferAsset(
-        {
-          receiverSparkAddress: lpSparkAddress,
-          assetAddress: pool.assetBAddress,
-          amount: params.amountBDesired,
-        },
-        "Insufficient balance for adding V3 liquidity (Asset B): "
-      );
-      transferIds.push(assetBTransferId);
+      if (BigInt(params.amountBDesired) > 0n) {
+        assetBTransferId = await this.transferAsset(
+          {
+            receiverSparkAddress: lpSparkAddress,
+            assetAddress: pool.assetBAddress,
+            amount: params.amountBDesired,
+          },
+          "Insufficient balance for adding V3 liquidity (Asset B): "
+        );
+        transferIds.push(assetBTransferId);
+      }
     }
 
     const executeIncrease = async () => {
@@ -4122,8 +4123,7 @@ ${relaxed.toString()} (50% relaxed), provided minAmountOut ${minAmountOut.toStri
         amountBDesired: params.amountBDesired,
         amountAMin: params.amountAMin,
         amountBMin: params.amountBMin,
-        useFreeBalanceA: params.useFreeBalanceA,
-        useFreeBalanceB: params.useFreeBalanceB,
+        useFreeBalance: params.useFreeBalance,
         retainExcessInBalance: params.retainExcessInBalance,
         nonce,
         signature: getHexFromUint8Array(signature),
@@ -4136,7 +4136,9 @@ ${relaxed.toString()} (50% relaxed), provided minAmountOut ${minAmountOut.toStri
           response.error || "Increase liquidity rejected by the AMM";
         const hasRefund = !!(response.amountARefund || response.amountBRefund);
         const refundInfo = hasRefund
-          ? ` Refunds: Asset A: ${response.amountARefund || "0"}, Asset B: ${response.amountBRefund || "0"}`
+          ? ` Refunds: Asset A: ${response.amountARefund || "0"}, Asset B: ${
+              response.amountBRefund || "0"
+            }`
           : "";
 
         throw new FlashnetError(`${errorMessage}.${refundInfo}`, {
