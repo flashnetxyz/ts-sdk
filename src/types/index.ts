@@ -1925,6 +1925,52 @@ export interface ValidateWithdrawBalanceData {
   nonce: string;
 }
 
+/**
+ * Request body for depositing to free balance in a V3 pool.
+ */
+export interface DepositBalanceRequest {
+  /** Pool ID (LP identity public key). */
+  poolId: string;
+  /** Amount of asset A to deposit. Use "0" to skip. */
+  amountA: string;
+  /** Amount of asset B to deposit. Use "0" to skip. */
+  amountB: string;
+  /** Spark transfer ID for asset A deposit. Empty string to skip. */
+  assetASparkTransferId: string;
+  /** Spark transfer ID for asset B deposit. Empty string to skip. */
+  assetBSparkTransferId: string;
+  /** Unique nonce for replay protection. */
+  nonce: string;
+  /** Hex-encoded signature of the nonce. */
+  signature: string;
+}
+
+/**
+ * Response for depositing to free balance.
+ */
+export interface DepositBalanceResponse {
+  requestId: string;
+  accepted: boolean;
+  amountADeposited?: string;
+  amountBDeposited?: string;
+  currentBalanceA?: string;
+  currentBalanceB?: string;
+  error?: string;
+}
+
+/**
+ * Data for validating a deposit balance intent.
+ */
+export interface ValidateDepositBalanceData {
+  userPublicKey: string;
+  lpIdentityPublicKey: string;
+  assetASparkTransferId: string;
+  assetBSparkTransferId: string;
+  amountA: string;
+  amountB: string;
+  nonce: string;
+}
+
 // Error Types
 // Re-export all error types from errors module
 export * from "./errors";

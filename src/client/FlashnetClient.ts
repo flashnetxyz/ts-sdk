@@ -106,6 +106,8 @@ import {
   type SparkNetworkType,
   type SwapResponse,
   type TransferAssetRecipient,
+  type DepositBalanceRequest,
+  type DepositBalanceResponse,
   type WithdrawBalanceRequest,
   type WithdrawBalanceResponse,
   type WithdrawHostFeesRequest,
@@ -134,6 +136,7 @@ import {
   generateRegisterHostIntentMessage,
   generateRemoveLiquidityIntentMessage,
   generateRouteSwapIntentMessage,
+  generateDepositBalanceIntentMessage,
   generateWithdrawBalanceIntentMessage,
   generateWithdrawHostFeesIntentMessage,
   generateWithdrawIntegratorFeesIntentMessage,
@@ -317,7 +320,7 @@ export interface FlashnetClientOptions {
 type Tuple<
   T,
   N extends number,
-  Acc extends readonly T[] = [],
+  Acc extends readonly T[] = []
 > = Acc["length"] extends N ? Acc : Tuple<T, N, [...Acc, T]>;
 
 /**
@@ -4561,6 +4564,70 @@ ${relaxed.toString()} (50% relaxed), provided minAmountOut ${minAmountOut.toStri
     if (!response.accepted) {
       const errorMessage =
         response.error || "Withdraw balance rejected by the AMM";
+      throw new Error(errorMessage);
+    }
+
+    return response;
+  }
+
+  /**
+   * Deposits assets to your free balance in a V3 concentrated liquidity pool.
+   *
+   * Free balance can be used for adding liquidity to positions without requiring
+   * additional Spark transfers. The deposit requires Spark transfer IDs for the
+   * assets being deposited.
+   *
+   * @param params - Deposit parameters
+   * @param params.poolId - The pool identifier (LP identity public key)
+   * @param params.amountA - Amount of asset A to deposit (use "0" to skip)
+   * @param params.amountB - Amount of asset B to deposit (use "0" to skip)
+   * @param params.assetASparkTransferId - Spark transfer ID for asset A (use "" to skip)
+   * @param params.assetBSparkTransferId - Spark transfer ID for asset B (use "" to skip)
+   * @returns Promise resolving to deposit response with updated balances
+   * @throws Error if the deposit is rejected
+   */
+  async depositConcentratedBalance(params: {
+    poolId: string;
+    amountA: string;
+    amountB: string;
+    assetASparkTransferId: string;
+    assetBSparkTransferId: string;
+  }): Promise<DepositBalanceResponse> {
+    await this.ensureInitialized();
+
+    // Generate intent
+    const nonce = generateNonce();
+    const intentMessage = generateDepositBalanceIntentMessage({
+      userPublicKey: this.publicKey,
+      lpIdentityPublicKey: params.poolId,
+      assetASparkTransferId: params.assetASparkTransferId,
+      assetBSparkTransferId: params.assetBSparkTransferId,
+      amountA: params.amountA,
+      amountB: params.amountB,
+      nonce,
+    });
+
+    // Sign intent
+    const messageHash = sha256(intentMessage);
+    const signature = await (
+      this._wallet as any
+    ).config.signer.signMessageWithIdentityKey(messageHash, true);
+
+    const request: DepositBalanceRequest = {
+      poolId: params.poolId,
+      amountA: params.amountA,
+      amountB: params.amountB,
+      assetASparkTransferId: params.assetASparkTransferId,
+      assetBSparkTransferId: params.assetBSparkTransferId,
+      nonce,
+      signature: getHexFromUint8Array(signature),
+    };
+
+    const response = await this.typedApi.depositConcentratedBalance(request);
+
+    if (!response.accepted) {
+      const errorMessage =
+        response.error || "Deposit balance rejected by the AMM";
       throw new Error(errorMessage);
     }
 
