@@ -13,6 +13,7 @@ import type {
   ValidateCollectFeesData,
   ValidateConcentratedPoolData,
   ValidateDecreaseLiquidityData,
+  ValidateDepositBalanceData,
   ValidateEscrowClaimData,
   ValidateEscrowCreateData,
   ValidateEscrowFundData,
@@ -20,7 +21,6 @@ import type {
   ValidateRebalancePositionData,
   ValidateRouteSwapData,
   ValidateWithdrawBalanceData,
-  ValidateDepositBalanceData,
 } from "../types";
 
 /**
@@ -104,12 +104,15 @@ export function generatePoolConfirmInitialDepositIntentMessage(params: {
 /**
  * Generates a pool swap intent message
  * @param params Parameters for swap
+ * @param params.useFreeBalance When true, uses free balance from V3 pool instead of a Spark transfer.
+ *   The assetInSparkTransferId is set to empty string and useFreeBalance is set to true in the intent.
+ *   Note: Only works for V3 concentrated liquidity pools. Does NOT work for route swaps.
  * @returns The serialized intent message
  */
 export function generatePoolSwapIntentMessage(params: {
   userPublicKey: string;
   lpIdentityPublicKey: string;
-  assetInSparkTransferId: string;
+  assetInSparkTransferId?: string;
   assetInAddress: string;
   assetOutAddress: string;
   amountIn: string;
@@ -117,11 +120,18 @@ export function generatePoolSwapIntentMessage(params: {
   minAmountOut: string;
   totalIntegratorFeeRateBps: string;
   nonce: string;
+  /** Whether to use free balance instead of a Spark transfer (V3 pools only) */
+  useFreeBalance?: boolean;
 }): Uint8Array {
+  // When using free balance, transfer ID is empty in the signed message
+  const isUsingFreeBalance =
+    params.useFreeBalance === true || !params.assetInSparkTransferId;
+  const transferId = isUsingFreeBalance ? "" : params.assetInSparkTransferId;
+
   const intentMessage: ValidateAmmSwapData = {
     userPublicKey: params.userPublicKey,
     lpIdentityPublicKey: params.lpIdentityPublicKey,
-    assetInSparkTransferId: params.assetInSparkTransferId,
+    assetInSparkTransferId: transferId ? transferId : null,
     assetInAddress: params.assetInAddress,
     assetOutAddress: params.assetOutAddress,
     amountIn: params.amountIn,
@@ -129,6 +139,7 @@ export function generatePoolSwapIntentMessage(params: {
     maxSlippageBps: params.maxSlippageBps,
     nonce: params.nonce,
     totalIntegratorFeeRateBps: params.totalIntegratorFeeRateBps,
+    useFreeBalance: isUsingFreeBalance ? true : null,
   };
 
   return new TextEncoder().encode(JSON.stringify(intentMessage));
