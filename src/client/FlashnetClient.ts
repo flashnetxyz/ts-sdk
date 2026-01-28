@@ -38,6 +38,8 @@ import {
   type CreateSingleSidedPoolRequest,
   type DecreaseLiquidityRequest,
   type DecreaseLiquidityResponse,
+  type DepositBalanceRequest,
+  type DepositBalanceResponse,
   type EscrowCondition,
   type EscrowRecipient,
   type EscrowState,
@@ -106,8 +108,6 @@ import {
   type SparkNetworkType,
   type SwapResponse,
   type TransferAssetRecipient,
-  type DepositBalanceRequest,
-  type DepositBalanceResponse,
   type WithdrawBalanceRequest,
   type WithdrawBalanceResponse,
   type WithdrawHostFeesRequest,
@@ -127,6 +127,7 @@ import {
   generateCreateConcentratedPoolIntentMessage,
   generateCreateEscrowIntentMessage,
   generateDecreaseLiquidityIntentMessage,
+  generateDepositBalanceIntentMessage,
   generateFundEscrowIntentMessage,
   generateIncreaseLiquidityIntentMessage,
   generatePoolConfirmInitialDepositIntentMessage,
@@ -136,7 +137,6 @@ import {
   generateRegisterHostIntentMessage,
   generateRemoveLiquidityIntentMessage,
   generateRouteSwapIntentMessage,
-  generateDepositBalanceIntentMessage,
   generateWithdrawBalanceIntentMessage,
   generateWithdrawHostFeesIntentMessage,
   generateWithdrawIntegratorFeesIntentMessage,
@@ -320,7 +320,7 @@ export interface FlashnetClientOptions {
 type Tuple<
   T,
   N extends number,
-  Acc extends readonly T[] = []
+  Acc extends readonly T[] = [],
 > = Acc["length"] extends N ? Acc : Tuple<T, N, [...Acc, T]>;
 
 /**

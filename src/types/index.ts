@@ -1946,17 +1946,40 @@ export interface DepositBalanceRequest {
 }
 
 /**
- * Response for depositing to free balance.
+ * Successful response for depositing to free balance.
+ * Balance fields may be omitted if the deposited amount was "0" or empty.
  */
-export interface DepositBalanceResponse {
+export interface DepositBalanceSuccessResponse {
   requestId: string;
-  accepted: boolean;
+  accepted: true;
+  /** Amount of asset A that was deposited. Omitted if "0" or no deposit for this asset. */
   amountADeposited?: string;
+  /** Amount of asset B that was deposited. Omitted if "0" or no deposit for this asset. */
   amountBDeposited?: string;
+  /** Current free balance of asset A after deposit. */
   currentBalanceA?: string;
+  /** Current free balance of asset B after deposit. */
   currentBalanceB?: string;
-  error?: string;
 }
+
+/**
+ * Failed response for depositing to free balance.
+ */
+export interface DepositBalanceErrorResponse {
+  requestId: string;
+  accepted: false;
+  /** Error message describing why the deposit failed. */
+  error: string;
+}
+
+/**
+ * Response for depositing to free balance.
+ * Discriminated union: when accepted is true, balance fields may be present;
+ * when accepted is false, only error is present.
+ */
+export type DepositBalanceResponse =
+  | DepositBalanceSuccessResponse
+  | DepositBalanceErrorResponse;
 
 /**
  * Data for validating a deposit balance intent.
