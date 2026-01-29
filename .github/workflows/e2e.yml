@@ -18,10 +18,10 @@ on:
 # - FAUCET_URL: Spark faucet URL
 
 jobs:
-  e2e:
-    name: E2E Tests
+  unit-tests:
+    name: Unit Tests
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 5
 
     steps:
       - name: Checkout
@@ -38,8 +38,62 @@ jobs:
       - name: Build SDK
         run: bun run build
 
-      - name: Run E2E tests
-        run: npm run test:e2e:all
+      - name: Run unit tests
+        run: bun run tests/suites/unit.test.ts
+
+      - name: Run import tests
+        run: bun run tests/suites/imports.test.ts
+
+  e2e-tests:
+    name: E2E Tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    needs: unit-tests
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Install dependencies
+        run: bun install
+
+      - name: Build SDK
+        run: bun run build
+
+      - name: Run single-sided pool tests
+        run: bun run tests/suites/e2e-single-sided.test.ts
+        env:
+          AMM_URL: ${{ secrets.AMM_URL }}
+          MEMPOOL_URL: ${{ secrets.MEMPOOL_URL }}
+          SPARKSCAN_URL: ${{ secrets.SPARKSCAN_URL }}
+          FAUCET_URL: ${{ secrets.FAUCET_URL }}
+          SPARK_NETWORK: ${{ github.event.inputs.spark_network || 'REGTEST' }}
+
+      - name: Run concentrated liquidity tests
+        run: bun run tests/suites/e2e-concentrated-liquidity.test.ts
+        env:
+          AMM_URL: ${{ secrets.AMM_URL }}
+          MEMPOOL_URL: ${{ secrets.MEMPOOL_URL }}
+          SPARKSCAN_URL: ${{ secrets.SPARKSCAN_URL }}
+          FAUCET_URL: ${{ secrets.FAUCET_URL }}
+          SPARK_NETWORK: ${{ github.event.inputs.spark_network || 'REGTEST' }}
+
+      - name: Run free balance tests
+        run: bun run tests/suites/free-balance.test.ts
+        env:
+          AMM_URL: ${{ secrets.AMM_URL }}
+          MEMPOOL_URL: ${{ secrets.MEMPOOL_URL }}
+          SPARKSCAN_URL: ${{ secrets.SPARKSCAN_URL }}
+          FAUCET_URL: ${{ secrets.FAUCET_URL }}
+          SPARK_NETWORK: ${{ github.event.inputs.spark_network || 'REGTEST' }}
+
+      - name: Run lightning quote tests
+        run: bun run tests/suites/lightning-quote.test.ts
         env:
           AMM_URL: ${{ secrets.AMM_URL }}
           MEMPOOL_URL: ${{ secrets.MEMPOOL_URL }}
