@@ -419,13 +419,12 @@ export interface ExecuteSwapRequest {
   amountIn: string;
   maxSlippageBps?: string;
   minAmountOut: string;
+  /** Empty string when using free balance, transfer ID otherwise */
   assetInSparkTransferId: string;
   nonce: string;
   totalIntegratorFeeRateBps: string;
   integratorPublicKey: string;
   signature: string;
-  /** Whether to use free balance instead of a Spark transfer (V3 pools only) */
-  useFreeBalance?: boolean;
 }
 
 export interface SwapResponse {
@@ -876,7 +875,8 @@ export interface ValidateAmmConfirmInitialDepositData {
 export interface ValidateAmmSwapData {
   userPublicKey: string;
   lpIdentityPublicKey: string;
-  assetInSparkTransferId?: string | null;
+  /** Empty string when using free balance, transfer ID otherwise */
+  assetInSparkTransferId?: string;
   assetInAddress: string;
   assetOutAddress: string;
   amountIn: string;
@@ -884,7 +884,6 @@ export interface ValidateAmmSwapData {
   maxSlippageBps: string;
   nonce: string;
   totalIntegratorFeeRateBps: string;
-  useFreeBalance?: boolean | null;
 }
 
 export interface AmmAddLiquiditySettlementRequest {

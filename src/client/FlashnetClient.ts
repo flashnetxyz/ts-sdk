@@ -1183,8 +1183,8 @@ export class FlashnetClient {
    * If the swap fails with a clawbackable error, the SDK will automatically
    * attempt to recover the transferred funds via clawback.
    *
-   * Note: To use free balance instead of making a Spark transfer (V3 pools only),
-   * call executeSwapIntent directly without a transferId.
+   * @param params.useFreeBalance When true, uses free balance from V3 pool instead of making a Spark transfer.
+   *   Note: Only works for V3 concentrated liquidity pools. Does NOT work for route swaps.
    */
   async executeSwap(params: {
     poolId: string;
@@ -1195,6 +1195,8 @@ export class FlashnetClient {
     minAmountOut: string;
     integratorFeeRateBps?: number;
     integratorPublicKey?: string;
+    /** When true, uses free balance from V3 pool instead of making a Spark transfer */
+    useFreeBalance?: boolean;
   }): Promise<SwapResponse> {
     await this.ensureInitialized();
 
@@ -1206,6 +1208,14 @@ export class FlashnetClient {
       amountIn: params.amountIn,
       minAmountOut: params.minAmountOut,
     });
+
+    // If using free balance (V3 pools only), skip the Spark transfer
+    if (params.useFreeBalance) {
+      return this.executeSwapIntent({
+        ...params,
+        // No transferId - triggers free balance mode
+      });
+    }
 
     // Transfer assets to pool using new address encoding
     const lpSparkAddress = encodeSparkAddressNew({
@@ -1278,7 +1288,6 @@ export class FlashnetClient {
       minAmountOut: params.minAmountOut,
       totalIntegratorFeeRateBps: params.integratorFeeRateBps?.toString() || "0",
       nonce,
-      useFreeBalance: isUsingFreeBalance,
     });
 
     // Sign intent
@@ -1300,7 +1309,6 @@ export class FlashnetClient {
       integratorPublicKey: params.integratorPublicKey || "",
       nonce,
       signature: getHexFromUint8Array(signature),
-      useFreeBalance: isUsingFreeBalance,
     };
 
     const response = await this.typedApi.executeSwap(request);

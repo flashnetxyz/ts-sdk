@@ -138,11 +138,10 @@ function generateRandomTicker(): string {
 // Faucet Integration
 
 interface FaucetResult {
-  success: boolean;
-  txid: string;
-  amount: number;
-  address: string;
-  error?: string;
+  txids: string[];
+  amm_operation_id?: string;
+  amount_sent?: number;
+  message: string;
 }
 
 async function fundViaFaucet(
@@ -150,37 +149,58 @@ async function fundViaFaucet(
   sparkAddress: string,
   amountSats: number
 ): Promise<FaucetResult> {
+  // Record starting BTC balance
   const before = await wallet.getBalance();
   const startSats = before.balance;
 
-  logKV("Faucet request", { address: sparkAddress, amount: amountSats });
+  // Check funding-server health first
+  const healthResp = await fetch(`${FAUCET_URL}/balance`);
+  if (!healthResp.ok) {
+    throw new Error(`Funding server health check failed at ${FAUCET_URL}/balance`);
+  }
+
+  // Use the JSON API format from the Rust faucet_client
+  const requestBody = {
+    funding_requests: [
+      {
+        amount_sats: amountSats,
+        recipient: sparkAddress,
+      },
+    ],
+  };
+
+  console.log(`Requesting ${amountSats} sats from funding server for address: ${sparkAddress}`);
 
   const resp = await fetch(`${FAUCET_URL}/fund`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      address: sparkAddress,
-      amount: amountSats,
-    }),
+    body: JSON.stringify(requestBody),
   });
 
   if (!resp.ok) {
-    const text = await resp.text();
-    throw new Error(`Faucet error ${resp.status}: ${text}`);
+    const errorText = await resp.text().catch(() => "unknown");
+    throw new Error(`Funding server error ${resp.status}: ${errorText}`);
   }
 
-  const result: FaucetResult = await resp.json();
-  logKV("Faucet response", result);
+  const data = await resp.json();
 
-  if (!result.success) {
-    throw new Error(`Faucet failed: ${result.error || JSON.stringify(result)}`);
+  // Parse the response format from funding-server (ApiFundResponse with results array)
+  if (!data.results || data.results.length === 0) {
+    throw new Error("Funding server response contained no results");
   }
-  if (!result.txid) {
-    throw new Error(`Faucet failed: no txid in response`);
-  }
-  logKV("Faucet txid", result.txid);
 
-  // Wait for wallet balance to reflect funding
+  const entry = data.results[0];
+  if (entry.error) {
+    throw new Error(`Funding error: ${entry.error}`);
+  }
+
+  console.log(`Funding request successful: txids=${JSON.stringify(entry.txids)}, amm_operation_id=${entry.amm_operation_id}`);
+
+  // Funding is async - wait briefly for the operation to complete
+  console.log("Waiting for async funding to complete...");
+  await new Promise((r) => setTimeout(r, 5000));
+
+  // Wait for wallet BTC balance to reflect the funding
   const deadline = Date.now() + 60_000;
   let currentSats = startSats;
   while (Date.now() < deadline) {
@@ -189,15 +209,24 @@ async function fundViaFaucet(
       currentSats = bal.balance;
       if (currentSats > startSats) {
         logKV("New balance (sats)", currentSats);
-        return result;
+        break;
       }
     } catch {
       // ignore
     }
-    await new Promise((r) => setTimeout(r, 2000));
+    await new Promise((r) => setTimeout(r, 1000));
   }
 
-  throw new Error("Faucet funds not detected in wallet within timeout");
+  if (currentSats <= startSats) {
+    throw new Error("Faucet funds not detected in wallet balance within timeout");
+  }
+
+  return {
+    txids: entry.txids || [],
+    amm_operation_id: entry.amm_operation_id,
+    amount_sent: entry.amount_sent,
+    message: `Funded ${entry.amount_sent || amountSats} sats`,
+  };
 }
 
 // Main Test
@@ -643,6 +672,65 @@ async function main(): Promise<void> {
       4
     )}% (price impact only)`
   );
+
+
+  logSection("14b. FREE BALANCE SWAP: USDB -> BTC (using pool free balance)");
+
+  // First, check if we have free balance available from collected fees
+  const freeBalanceBeforeSwap = await client.getConcentratedBalance(POOL_ID);
+  console.log(`\n  Current free balance in pool:`);
+  console.log(`    USDB (A): ${freeBalanceBeforeSwap.balanceA} (available: ${freeBalanceBeforeSwap.availableA})`);
+  console.log(`    BTC (B):  ${freeBalanceBeforeSwap.balanceB} (available: ${freeBalanceBeforeSwap.availableB})`);
+
+  const availableUsdb = BigInt(freeBalanceBeforeSwap.availableA || freeBalanceBeforeSwap.balanceA || "0");
+  
+  if (availableUsdb < 1000n) {
+    console.log(`\n  Skipping free balance swap - insufficient USDB balance (need at least 1000 microUSDB)`);
+  } else {
+    // Use a portion of the available free balance for the swap
+    const freeBalanceSwapAmount = (availableUsdb / 2n).toString(); // Use half of available
+    
+    console.log(`\n  Executing swap using FREE BALANCE (no Spark transfer required):`);
+    console.log(`    Amount: ${freeBalanceSwapAmount} microUSDB`);
+    console.log(`    Method: executeSwap with useFreeBalance: true`);
+    console.log(`    Expected: No Spark transfer, uses pool free balance directly`);
+    
+    const t_fb1 = Date.now();
+    // Use executeSwap with useFreeBalance: true - this skips the Spark transfer
+    const freeBalanceSwapResult = await client.executeSwap({
+      poolId: POOL_ID,
+      assetInAddress: tokenIdentifierHex,
+      assetOutAddress: BTC_ASSET_PUBKEY,
+      amountIn: freeBalanceSwapAmount,
+      minAmountOut: "0",
+      maxSlippageBps: 10000,
+      useFreeBalance: true, // This triggers free balance mode - no Spark transfer
+    });
+    const t_fb2 = Date.now();
+
+    logKV("Free balance swap result", freeBalanceSwapResult);
+    logKV("Time (ms)", t_fb2 - t_fb1);
+
+    if (!freeBalanceSwapResult.accepted) {
+      throw new Error(`Free balance swap failed: ${freeBalanceSwapResult.error || "unknown error"}`);
+    }
+
+    console.log(`\n  ✓ FREE BALANCE SWAP SUCCESS!`);
+    console.log(`    Input:  ${freeBalanceSwapAmount} microUSDB (from pool free balance)`);
+    console.log(`    Output: ${freeBalanceSwapResult.amountOut} sats`);
+    console.log(`    No Spark transfer was required - used existing pool balance`);
+
+    // Verify free balance was reduced
+    const freeBalanceAfterSwap = await client.getConcentratedBalance(POOL_ID);
+    console.log(`\n  Free balance after swap:`);
+    console.log(`    USDB (A): ${freeBalanceAfterSwap.balanceA} (was: ${freeBalanceBeforeSwap.balanceA})`);
+    console.log(`    BTC (B):  ${freeBalanceAfterSwap.balanceB} (was: ${freeBalanceBeforeSwap.balanceB})`);
+    
+    const usdbDiff = BigInt(freeBalanceBeforeSwap.balanceA || "0") - BigInt(freeBalanceAfterSwap.balanceA || "0");
+    const btcDiff = BigInt(freeBalanceAfterSwap.balanceB || "0") - BigInt(freeBalanceBeforeSwap.balanceB || "0");
+    console.log(`    USDB used:   ${usdbDiff.toString()}`);
+    console.log(`    BTC received: ${btcDiff.toString()} (retained in free balance)`);
+  }
 
   logSection("15. Decrease Liquidity with retainInBalance");
 
