@@ -537,59 +537,53 @@ async function main(): Promise<void> {
   // Send BTC to the pool via client.transferAsset (returns proper transfer ID format)
   console.log(`  Sending ${depositAmountBtc} sats to pool via transferAsset...`);
   
-  try {
-    // Use client.transferAsset which handles the transfer and returns the correct ID format
-    const sparkTransferId = await client.transferAsset({
-      assetAddress: BTC_ASSET_PUBKEY,
-      amount: depositAmountBtc,
-      receiverSparkAddress: poolSparkAddressForDeposit,
-    });
-    
-    console.log(`  Spark transfer ID: ${sparkTransferId}`);
-    
-    // Wait for the transfer to be processed
-    await new Promise((r) => setTimeout(r, 3000));
-    
-    // Now deposit the transferred funds to our free balance
-    console.log(`\n  Calling depositConcentratedBalance...`);
-    
-    const t_dep1 = Date.now();
-    const depositResult = await client.depositConcentratedBalance({
-      poolId: POOL_ID,
-      amountA: "0", // No USDB deposit
-      amountB: depositAmountBtc, // Deposit BTC
-      assetASparkTransferId: "", // Empty for no asset A
-      assetBSparkTransferId: sparkTransferId, // Transfer ID for BTC
-    });
-    const t_dep2 = Date.now();
+  // Use client.transferAsset which handles the transfer and returns the correct ID format
+  const sparkTransferId = await client.transferAsset({
+    assetAddress: BTC_ASSET_PUBKEY,
+    amount: depositAmountBtc,
+    receiverSparkAddress: poolSparkAddressForDeposit,
+  });
+  
+  console.log(`  Spark transfer ID: ${sparkTransferId}`);
+  
+  // Wait for the transfer to be processed
+  await new Promise((r) => setTimeout(r, 3000));
+  
+  // Now deposit the transferred funds to our free balance
+  console.log(`\n  Calling depositConcentratedBalance...`);
+  
+  const t_dep1 = Date.now();
+  const depositResult = await client.depositConcentratedBalance({
+    poolId: POOL_ID,
+    amountA: "0", // No USDB deposit
+    amountB: depositAmountBtc, // Deposit BTC
+    assetASparkTransferId: "", // Empty for no asset A
+    assetBSparkTransferId: sparkTransferId, // Transfer ID for BTC
+  });
+  const t_dep2 = Date.now();
 
-    logKV("Deposit result", depositResult);
-    logKV("Time (ms)", t_dep2 - t_dep1);
+  logKV("Deposit result", depositResult);
+  logKV("Time (ms)", t_dep2 - t_dep1);
 
-    if (!depositResult.accepted) {
-      throw new Error(`Deposit to free balance failed: ${(depositResult as any).error}`);
-    }
-
-    console.log(`\n  ✓ DEPOSIT TO FREE BALANCE SUCCESS!`);
-    console.log(`    Amount deposited: ${depositAmountBtc} sats`);
-    console.log(`    New balance A: ${depositResult.currentBalanceA || "N/A"}`);
-    console.log(`    New balance B: ${depositResult.currentBalanceB || "N/A"}`);
-    
-    // Verify free balance increased
-    const freeBalanceAfterDeposit = await client.getConcentratedBalance(POOL_ID);
-    console.log(`\n  Free balance after deposit:`);
-    console.log(`    USDB (A): ${freeBalanceAfterDeposit.balanceA}`);
-    console.log(`    BTC (B):  ${freeBalanceAfterDeposit.balanceB}`);
-    
-    const btcBefore = BigInt(freeBalance.balanceB || "0");
-    const btcAfter = BigInt(freeBalanceAfterDeposit.balanceB || "0");
-    const btcIncrease = btcAfter - btcBefore;
-    console.log(`    BTC increase: ${btcIncrease.toString()} sats`);
-  } catch (depositError: any) {
-    console.log(`\n  Deposit test encountered an error: ${depositError.message}`);
-    console.log(`  This may be expected if the transfer format doesn't match API expectations.`);
-    console.log(`  The depositConcentratedBalance endpoint is available and can be tested manually.`);
+  if (!depositResult.accepted) {
+    throw new Error(`Deposit to free balance failed: ${(depositResult as any).error}`);
   }
+
+  console.log(`\n  ✓ DEPOSIT TO FREE BALANCE SUCCESS!`);
+  console.log(`    Amount deposited: ${depositAmountBtc} sats`);
+  console.log(`    New balance A: ${depositResult.currentBalanceA || "N/A"}`);
+  console.log(`    New balance B: ${depositResult.currentBalanceB || "N/A"}`);
+  
+  // Verify free balance increased
+  const freeBalanceAfterDeposit = await client.getConcentratedBalance(POOL_ID);
+  console.log(`\n  Free balance after deposit:`);
+  console.log(`    USDB (A): ${freeBalanceAfterDeposit.balanceA}`);
+  console.log(`    BTC (B):  ${freeBalanceAfterDeposit.balanceB}`);
+  
+  const btcBefore = BigInt(freeBalance.balanceB || "0");
+  const btcAfter = BigInt(freeBalanceAfterDeposit.balanceB || "0");
+  const btcIncrease = btcAfter - btcBefore;
+  console.log(`    BTC increase: ${btcIncrease.toString()} sats`);
 
   logSection("13. Rebalance with retainInBalance");
 
