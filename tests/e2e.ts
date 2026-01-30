@@ -56,7 +56,7 @@ const INTEGRATOR_FEE_BPS = Number(process.env.INTEGRATOR_FEE_BPS || "30");
 const SWAP_IN_AMOUNT = BigInt(process.env.SWAP_IN_AMOUNT || "10000");
 const MAX_SLIPPAGE_BPS = process.env.MAX_SLIPPAGE_BPS || "500000";
 const MIN_OUT = process.env.MIN_OUT || "0";
-const FAUCET_FUND_SATS = Number(process.env.FAUCET_FUND_SATS || "50000");
+const FAUCET_FUND_SATS = Number(process.env.FAUCET_FUND_SATS || "10000");
 
 interface TestResult {
   name: string;
@@ -87,41 +87,94 @@ function section(title: string): void {
   console.log(`\n[${title}]`);
 }
 
+interface FaucetResult {
+  txids: string[];
+  amm_operation_id?: string;
+  amount_sent?: number;
+  message: string;
+}
+
 async function fundViaFaucet(
   wallet: IssuerSparkWallet,
   address: string,
   amount: number
-): Promise<void> {
+): Promise<FaucetResult> {
+  // Record starting BTC balance
   const before = await wallet.getBalance();
   const startSats = before.balance;
+
+  // Check funding-server health first (matches Rust ensure_funding_server_healthy)
+  const healthResp = await fetch(`${config.faucetUrl}/balance`);
+  if (!healthResp.ok) {
+    throw new Error(`Funding server health check failed at ${config.faucetUrl}/balance`);
+  }
+
+  // Use the JSON API format from the Rust faucet_client
+  const requestBody = {
+    funding_requests: [
+      {
+        amount_sats: Number(amount),
+        recipient: address,
+      },
+    ],
+  };
+
+  console.log(`Requesting ${amount} sats from funding server for address: ${address}`);
 
   const resp = await fetch(`${config.faucetUrl}/fund`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ address, amount }),
+    body: JSON.stringify(requestBody),
   });
 
   if (!resp.ok) {
-    const data = await resp.json().catch(() => ({}));
-    throw new Error(
-      `Faucet error ${resp.status}: ${(data as { error?: string }).error || "unknown"}`
-    );
+    const errorText = await resp.text().catch(() => "unknown");
+    throw new Error(`Funding server error ${resp.status}: ${errorText}`);
   }
 
-  const deadline = Date.now() + 60_000;
+  const data = await resp.json();
+
+  // Parse the response format from funding-server (ApiFundResponse with results array)
+  if (!data.results || data.results.length === 0) {
+    throw new Error("Funding server response contained no results");
+  }
+
+  const entry = data.results[0];
+  if (entry.error) {
+    throw new Error(`Funding error: ${entry.error}`);
+  }
+
+  console.log(`Funding request successful: txids=${JSON.stringify(entry.txids)}, amm_operation_id=${entry.amm_operation_id}`);
+
+  // Funding is async - wait briefly for the operation to complete
+  // (matches Rust client's 5 second wait)
+  console.log("Waiting for async funding to complete...");
+  await new Promise((r) => setTimeout(r, 5000));
+
+  // Wait for wallet BTC balance to reflect the funding
+  const deadline = Date.now() + 60_000; // up to 60s
   let currentSats = startSats;
   while (Date.now() < deadline) {
     try {
       const bal = await wallet.getBalance();
       currentSats = bal.balance;
       if (currentSats > startSats) break;
-    } catch {}
+    } catch { }
     await new Promise((r) => setTimeout(r, 1000));
   }
 
   if (currentSats <= startSats) {
-    throw new Error("Faucet funds not detected in wallet within timeout");
+    throw new Error(
+      "Faucet funds not detected in wallet balance within timeout"
+    );
   }
+
+  return {
+    txids: entry.txids || [],
+    amm_operation_id: entry.amm_operation_id,
+    amount_sent: entry.amount_sent,
+    message: `Funded ${entry.amount_sent || amount} sats`,
+  };
 }
 
 async function runTest(
@@ -138,7 +191,8 @@ async function runTest(
     const error = e instanceof Error ? e.message : String(e);
     results.push({ name, passed: false, duration: Date.now() - start, error });
     log(`[FAIL] ${name}: ${error}`);
-    return false;
+    // Fast-fail: re-throw to stop test execution
+    throw e;
   }
 }
 
@@ -250,6 +304,18 @@ async function main(): Promise<void> {
     log("Host namespace", namespace);
   });
 
+  await runTest("Get host info", async () => {
+    const host = await typed.getHost(namespace);
+    log("Host info", {
+      namespace: host.namespace,
+      minFeeBps: host.minFeeBps,
+      feeRecipientPublicKey: host.feeRecipientPublicKey,
+    });
+    if (host.namespace !== namespace) {
+      throw new Error("Host namespace mismatch");
+    }
+  });
+
   await runTest("Create single-sided pool", async () => {
     const { virtualReserveA, virtualReserveB, threshold } =
       FlashnetClient.calculateVirtualReserves({
@@ -272,6 +338,28 @@ async function main(): Promise<void> {
 
     poolId = createResp.poolId;
     log("Pool created", poolId);
+  });
+
+  await runTest("List pools", async () => {
+    const pools = await typed.listPools({ hostNames: [namespace] });
+    log("Pools found", pools.pools.length);
+    if (pools.pools.length === 0) {
+      throw new Error("No pools found for host namespace");
+    }
+  });
+
+  await runTest("Simulate swap: BTC -> Token", async () => {
+    const simResult = await typed.simulateSwap({
+      poolId,
+      assetInAddress: BTC_ASSET_PUBKEY,
+      assetOutAddress: tokenIdentifierHex,
+      amountIn: SWAP_IN_AMOUNT.toString(),
+    });
+    log("Simulated swap", {
+      amountOut: simResult.amountOut,
+      priceImpactPct: simResult.priceImpactPct,
+      feePaidAssetIn: simResult.feePaidAssetIn,
+    });
   });
 
   await runTest("Execute swap: BTC -> Token", async () => {
@@ -462,6 +550,7 @@ async function main(): Promise<void> {
       assetAReserve: pool.assetAReserve,
       assetBReserve: pool.assetBReserve,
       bondingProgress: pool.bondingProgressPercent,
+      updatedAt: pool.updatedAt,
     });
   });
 
@@ -528,6 +617,13 @@ async function main(): Promise<void> {
     if (!clawbackResp.accepted) {
       throw new Error(clawbackResp.error || "Clawback rejected");
     }
+  });
+
+  await runTest("List clawbackable transfers", async () => {
+    const transfers = await typed.listClawbackableTransfers({ limit: 10 });
+    log("Clawbackable transfers", {
+      count: transfers.transfers.length,
+    });
   });
 
   section("Results");

@@ -419,8 +419,8 @@ export interface ExecuteSwapRequest {
   amountIn: string;
   maxSlippageBps?: string;
   minAmountOut: string;
-  /** Empty string when using free balance, transfer ID otherwise */
-  assetInSparkTransferId: string;
+  /** Optional - empty/omit when using free balance, transfer ID otherwise */
+  assetInSparkTransferId?: string;
   nonce: string;
   totalIntegratorFeeRateBps: string;
   integratorPublicKey: string;
@@ -550,6 +550,10 @@ export interface AmmPool {
   graduationThresholdAmount?: string;
   createdAt: string;
   updatedAt: string;
+  // V3 Concentrated Liquidity fields
+  currentTick?: number;
+  tickSpacing?: number;
+  totalLiquidity?: string;
 }
 
 export interface ListPoolsQuery {
@@ -600,7 +604,14 @@ export interface PoolDetailsResponse {
   bondingProgressPercent?: string;
   graduationThresholdAmount?: string;
   createdAt: string;
+  updatedAt: string;
   status: string;
+  // V3 Concentrated Liquidity fields
+  currentTick?: number;
+  tickSpacing?: number;
+  sqrtPriceX96?: string;
+  totalLiquidity?: string;
+  positionCount?: number;
 }
 
 // LP Position types
@@ -1666,6 +1677,10 @@ export interface IncreaseLiquidityResponse {
   amountBUsed?: string;
   amountARefund?: string;
   amountBRefund?: string;
+  /** Amount of asset A retained in free balance. */
+  amountARetained?: string;
+  /** Amount of asset B retained in free balance. */
+  amountBRetained?: string;
   /** Whether excess was retained in free balance. */
   retainedInBalance?: boolean;
   /** Current free balance after operation (if retainedInBalance is true). */
@@ -1684,6 +1699,10 @@ export interface DecreaseLiquidityResponse {
   amountB?: string;
   feesCollectedA?: string;
   feesCollectedB?: string;
+  /** Amount of asset A retained in free balance. */
+  amountARetained?: string;
+  /** Amount of asset B retained in free balance. */
+  amountBRetained?: string;
   outboundTransferIds?: string[];
   /** Whether assets were retained in free balance. */
   retainedInBalance?: boolean;
@@ -1702,6 +1721,10 @@ export interface CollectFeesResponse {
   feesCollectedB?: string;
   assetAAddress?: string;
   assetBAddress?: string;
+  /** Fees in asset A retained in free balance. */
+  feesARetained?: string;
+  /** Fees in asset B retained in free balance. */
+  feesBRetained?: string;
   outboundTransferIds?: string[];
   /** Whether fees were retained in free balance. */
   retainedInBalance?: boolean;
@@ -1722,6 +1745,10 @@ export interface RebalancePositionResponse {
   netAmountB?: string;
   feesCollectedA?: string;
   feesCollectedB?: string;
+  /** Amount of asset A retained in free balance. */
+  amountARetained?: string;
+  /** Amount of asset B retained in free balance. */
+  amountBRetained?: string;
   /** Spark transfer IDs for outbound assets (net amounts and fees sent to user). */
   outboundTransferIds?: string[];
   /** Whether excess was retained in free balance. */

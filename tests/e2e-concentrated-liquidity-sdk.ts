@@ -96,7 +96,7 @@ const HOST_FEE_BPS = 10;
 const INTEGRATOR_FEE_BPS = 50; // 0.5% for integrator swap
 
 // Faucet and liquidity amounts
-const FAUCET_FUND_SATS = 100_000; // 100k sats (faucet max)
+const FAUCET_FUND_SATS = 10_000; // 10k sats
 const BTC_LIQUIDITY = "20000"; // 20k sats for liquidity (leaves room for fees)
 const USDB_LIQUIDITY = "18000000"; // 18M microUSDB = $18 (matching 20k sats at ~$90k)
 
@@ -403,6 +403,29 @@ async function main(): Promise<void> {
   const positions = await client.listConcentratedPositions({ poolId: POOL_ID });
   logKV("Positions", positions);
 
+  logSection("8b. Get Pool Liquidity (Visualization)");
+
+  const poolLiquidity = await client.getPoolLiquidity(POOL_ID);
+  logKV("Pool liquidity", {
+    currentTick: poolLiquidity.currentTick,
+    currentPrice: poolLiquidity.currentPrice,
+    activeLiquidity: poolLiquidity.activeLiquidity,
+    totalReserveA: poolLiquidity.totalReserveA,
+    totalReserveB: poolLiquidity.totalReserveB,
+    rangeCount: poolLiquidity.ranges.length,
+  });
+
+  logSection("8c. Get Pool Ticks (Simulation)");
+
+  const poolTicks = await client.getPoolTicks(POOL_ID);
+  logKV("Pool ticks", {
+    currentTick: poolTicks.currentTick,
+    currentLiquidity: poolTicks.currentLiquidity,
+    tickSpacing: poolTicks.tickSpacing,
+    lpFeeBps: poolTicks.lpFeeBps,
+    tickCount: poolTicks.ticks.length,
+  });
+
   logSection("9. Execute Swap #1: BTC -> USDB (NO integrator)");
 
   const swap1Amount = "10000"; // 10k sats = ~$9
@@ -504,6 +527,8 @@ async function main(): Promise<void> {
   console.log(`\n  Fees retained in pool free balance:`);
   console.log(`    Asset A (USDB): ${collectResult.feesCollectedA || "0"}`);
   console.log(`    Asset B (BTC):  ${collectResult.feesCollectedB || "0"}`);
+  console.log(`    Fees A Retained: ${collectResult.feesARetained || "0"}`);
+  console.log(`    Fees B Retained: ${collectResult.feesBRetained || "0"}`);
   console.log(`    Retained: ${collectResult.retainedInBalance ? "Yes" : "No"}`);
   if (collectResult.currentBalance) {
     console.log(`\n  Current free balance:`);
@@ -656,6 +681,8 @@ async function main(): Promise<void> {
     console.log(`    - New liquidity: ${rebalanceResult.newLiquidity}`);
     console.log(`    - Fees collected A: ${rebalanceResult.feesCollectedA || "0"}`);
     console.log(`    - Fees collected B: ${rebalanceResult.feesCollectedB || "0"}`);
+    console.log(`    - Amount A Retained: ${rebalanceResult.amountARetained || "0"}`);
+    console.log(`    - Amount B Retained: ${rebalanceResult.amountBRetained || "0"}`);
     console.log(`    - Retained in balance: ${rebalanceResult.retainedInBalance ? "Yes" : "No"}`);
 
     if (rebalanceResult.currentBalance) {
@@ -847,6 +874,8 @@ async function main(): Promise<void> {
     console.log(`\n  Liquidity removed and retained in balance:`);
     console.log(`    Amount A (USDB): ${decreaseResult.amountA || "0"}`);
     console.log(`    Amount B (BTC):  ${decreaseResult.amountB || "0"}`);
+    console.log(`    Amount A Retained: ${decreaseResult.amountARetained || "0"}`);
+    console.log(`    Amount B Retained: ${decreaseResult.amountBRetained || "0"}`);
     console.log(`    Fees A:          ${decreaseResult.feesCollectedA || "0"}`);
     console.log(`    Fees B:          ${decreaseResult.feesCollectedB || "0"}`);
     console.log(`    Retained:        ${decreaseResult.retainedInBalance ? "Yes" : "No"}`);
