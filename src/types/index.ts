@@ -609,7 +609,7 @@ export interface PoolDetailsResponse {
   // V3 Concentrated Liquidity fields
   currentTick?: number;
   tickSpacing?: number;
-  sqrtPriceX96?: string;
+  sqrtPrice?: string;
   totalLiquidity?: string;
   positionCount?: number;
 }
@@ -1826,7 +1826,7 @@ export interface PoolLiquidityResponse {
   assetBAddress: string;
   currentTick: number;
   currentPrice: string;
-  currentSqrtPriceX96: string;
+  currentSqrtPrice: string;
   tickSpacing: number;
   activeLiquidity: string;
   totalReserveA: string;
@@ -1843,7 +1843,7 @@ export interface TickData {
   tick: number;
   liquidityNet: string;
   liquidityGross: string;
-  sqrtPriceX96: string;
+  sqrtPrice: string;
 }
 
 /**
@@ -1854,7 +1854,7 @@ export interface PoolTicksResponse {
   assetAAddress: string;
   assetBAddress: string;
   currentTick: number;
-  currentSqrtPriceX96: string;
+  currentSqrtPrice: string;
   currentLiquidity: string;
   tickSpacing: number;
   lpFeeBps: number;
