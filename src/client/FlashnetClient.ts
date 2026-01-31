@@ -1182,6 +1182,9 @@ export class FlashnetClient {
    *
    * If the swap fails with a clawbackable error, the SDK will automatically
    * attempt to recover the transferred funds via clawback.
+   *
+   * @param params.useFreeBalance When true, uses free balance from V3 pool instead of making a Spark transfer.
+   *   Note: Only works for V3 concentrated liquidity pools. Does NOT work for route swaps.
    */
   async executeSwap(params: {
     poolId: string;
@@ -1192,6 +1195,8 @@ export class FlashnetClient {
     minAmountOut: string;
     integratorFeeRateBps?: number;
     integratorPublicKey?: string;
+    /** When true, uses free balance from V3 pool instead of making a Spark transfer */
+    useFreeBalance?: boolean;
   }): Promise<SwapResponse> {
     await this.ensureInitialized();
 
@@ -1203,6 +1208,14 @@ export class FlashnetClient {
       amountIn: params.amountIn,
       minAmountOut: params.minAmountOut,
     });
+
+    // If using free balance (V3 pools only), skip the Spark transfer
+    if (params.useFreeBalance) {
+      return this.executeSwapIntent({
+        ...params,
+        // No transferId - triggers free balance mode
+      });
+    }
 
     // Transfer assets to pool using new address encoding
     const lpSparkAddress = encodeSparkAddressNew({
@@ -1231,9 +1244,15 @@ export class FlashnetClient {
     );
   }
 
+  /**
+   * Execute a swap with a pre-created transfer or using free balance.
+   *
+   * When transferId is provided, uses that Spark transfer. If transferId is a null UUID, treats it as a transfer reference.
+   * When transferId is omitted/undefined, uses free balance (V3 pools only).
+   */
   async executeSwapIntent(params: {
     poolId: string;
-    transferId: string;
+    transferId?: string;
     assetInAddress: string;
     assetOutAddress: string;
     amountIn: string;
@@ -1252,6 +1271,9 @@ export class FlashnetClient {
       amountIn: params.amountIn,
       minAmountOut: params.minAmountOut,
     });
+
+    // Determine if using free balance based on whether transferId is provided
+    const isUsingFreeBalance = !params.transferId;
 
     // Generate swap intent
     const nonce = generateNonce();
@@ -1282,7 +1304,7 @@ export class FlashnetClient {
       amountIn: params.amountIn.toString(),
       maxSlippageBps: params.maxSlippageBps?.toString(),
       minAmountOut: params.minAmountOut,
-      assetInSparkTransferId: params.transferId,
+      assetInSparkTransferId: params.transferId ?? "",
       totalIntegratorFeeRateBps: params.integratorFeeRateBps?.toString() || "0",
       integratorPublicKey: params.integratorPublicKey || "",
       nonce,
@@ -1300,7 +1322,7 @@ export class FlashnetClient {
         : "";
 
       // If refund was provided, funds are safe - use auto_refund recovery
-      // If no refund, funds may need clawback
+      // If no refund and not using free balance, funds may need clawback
       throw new FlashnetError(`${errorMessage}.${refundInfo}`, {
         response: {
           errorCode: hasRefund ? "FSAG-4202" : "UNKNOWN", // Slippage if refunded
@@ -1312,8 +1334,9 @@ export class FlashnetClient {
           severity: "Error",
         },
         httpStatus: 400,
-        // Don't include transferIds if refunded - no clawback needed
-        transferIds: hasRefund ? [] : [params.transferId],
+        // Don't include transferIds if refunded or using free balance - no clawback needed
+        transferIds:
+          hasRefund || isUsingFreeBalance ? [] : [params.transferId ?? ""],
         lpIdentityPublicKey: params.poolId,
       });
     }
