@@ -1247,7 +1247,7 @@ export class FlashnetClient {
   /**
    * Execute a swap with a pre-created transfer or using free balance.
    *
-   * When transferId is provided, uses that Spark transfer if not gotten from spark place a null uuid in its place.
+   * When transferId is provided, uses that Spark transfer. If transferId is a null UUID, treats it as a transfer reference.
    * When transferId is omitted/undefined, uses free balance (V3 pools only).
    */
   async executeSwapIntent(params: {
