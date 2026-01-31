@@ -698,6 +698,20 @@ export class TypedAmmApi {
       request
     );
   }
+
+  /**
+   * Deposit to free balance in a V3 pool from Spark transfers
+   * @POST /v1/concentrated/balance/deposit
+   * @requires Bearer token
+   */
+  async depositConcentratedBalance(
+    request: Types.DepositBalanceRequest
+  ): Promise<Types.DepositBalanceResponse> {
+    return this.client.ammPost<Types.DepositBalanceResponse>(
+      "/v1/concentrated/balance/deposit",
+      request
+    );
+  }
 }
 
 /**

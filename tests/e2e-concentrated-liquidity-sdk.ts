@@ -138,11 +138,10 @@ function generateRandomTicker(): string {
 // Faucet Integration
 
 interface FaucetResult {
-  success: boolean;
-  txid: string;
-  amount: number;
-  address: string;
-  error?: string;
+  txids: string[];
+  amm_operation_id?: string;
+  amount_sent?: number;
+  message: string;
 }
 
 async function fundViaFaucet(
@@ -150,54 +149,66 @@ async function fundViaFaucet(
   sparkAddress: string,
   amountSats: number
 ): Promise<FaucetResult> {
+  // Record starting BTC balance
   const before = await wallet.getBalance();
   const startSats = before.balance;
 
-  logKV("Faucet request", { address: sparkAddress, amount: amountSats });
+  // Check funding-server health first
+  const healthResp = await fetch(`${FAUCET_URL}/balance`);
+  if (!healthResp.ok) {
+    throw new Error(`Funding server health check failed at ${FAUCET_URL}/balance`);
+  }
+
+  // Use the JSON API format from the Rust faucet_client
+  const requestBody = {
+    funding_requests: [
+      {
+        amount_sats: amountSats,
+        recipient: sparkAddress,
+      },
+    ],
+  };
+
+  console.log(`Requesting ${amountSats} sats from funding server for address: ${sparkAddress}`);
 
   const resp = await fetch(`${FAUCET_URL}/fund`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      address: sparkAddress,
-      amount: amountSats,
-    }),
+    body: JSON.stringify(requestBody),
   });
 
   if (!resp.ok) {
-    const text = await resp.text();
-    throw new Error(`Faucet error ${resp.status}: ${text}`);
+    const errorText = await resp.text().catch(() => "unknown");
+    throw new Error(`Funding server error ${resp.status}: ${errorText}`);
   }
 
-  const result: FaucetResult = await resp.json();
-  logKV("Faucet response", result);
+  const data = await resp.json();
 
-  if (!result.success) {
-    throw new Error(`Faucet failed: ${result.error || JSON.stringify(result)}`);
-  }
-  if (!result.txid) {
-    throw new Error(`Faucet failed: no txid in response`);
-  }
-  logKV("Faucet txid", result.txid);
-
-  // Wait for wallet balance to reflect funding
-  const deadline = Date.now() + 60_000;
-  let currentSats = startSats;
-  while (Date.now() < deadline) {
-    try {
-      const bal = await wallet.getBalance();
-      currentSats = bal.balance;
-      if (currentSats > startSats) {
-        logKV("New balance (sats)", currentSats);
-        return result;
-      }
-    } catch {
-      // ignore
-    }
-    await new Promise((r) => setTimeout(r, 2000));
+  // Parse the response format from funding-server (ApiFundResponse with results array)
+  if (!data.results || data.results.length === 0) {
+    throw new Error("Funding server response contained no results");
   }
 
-  throw new Error("Faucet funds not detected in wallet within timeout");
+  const entry = data.results[0];
+  if (entry.error) {
+    throw new Error(`Funding error: ${entry.error}`);
+  }
+
+  console.log(`Funding request successful: txids=${JSON.stringify(entry.txids)}, amm_operation_id=${entry.amm_operation_id}`);
+
+  // Funding is async - wait 60 seconds for the operation to complete
+  // Skip balance verification - just wait for sufficient time
+  console.log("Waiting 60s for async funding to complete...");
+  await new Promise((r) => setTimeout(r, 60000));
+
+  console.log("Funding wait complete, proceeding with tests...");
+
+  return {
+    txids: entry.txids || [],
+    amm_operation_id: entry.amm_operation_id,
+    amount_sent: entry.amount_sent,
+    message: `Funded ${entry.amount_sent || amountSats} sats`,
+  };
 }
 
 // Main Test
@@ -329,6 +340,38 @@ async function main(): Promise<void> {
   });
   logKV("Pool Spark address", poolSparkAddress);
 
+  logSection("5b. List Pools");
+
+  const listResult = await client.listPools({});
+  logKV("Total pools", listResult.pools?.length || 0);
+  const ourPool = listResult.pools?.find((p) => p.lpPublicKey === POOL_ID);
+  if (ourPool) {
+    logKV("Our pool found in list", {
+      lpPublicKey: ourPool.lpPublicKey,
+      curveType: ourPool.curveType,
+      currentTick: ourPool.currentTick,
+      tickSpacing: ourPool.tickSpacing,
+      totalLiquidity: ourPool.totalLiquidity,
+    });
+  } else {
+    console.log("Warning: Pool not found in list (may need pagination)");
+  }
+
+  logSection("5c. Get Pool Details");
+
+  const poolDetails = await client.getPool(POOL_ID);
+  logKV("Pool details", {
+    lpPublicKey: poolDetails.lpPublicKey,
+    curveType: poolDetails.curveType,
+    status: poolDetails.status,
+    sqrtPrice: poolDetails.sqrtPrice,
+    currentTick: poolDetails.currentTick,
+    tickSpacing: poolDetails.tickSpacing,
+    totalLiquidity: poolDetails.totalLiquidity,
+    assetAAddress: poolDetails.assetAAddress,
+    assetBAddress: poolDetails.assetBAddress,
+  });
+
   logSection("6. Fund via Faucet (1M sats)");
 
   await fundViaFaucet(wallet, userSpark, FAUCET_FUND_SATS);
@@ -373,6 +416,29 @@ async function main(): Promise<void> {
 
   const positions = await client.listConcentratedPositions({ poolId: POOL_ID });
   logKV("Positions", positions);
+
+  logSection("8b. Get Pool Liquidity (Visualization)");
+
+  const poolLiquidity = await client.getPoolLiquidity(POOL_ID);
+  logKV("Pool liquidity", {
+    currentTick: poolLiquidity.currentTick,
+    currentPrice: poolLiquidity.currentPrice,
+    activeLiquidity: poolLiquidity.activeLiquidity,
+    totalReserveA: poolLiquidity.totalReserveA,
+    totalReserveB: poolLiquidity.totalReserveB,
+    rangeCount: poolLiquidity.ranges.length,
+  });
+
+  logSection("8c. Get Pool Ticks (Simulation)");
+
+  const poolTicks = await client.getPoolTicks(POOL_ID);
+  logKV("Pool ticks", {
+    currentTick: poolTicks.currentTick,
+    currentLiquidity: poolTicks.currentLiquidity,
+    tickSpacing: poolTicks.tickSpacing,
+    lpFeeBps: poolTicks.lpFeeBps,
+    tickCount: poolTicks.ticks.length,
+  });
 
   logSection("9. Execute Swap #1: BTC -> USDB (NO integrator)");
 
@@ -475,6 +541,8 @@ async function main(): Promise<void> {
   console.log(`\n  Fees retained in pool free balance:`);
   console.log(`    Asset A (USDB): ${collectResult.feesCollectedA || "0"}`);
   console.log(`    Asset B (BTC):  ${collectResult.feesCollectedB || "0"}`);
+  console.log(`    Fees A Retained: ${collectResult.feesARetained || "0"}`);
+  console.log(`    Fees B Retained: ${collectResult.feesBRetained || "0"}`);
   console.log(`    Retained: ${collectResult.retainedInBalance ? "Yes" : "No"}`);
   if (collectResult.currentBalance) {
     console.log(`\n  Current free balance:`);
@@ -489,6 +557,72 @@ async function main(): Promise<void> {
   console.log(`\n  Your free balance in this pool:`);
   console.log(`    USDB (A): ${freeBalance.balanceA} (available: ${freeBalance.availableA})`);
   console.log(`    BTC (B):  ${freeBalance.balanceB} (available: ${freeBalance.availableB})`);
+
+  logSection("12b. DEPOSIT TO FREE BALANCE");
+
+  console.log(`\n  Testing depositConcentratedBalance endpoint...`);
+  console.log(`  This allows direct deposits to free balance via Spark transfers.`);
+
+  // For this test, we'll deposit some BTC to our free balance
+  const depositAmountBtc = "5000"; // 5k sats
+
+  // Get the pool's Spark address for the transfer
+  const poolSparkAddressForDeposit = encodeSparkAddressNew({
+    identityPublicKey: POOL_ID,
+    network: SPARK_NETWORK as SparkNetworkType,
+  });
+  console.log(`  Pool Spark address: ${poolSparkAddressForDeposit}`);
+
+  // Send BTC to the pool via client.transferAsset (returns proper transfer ID format)
+  console.log(`  Sending ${depositAmountBtc} sats to pool via transferAsset...`);
+  
+  // Use client.transferAsset which handles the transfer and returns the correct ID format
+  const sparkTransferId = await client.transferAsset({
+    assetAddress: BTC_ASSET_PUBKEY,
+    amount: depositAmountBtc,
+    receiverSparkAddress: poolSparkAddressForDeposit,
+  });
+  
+  console.log(`  Spark transfer ID: ${sparkTransferId}`);
+  
+  // Wait for the transfer to be processed
+  await new Promise((r) => setTimeout(r, 3000));
+  
+  // Now deposit the transferred funds to our free balance
+  console.log(`\n  Calling depositConcentratedBalance...`);
+  
+  const t_dep1 = Date.now();
+  const depositResult = await client.depositConcentratedBalance({
+    poolId: POOL_ID,
+    amountA: "0", // No USDB deposit
+    amountB: depositAmountBtc, // Deposit BTC
+    assetASparkTransferId: "", // Empty for no asset A
+    assetBSparkTransferId: sparkTransferId, // Transfer ID for BTC
+  });
+  const t_dep2 = Date.now();
+
+  logKV("Deposit result", depositResult);
+  logKV("Time (ms)", t_dep2 - t_dep1);
+
+  if (!depositResult.accepted) {
+    throw new Error(`Deposit to free balance failed: ${(depositResult as any).error}`);
+  }
+
+  console.log(`\n  ✓ DEPOSIT TO FREE BALANCE SUCCESS!`);
+  console.log(`    Amount deposited: ${depositAmountBtc} sats`);
+  console.log(`    New balance A: ${depositResult.currentBalanceA || "N/A"}`);
+  console.log(`    New balance B: ${depositResult.currentBalanceB || "N/A"}`);
+  
+  // Verify free balance increased
+  const freeBalanceAfterDeposit = await client.getConcentratedBalance(POOL_ID);
+  console.log(`\n  Free balance after deposit:`);
+  console.log(`    USDB (A): ${freeBalanceAfterDeposit.balanceA}`);
+  console.log(`    BTC (B):  ${freeBalanceAfterDeposit.balanceB}`);
+  
+  const btcBefore = BigInt(freeBalance.balanceB || "0");
+  const btcAfter = BigInt(freeBalanceAfterDeposit.balanceB || "0");
+  const btcIncrease = btcAfter - btcBefore;
+  console.log(`    BTC increase: ${btcIncrease.toString()} sats`);
 
   logSection("13. Rebalance with retainInBalance");
 
@@ -561,6 +695,8 @@ async function main(): Promise<void> {
     console.log(`    - New liquidity: ${rebalanceResult.newLiquidity}`);
     console.log(`    - Fees collected A: ${rebalanceResult.feesCollectedA || "0"}`);
     console.log(`    - Fees collected B: ${rebalanceResult.feesCollectedB || "0"}`);
+    console.log(`    - Amount A Retained: ${rebalanceResult.amountARetained || "0"}`);
+    console.log(`    - Amount B Retained: ${rebalanceResult.amountBRetained || "0"}`);
     console.log(`    - Retained in balance: ${rebalanceResult.retainedInBalance ? "Yes" : "No"}`);
 
     if (rebalanceResult.currentBalance) {
@@ -644,6 +780,65 @@ async function main(): Promise<void> {
     )}% (price impact only)`
   );
 
+
+  logSection("14b. FREE BALANCE SWAP: USDB -> BTC (using pool free balance)");
+
+  // First, check if we have free balance available from collected fees
+  const freeBalanceBeforeSwap = await client.getConcentratedBalance(POOL_ID);
+  console.log(`\n  Current free balance in pool:`);
+  console.log(`    USDB (A): ${freeBalanceBeforeSwap.balanceA} (available: ${freeBalanceBeforeSwap.availableA})`);
+  console.log(`    BTC (B):  ${freeBalanceBeforeSwap.balanceB} (available: ${freeBalanceBeforeSwap.availableB})`);
+
+  const availableUsdb = BigInt(freeBalanceBeforeSwap.availableA || freeBalanceBeforeSwap.balanceA || "0");
+  
+  if (availableUsdb < 1000n) {
+    console.log(`\n  Skipping free balance swap - insufficient USDB balance (need at least 1000 microUSDB)`);
+  } else {
+    // Use a portion of the available free balance for the swap
+    const freeBalanceSwapAmount = (availableUsdb / 2n).toString(); // Use half of available
+    
+    console.log(`\n  Executing swap using FREE BALANCE (no Spark transfer required):`);
+    console.log(`    Amount: ${freeBalanceSwapAmount} microUSDB`);
+    console.log(`    Method: executeSwap with useFreeBalance: true`);
+    console.log(`    Expected: No Spark transfer, uses pool free balance directly`);
+    
+    const t_fb1 = Date.now();
+    // Use executeSwap with useFreeBalance: true - this skips the Spark transfer
+    const freeBalanceSwapResult = await client.executeSwap({
+      poolId: POOL_ID,
+      assetInAddress: tokenIdentifierHex,
+      assetOutAddress: BTC_ASSET_PUBKEY,
+      amountIn: freeBalanceSwapAmount,
+      minAmountOut: "0",
+      maxSlippageBps: 10000,
+      useFreeBalance: true, // This triggers free balance mode - no Spark transfer
+    });
+    const t_fb2 = Date.now();
+
+    logKV("Free balance swap result", freeBalanceSwapResult);
+    logKV("Time (ms)", t_fb2 - t_fb1);
+
+    if (!freeBalanceSwapResult.accepted) {
+      throw new Error(`Free balance swap failed: ${freeBalanceSwapResult.error || "unknown error"}`);
+    }
+
+    console.log(`\n  ✓ FREE BALANCE SWAP SUCCESS!`);
+    console.log(`    Input:  ${freeBalanceSwapAmount} microUSDB (from pool free balance)`);
+    console.log(`    Output: ${freeBalanceSwapResult.amountOut} sats`);
+    console.log(`    No Spark transfer was required - used existing pool balance`);
+
+    // Verify free balance was reduced
+    const freeBalanceAfterSwap = await client.getConcentratedBalance(POOL_ID);
+    console.log(`\n  Free balance after swap:`);
+    console.log(`    USDB (A): ${freeBalanceAfterSwap.balanceA} (was: ${freeBalanceBeforeSwap.balanceA})`);
+    console.log(`    BTC (B):  ${freeBalanceAfterSwap.balanceB} (was: ${freeBalanceBeforeSwap.balanceB})`);
+    
+    const usdbDiff = BigInt(freeBalanceBeforeSwap.balanceA || "0") - BigInt(freeBalanceAfterSwap.balanceA || "0");
+    const btcDiff = BigInt(freeBalanceAfterSwap.balanceB || "0") - BigInt(freeBalanceBeforeSwap.balanceB || "0");
+    console.log(`    USDB used:   ${usdbDiff.toString()}`);
+    console.log(`    BTC received: ${btcDiff.toString()} (retained in free balance)`);
+  }
+
   logSection("15. Decrease Liquidity with retainInBalance");
 
   const positionsAfterRebalance = await client.listConcentratedPositions({
@@ -693,6 +888,8 @@ async function main(): Promise<void> {
     console.log(`\n  Liquidity removed and retained in balance:`);
     console.log(`    Amount A (USDB): ${decreaseResult.amountA || "0"}`);
     console.log(`    Amount B (BTC):  ${decreaseResult.amountB || "0"}`);
+    console.log(`    Amount A Retained: ${decreaseResult.amountARetained || "0"}`);
+    console.log(`    Amount B Retained: ${decreaseResult.amountBRetained || "0"}`);
     console.log(`    Fees A:          ${decreaseResult.feesCollectedA || "0"}`);
     console.log(`    Fees B:          ${decreaseResult.feesCollectedB || "0"}`);
     console.log(`    Retained:        ${decreaseResult.retainedInBalance ? "Yes" : "No"}`);

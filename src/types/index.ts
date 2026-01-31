@@ -419,7 +419,8 @@ export interface ExecuteSwapRequest {
   amountIn: string;
   maxSlippageBps?: string;
   minAmountOut: string;
-  assetInSparkTransferId: string;
+  /** Optional - empty/omit when using free balance, transfer ID otherwise */
+  assetInSparkTransferId?: string;
   nonce: string;
   totalIntegratorFeeRateBps: string;
   integratorPublicKey: string;
@@ -549,6 +550,10 @@ export interface AmmPool {
   graduationThresholdAmount?: string;
   createdAt: string;
   updatedAt: string;
+  // V3 Concentrated Liquidity fields
+  currentTick?: number;
+  tickSpacing?: number;
+  totalLiquidity?: string;
 }
 
 export interface ListPoolsQuery {
@@ -599,7 +604,14 @@ export interface PoolDetailsResponse {
   bondingProgressPercent?: string;
   graduationThresholdAmount?: string;
   createdAt: string;
+  updatedAt: string;
   status: string;
+  // V3 Concentrated Liquidity fields
+  currentTick?: number;
+  tickSpacing?: number;
+  sqrtPrice?: string;
+  totalLiquidity?: string;
+  positionCount?: number;
 }
 
 // LP Position types
@@ -874,7 +886,8 @@ export interface ValidateAmmConfirmInitialDepositData {
 export interface ValidateAmmSwapData {
   userPublicKey: string;
   lpIdentityPublicKey: string;
-  assetInSparkTransferId: string;
+  /** Empty string when using free balance, transfer ID otherwise */
+  assetInSparkTransferId?: string;
   assetInAddress: string;
   assetOutAddress: string;
   amountIn: string;
@@ -1664,6 +1677,10 @@ export interface IncreaseLiquidityResponse {
   amountBUsed?: string;
   amountARefund?: string;
   amountBRefund?: string;
+  /** Amount of asset A retained in free balance. */
+  amountARetained?: string;
+  /** Amount of asset B retained in free balance. */
+  amountBRetained?: string;
   /** Whether excess was retained in free balance. */
   retainedInBalance?: boolean;
   /** Current free balance after operation (if retainedInBalance is true). */
@@ -1682,6 +1699,10 @@ export interface DecreaseLiquidityResponse {
   amountB?: string;
   feesCollectedA?: string;
   feesCollectedB?: string;
+  /** Amount of asset A retained in free balance. */
+  amountARetained?: string;
+  /** Amount of asset B retained in free balance. */
+  amountBRetained?: string;
   outboundTransferIds?: string[];
   /** Whether assets were retained in free balance. */
   retainedInBalance?: boolean;
@@ -1700,6 +1721,10 @@ export interface CollectFeesResponse {
   feesCollectedB?: string;
   assetAAddress?: string;
   assetBAddress?: string;
+  /** Fees in asset A retained in free balance. */
+  feesARetained?: string;
+  /** Fees in asset B retained in free balance. */
+  feesBRetained?: string;
   outboundTransferIds?: string[];
   /** Whether fees were retained in free balance. */
   retainedInBalance?: boolean;
@@ -1720,6 +1745,10 @@ export interface RebalancePositionResponse {
   netAmountB?: string;
   feesCollectedA?: string;
   feesCollectedB?: string;
+  /** Amount of asset A retained in free balance. */
+  amountARetained?: string;
+  /** Amount of asset B retained in free balance. */
+  amountBRetained?: string;
   /** Spark transfer IDs for outbound assets (net amounts and fees sent to user). */
   outboundTransferIds?: string[];
   /** Whether excess was retained in free balance. */
@@ -1797,7 +1826,7 @@ export interface PoolLiquidityResponse {
   assetBAddress: string;
   currentTick: number;
   currentPrice: string;
-  currentSqrtPriceX96: string;
+  currentSqrtPrice: string;
   tickSpacing: number;
   activeLiquidity: string;
   totalReserveA: string;
@@ -1814,7 +1843,7 @@ export interface TickData {
   tick: number;
   liquidityNet: string;
   liquidityGross: string;
-  sqrtPriceX96: string;
+  sqrtPrice: string;
 }
 
 /**
@@ -1825,7 +1854,7 @@ export interface PoolTicksResponse {
   assetAAddress: string;
   assetBAddress: string;
   currentTick: number;
-  currentSqrtPriceX96: string;
+  currentSqrtPrice: string;
   currentLiquidity: string;
   tickSpacing: number;
   lpFeeBps: number;
@@ -1920,6 +1949,75 @@ export interface WithdrawBalanceResponse {
 export interface ValidateWithdrawBalanceData {
   userPublicKey: string;
   lpIdentityPublicKey: string;
+  amountA: string;
+  amountB: string;
+  nonce: string;
+}
+
+/**
+ * Request body for depositing to free balance in a V3 pool.
+ */
+export interface DepositBalanceRequest {
+  /** Pool ID (LP identity public key). */
+  poolId: string;
+  /** Amount of asset A to deposit. Use "0" to skip. */
+  amountA: string;
+  /** Amount of asset B to deposit. Use "0" to skip. */
+  amountB: string;
+  /** Spark transfer ID for asset A deposit. Empty string to skip. */
+  assetASparkTransferId: string;
+  /** Spark transfer ID for asset B deposit. Empty string to skip. */
+  assetBSparkTransferId: string;
+  /** Unique nonce for replay protection. */
+  nonce: string;
+  /** Hex-encoded signature of the nonce. */
+  signature: string;
+}
+
+/**
+ * Successful response for depositing to free balance.
+ * Balance fields may be omitted if the deposited amount was "0" or empty.
+ */
+export interface DepositBalanceSuccessResponse {
+  requestId: string;
+  accepted: true;
+  /** Amount of asset A that was deposited. Omitted if "0" or no deposit for this asset. */
+  amountADeposited?: string;
+  /** Amount of asset B that was deposited. Omitted if "0" or no deposit for this asset. */
+  amountBDeposited?: string;
+  /** Current free balance of asset A after deposit. */
+  currentBalanceA?: string;
+  /** Current free balance of asset B after deposit. */
+  currentBalanceB?: string;
+}
+
+/**
+ * Failed response for depositing to free balance.
+ */
+export interface DepositBalanceErrorResponse {
+  requestId: string;
+  accepted: false;
+  /** Error message describing why the deposit failed. */
+  error: string;
+}
+
+/**
+ * Response for depositing to free balance.
+ * Discriminated union: when accepted is true, balance fields may be present;
+ * when accepted is false, only error is present.
+ */
+export type DepositBalanceResponse =
+  | DepositBalanceSuccessResponse
+  | DepositBalanceErrorResponse;
+
+/**
+ * Data for validating a deposit balance intent.
+ */
+export interface ValidateDepositBalanceData {
+  userPublicKey: string;
+  lpIdentityPublicKey: string;
+  assetASparkTransferId: string;
+  assetBSparkTransferId: string;
   amountA: string;
   amountB: string;
   nonce: string;
