@@ -4597,15 +4597,12 @@ ${relaxed.toString()} (50% relaxed), provided minAmountOut ${minAmountOut.toStri
    * Deposits assets to your free balance in a V3 concentrated liquidity pool.
    *
    * Free balance can be used for adding liquidity to positions without requiring
-   * additional Spark transfers. The deposit requires Spark transfer IDs for the
-   * assets being deposited.
+   * additional Spark transfers. The SDK handles the Spark transfers internally.
    *
    * @param params - Deposit parameters
    * @param params.poolId - The pool identifier (LP identity public key)
    * @param params.amountA - Amount of asset A to deposit (use "0" to skip)
    * @param params.amountB - Amount of asset B to deposit (use "0" to skip)
-   * @param params.assetASparkTransferId - Spark transfer ID for asset A (use "" to skip)
-   * @param params.assetBSparkTransferId - Spark transfer ID for asset B (use "" to skip)
    * @returns Promise resolving to deposit response with updated balances
    * @throws Error if the deposit is rejected
    */
@@ -4613,47 +4610,108 @@ ${relaxed.toString()} (50% relaxed), provided minAmountOut ${minAmountOut.toStri
     poolId: string;
     amountA: string;
     amountB: string;
-    assetASparkTransferId: string;
-    assetBSparkTransferId: string;
   }): Promise<DepositBalanceResponse> {
     await this.ensureInitialized();
 
-    // Generate intent
-    const nonce = generateNonce();
-    const intentMessage = generateDepositBalanceIntentMessage({
-      userPublicKey: this.publicKey,
-      lpIdentityPublicKey: params.poolId,
-      assetASparkTransferId: params.assetASparkTransferId,
-      assetBSparkTransferId: params.assetBSparkTransferId,
-      amountA: params.amountA,
-      amountB: params.amountB,
-      nonce,
+    // Get pool details to know asset addresses
+    const pool = await this.getPool(params.poolId);
+
+    const lpSparkAddress = encodeSparkAddressNew({
+      identityPublicKey: params.poolId,
+      network: this.sparkNetwork,
     });
 
-    // Sign intent
-    const messageHash = sha256(intentMessage);
-    const signature = await (
-      this._wallet as any
-    ).config.signer.signMessageWithIdentityKey(messageHash, true);
+    let assetATransferId = "";
+    let assetBTransferId = "";
+    const transferIds: string[] = [];
 
-    const request: DepositBalanceRequest = {
-      poolId: params.poolId,
-      amountA: params.amountA,
-      amountB: params.amountB,
-      assetASparkTransferId: params.assetASparkTransferId,
-      assetBSparkTransferId: params.assetBSparkTransferId,
-      nonce,
-      signature: getHexFromUint8Array(signature),
-    };
-
-    const response = await this.typedApi.depositConcentratedBalance(request);
-
-    if (!response.accepted) {
-      const errorMessage =
-        response.error || "Deposit balance rejected by the AMM";
-      throw new Error(errorMessage);
+    // Transfer assets to pool
+    if (BigInt(params.amountA) > 0n) {
+      assetATransferId = await this.transferAsset(
+        {
+          receiverSparkAddress: lpSparkAddress,
+          assetAddress: pool.assetAAddress,
+          amount: params.amountA,
+        },
+        "Insufficient balance for depositing to V3 pool (Asset A): "
+      );
+      transferIds.push(assetATransferId);
     }
 
-    return response;
+    if (BigInt(params.amountB) > 0n) {
+      assetBTransferId = await this.transferAsset(
+        {
+          receiverSparkAddress: lpSparkAddress,
+          assetAddress: pool.assetBAddress,
+          amount: params.amountB,
+        },
+        "Insufficient balance for depositing to V3 pool (Asset B): "
+      );
+      transferIds.push(assetBTransferId);
+    }
+
+    const executeDeposit = async () => {
+      // Generate intent
+      const nonce = generateNonce();
+      const intentMessage = generateDepositBalanceIntentMessage({
+        userPublicKey: this.publicKey,
+        lpIdentityPublicKey: params.poolId,
+        assetASparkTransferId: assetATransferId,
+        assetBSparkTransferId: assetBTransferId,
+        amountA: params.amountA,
+        amountB: params.amountB,
+        nonce,
+      });
+
+      // Sign intent
+      const messageHash = sha256(intentMessage);
+      const signature = await (
+        this._wallet as any
+      ).config.signer.signMessageWithIdentityKey(messageHash, true);
+
+      const request: DepositBalanceRequest = {
+        poolId: params.poolId,
+        amountA: params.amountA,
+        amountB: params.amountB,
+        assetASparkTransferId: assetATransferId,
+        assetBSparkTransferId: assetBTransferId,
+        nonce,
+        signature: getHexFromUint8Array(signature),
+      };
+
+      const response = await this.typedApi.depositConcentratedBalance(request);
+
+      if (!response.accepted) {
+        const errorMessage =
+          response.error || "Deposit balance rejected by the AMM";
+        throw new FlashnetError(errorMessage, {
+          response: {
+            errorCode: "UNKNOWN",
+            errorCategory: "System",
+            message: errorMessage,
+            requestId: "",
+            timestamp: new Date().toISOString(),
+            service: "amm-gateway",
+            severity: "Error",
+          },
+          httpStatus: 400,
+          transferIds,
+          lpIdentityPublicKey: params.poolId,
+        });
+      }
+
+      return response;
+    };
+
+    // Execute with auto-clawback if we made transfers
+    if (transferIds.length > 0) {
+      return this.executeWithAutoClawback(
+        executeDeposit,
+        transferIds,
+        params.poolId
+      );
+    }
+
+    return executeDeposit();
   }
 }
