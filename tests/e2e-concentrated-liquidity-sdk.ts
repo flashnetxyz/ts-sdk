@@ -589,6 +589,8 @@ async function main(): Promise<void> {
   await new Promise((r) => setTimeout(r, 3000));
   
   // Now deposit the transferred funds to our free balance
+  // Note: depositConcentratedBalance handles transfers internally - we just specify amounts
+  // The earlier transferAsset was unnecessary, but shows how transfers work
   console.log(`\n  Calling depositConcentratedBalance...`);
   
   const t_dep1 = Date.now();
@@ -596,8 +598,6 @@ async function main(): Promise<void> {
     poolId: POOL_ID,
     amountA: "0", // No USDB deposit
     amountB: depositAmountBtc, // Deposit BTC
-    assetASparkTransferId: "", // Empty for no asset A
-    assetBSparkTransferId: sparkTransferId, // Transfer ID for BTC
   });
   const t_dep2 = Date.now();
 
