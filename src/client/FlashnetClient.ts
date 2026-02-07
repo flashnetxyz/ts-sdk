@@ -2852,15 +2852,27 @@ export class FlashnetClient {
     const baseBtcNeeded =
       BigInt(invoiceAmountSats) + BigInt(lightningFeeEstimate);
 
-    // Round up to next multiple of 64 (2^6) to account for BTC variable fee bit masking.
-    // The AMM zeroes the lowest 6 bits of BTC output, so we need to request enough
-    // that after masking we still have the required amount.
-    // Example: 5014 -> masked to 4992, but if we request 5056, masked stays 5056
-    const BTC_VARIABLE_FEE_BITS = 6n;
-    const BTC_VARIABLE_FEE_MASK = 1n << BTC_VARIABLE_FEE_BITS; // 64
-    const totalBtcNeeded =
-      ((baseBtcNeeded + BTC_VARIABLE_FEE_MASK - 1n) / BTC_VARIABLE_FEE_MASK) *
-      BTC_VARIABLE_FEE_MASK;
+    // Find best pool first (needed to determine pool type for BTC masking decision)
+    const poolQuote = await this.findBestPoolForTokenToBtc(
+      tokenAddress,
+      baseBtcNeeded.toString(),
+      options?.integratorFeeRateBps
+    );
+
+    // Only apply BTC variable fee bit masking for V2 pools.
+    // V3 concentrated liquidity pools calculate fees differently and don't use bit masking.
+    let totalBtcNeeded = baseBtcNeeded;
+    if (!this.isConcentratedPool(poolQuote.curveType)) {
+      // Round up to next multiple of 64 (2^6) to account for BTC variable fee bit masking.
+      // The AMM zeroes the lowest 6 bits of BTC output, so we need to request enough
+      // that after masking we still have the required amount.
+      // Example: 5014 -> masked to 4992, but if we request 5056, masked stays 5056
+      const BTC_VARIABLE_FEE_BITS = 6n;
+      const BTC_VARIABLE_FEE_MASK = 1n << BTC_VARIABLE_FEE_BITS; // 64
+      totalBtcNeeded =
+        ((baseBtcNeeded + BTC_VARIABLE_FEE_MASK - 1n) / BTC_VARIABLE_FEE_MASK) *
+        BTC_VARIABLE_FEE_MASK;
+    }
 
     // Check Flashnet minimum amounts early to provide clear error messages
     const minAmounts = await this.getEnabledMinAmountsMap();
@@ -2883,12 +2895,16 @@ export class FlashnetClient {
       });
     }
 
-    // Find the best pool to swap token -> BTC
-    const poolQuote = await this.findBestPoolForTokenToBtc(
-      tokenAddress,
-      totalBtcNeeded.toString(),
-      options?.integratorFeeRateBps
-    );
+    // Re-query with adjusted BTC amount if masking was applied
+    // (poolQuote was already fetched above, but if masking changed the amount, re-query)
+    const finalPoolQuote =
+      totalBtcNeeded !== baseBtcNeeded
+        ? await this.findBestPoolForTokenToBtc(
+            tokenAddress,
+            totalBtcNeeded.toString(),
+            options?.integratorFeeRateBps
+          )
+        : poolQuote;
 
     // Check token minimum (input to swap)
     const tokenHex = this.toHexTokenIdentifier(tokenAddress).toLowerCase();
@@ -2916,19 +2932,19 @@ export class FlashnetClient {
     const btcVariableFeeAdjustment = Number(totalBtcNeeded - baseBtcNeeded);
 
     return {
-      poolId: poolQuote.poolId,
+      poolId: finalPoolQuote.poolId,
       tokenAddress: this.toHexTokenIdentifier(tokenAddress),
-      tokenAmountRequired: poolQuote.tokenAmountRequired,
+      tokenAmountRequired: finalPoolQuote.tokenAmountRequired,
       btcAmountRequired: totalBtcNeeded.toString(),
       invoiceAmountSats: invoiceAmountSats,
-      estimatedAmmFee: poolQuote.estimatedAmmFee,
+      estimatedAmmFee: finalPoolQuote.estimatedAmmFee,
       estimatedLightningFee: lightningFeeEstimate,
       btcVariableFeeAdjustment,
-      executionPrice: poolQuote.executionPrice,
-      priceImpactPct: poolQuote.priceImpactPct,
-      tokenIsAssetA: poolQuote.tokenIsAssetA,
-      poolReserves: poolQuote.poolReserves,
-      warningMessage: poolQuote.warningMessage,
+      executionPrice: finalPoolQuote.executionPrice,
+      priceImpactPct: finalPoolQuote.priceImpactPct,
+      tokenIsAssetA: finalPoolQuote.tokenIsAssetA,
+      poolReserves: finalPoolQuote.poolReserves,
+      warningMessage: finalPoolQuote.warningMessage,
     };
   }
 
@@ -3218,6 +3234,7 @@ export class FlashnetClient {
     executionPrice: string;
     priceImpactPct: string;
     tokenIsAssetA: boolean;
+    curveType: string;
     poolReserves: {
       assetAReserve: string;
       assetBReserve: string;
@@ -3422,12 +3439,22 @@ export class FlashnetClient {
       executionPrice: bestSimulation.executionPrice,
       priceImpactPct: bestSimulation.priceImpactPct,
       tokenIsAssetA: bestPool.tokenIsAssetA,
+      curveType: poolDetails.curveType,
       poolReserves: {
         assetAReserve: poolDetails.assetAReserve,
         assetBReserve: poolDetails.assetBReserve,
       },
       warningMessage: bestSimulation.warningMessage,
     };
+  }
+
+  /**
+   * Check if a pool is a V3 concentrated liquidity pool.
+   * Used to determine whether BTC variable fee bit masking applies.
+   * @private
+   */
+  private isConcentratedPool(curveType?: string): boolean {
+    return curveType?.toUpperCase() === "V3_CONCENTRATED";
   }
 
   /**
