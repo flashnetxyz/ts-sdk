@@ -194,8 +194,15 @@ export interface PayLightningWithTokenOptions {
    * If true, pay Lightning invoice immediately using existing BTC balance instead of waiting
    * for the swap transfer to complete. The swap BTC will arrive asynchronously.
    * Requires sufficient existing BTC balance in wallet. (default: false)
+   * Ignored for zero-amount invoices.
    */
   useExistingBtcBalance?: boolean;
+  /**
+   * Token amount to spend. Required for zero-amount invoices.
+   * The swap output (minus lightning fees) becomes the payment amount.
+   * Ignored for invoices with a specified amount.
+   */
+  tokenAmount?: string;
 }
 
 /**
@@ -218,6 +225,8 @@ export interface PayLightningWithTokenResult {
   ammFeePaid: string;
   /** Lightning routing fee paid in sats */
   lightningFeePaid?: number;
+  /** For zero-amount invoices: BTC amount actually paid to the invoice */
+  invoiceAmountPaid?: number;
   /** Error message if failed */
   error?: string;
 }
@@ -240,7 +249,7 @@ export interface PayLightningWithTokenQuote {
   estimatedAmmFee: string;
   /** Estimated Lightning routing fee in sats */
   estimatedLightningFee: number;
-  /** Extra sats added due to AMM BTC variable fee (bit masking rounds down by up to 63 sats) */
+  /** Extra sats added due to AMM BTC variable fee (bit masking rounds down by up to 63 sats). 0 for V3 pools. */
   btcVariableFeeAdjustment: number;
   /** Execution price (token per sat) */
   executionPrice: string;
@@ -255,6 +264,10 @@ export interface PayLightningWithTokenQuote {
   };
   /** Warning message if any */
   warningMessage?: string;
+  /** Curve type of the selected pool */
+  curveType: string;
+  /** Whether this quote is for a zero-amount invoice */
+  isZeroAmountInvoice: boolean;
 }
 
 /**
@@ -2819,56 +2832,58 @@ export class FlashnetClient {
     options?: {
       maxSlippageBps?: number;
       integratorFeeRateBps?: number;
+      tokenAmount?: string;
     }
   ): Promise<PayLightningWithTokenQuote> {
     await this.ensureInitialized();
 
     // Decode the invoice to get the amount
     const invoiceAmountSats = await this.decodeInvoiceAmount(invoice);
+
+    // Zero-amount invoice: forward-direction quoting using caller-specified tokenAmount
     if (!invoiceAmountSats || invoiceAmountSats <= 0) {
-      throw new FlashnetError(
-        "Unable to decode invoice amount. Zero-amount invoices are not supported for token payments.",
-        {
-          response: {
-            errorCode: "FSAG-1002",
-            errorCategory: "Validation",
-            message:
-              "Unable to decode invoice amount. Zero-amount invoices are not supported for token payments.",
-            requestId: "",
-            timestamp: new Date().toISOString(),
-            service: "sdk",
-            severity: "Error",
-            remediation:
-              "Provide a valid BOLT11 invoice with a non-zero amount.",
-          },
-        }
+      const tokenAmount = options?.tokenAmount;
+      if (!tokenAmount || BigInt(tokenAmount) <= 0n) {
+        throw new FlashnetError(
+          "Zero-amount invoice requires tokenAmount in options.",
+          {
+            response: {
+              errorCode: "FSAG-1002",
+              errorCategory: "Validation",
+              message: "Zero-amount invoice requires tokenAmount in options.",
+              requestId: "",
+              timestamp: new Date().toISOString(),
+              service: "sdk",
+              severity: "Error",
+              remediation:
+                "Provide tokenAmount when using a zero-amount invoice.",
+            },
+          }
+        );
+      }
+      return this.getZeroAmountInvoiceQuote(
+        invoice,
+        tokenAddress,
+        tokenAmount,
+        options
       );
     }
 
     // Get Lightning fee estimate
     const lightningFeeEstimate = await this.getLightningFeeEstimate(invoice);
 
-    // Total BTC needed = invoice amount + lightning fee
+    // Total BTC needed = invoice amount + lightning fee (unmasked).
+    // Bitmasking for V2 pools is handled inside findBestPoolForTokenToBtc.
     const baseBtcNeeded =
       BigInt(invoiceAmountSats) + BigInt(lightningFeeEstimate);
-
-    // Round up to next multiple of 64 (2^6) to account for BTC variable fee bit masking.
-    // The AMM zeroes the lowest 6 bits of BTC output, so we need to request enough
-    // that after masking we still have the required amount.
-    // Example: 5014 -> masked to 4992, but if we request 5056, masked stays 5056
-    const BTC_VARIABLE_FEE_BITS = 6n;
-    const BTC_VARIABLE_FEE_MASK = 1n << BTC_VARIABLE_FEE_BITS; // 64
-    const totalBtcNeeded =
-      ((baseBtcNeeded + BTC_VARIABLE_FEE_MASK - 1n) / BTC_VARIABLE_FEE_MASK) *
-      BTC_VARIABLE_FEE_MASK;
 
     // Check Flashnet minimum amounts early to provide clear error messages
     const minAmounts = await this.getEnabledMinAmountsMap();
 
     // Check BTC minimum (output from swap)
     const btcMinAmount = minAmounts.get(BTC_ASSET_PUBKEY.toLowerCase());
-    if (btcMinAmount && totalBtcNeeded < btcMinAmount) {
-      const msg = `Invoice amount too small. Minimum BTC output is ${btcMinAmount} sats, but invoice + lightning fee totals only ${totalBtcNeeded} sats.`;
+    if (btcMinAmount && baseBtcNeeded < btcMinAmount) {
+      const msg = `Invoice amount too small. Minimum BTC output is ${btcMinAmount} sats, but invoice + lightning fee totals only ${baseBtcNeeded} sats.`;
       throw new FlashnetError(msg, {
         response: {
           errorCode: "FSAG-1003",
@@ -2883,10 +2898,11 @@ export class FlashnetClient {
       });
     }
 
-    // Find the best pool to swap token -> BTC
+    // Find the best pool to swap token -> BTC.
+    // Bitmasking is applied per-pool inside this function (V2 pools get masked, V3 pools don't).
     const poolQuote = await this.findBestPoolForTokenToBtc(
       tokenAddress,
-      totalBtcNeeded.toString(),
+      baseBtcNeeded.toString(),
       options?.integratorFeeRateBps
     );
 
@@ -2912,14 +2928,17 @@ export class FlashnetClient {
       });
     }
 
-    // Calculate the BTC variable fee adjustment (how much extra we're requesting)
-    const btcVariableFeeAdjustment = Number(totalBtcNeeded - baseBtcNeeded);
+    // BTC variable fee adjustment: difference between what the pool targets and unmasked base.
+    // For V3 pools this is 0 (no masking). For V2 it's the rounding overhead.
+    const btcVariableFeeAdjustment = Number(
+      BigInt(poolQuote.btcAmountUsed) - baseBtcNeeded
+    );
 
     return {
       poolId: poolQuote.poolId,
       tokenAddress: this.toHexTokenIdentifier(tokenAddress),
       tokenAmountRequired: poolQuote.tokenAmountRequired,
-      btcAmountRequired: totalBtcNeeded.toString(),
+      btcAmountRequired: poolQuote.btcAmountUsed,
       invoiceAmountSats: invoiceAmountSats,
       estimatedAmmFee: poolQuote.estimatedAmmFee,
       estimatedLightningFee: lightningFeeEstimate,
@@ -2929,6 +2948,179 @@ export class FlashnetClient {
       tokenIsAssetA: poolQuote.tokenIsAssetA,
       poolReserves: poolQuote.poolReserves,
       warningMessage: poolQuote.warningMessage,
+      curveType: poolQuote.curveType,
+      isZeroAmountInvoice: false,
+    };
+  }
+
+  /**
+   * Generate a quote for a zero-amount invoice.
+   * Forward-direction: simulate swapping tokenAmount and pick the pool with the best BTC output.
+   * @private
+   */
+  private async getZeroAmountInvoiceQuote(
+    invoice: string,
+    tokenAddress: string,
+    tokenAmount: string,
+    options?: {
+      maxSlippageBps?: number;
+      integratorFeeRateBps?: number;
+    }
+  ): Promise<PayLightningWithTokenQuote> {
+    const tokenHex = this.toHexTokenIdentifier(tokenAddress);
+    const btcHex = BTC_ASSET_PUBKEY;
+
+    // Discover all token/BTC pools
+    const [poolsWithTokenAsA, poolsWithTokenAsB] = await Promise.all([
+      this.listPools({ assetAAddress: tokenHex, assetBAddress: btcHex }),
+      this.listPools({ assetAAddress: btcHex, assetBAddress: tokenHex }),
+    ]);
+
+    const poolMap = new Map<
+      string,
+      {
+        pool: (typeof poolsWithTokenAsA.pools)[0];
+        tokenIsAssetA: boolean;
+      }
+    >();
+    for (const p of [...poolsWithTokenAsA.pools, ...poolsWithTokenAsB.pools]) {
+      if (!poolMap.has(p.lpPublicKey)) {
+        const tokenIsAssetA =
+          p.assetAAddress?.toLowerCase() === tokenHex.toLowerCase();
+        poolMap.set(p.lpPublicKey, { pool: p, tokenIsAssetA });
+      }
+    }
+
+    const allPools = Array.from(poolMap.values());
+    if (allPools.length === 0) {
+      throw new FlashnetError(
+        `No liquidity pool found for token ${tokenAddress} paired with BTC`,
+        {
+          response: {
+            errorCode: "FSAG-4001",
+            errorCategory: "Business",
+            message: `No liquidity pool found for token ${tokenAddress} paired with BTC`,
+            requestId: "",
+            timestamp: new Date().toISOString(),
+            service: "sdk",
+            severity: "Error",
+          },
+        }
+      );
+    }
+
+    // Simulate each pool with tokenAmount as input, pick highest BTC output
+    let bestResult: {
+      poolId: string;
+      tokenIsAssetA: boolean;
+      simulation: SimulateSwapResponse;
+      curveType: string;
+      poolReserves: { assetAReserve: string; assetBReserve: string };
+    } | null = null;
+    let bestBtcOut = 0n;
+
+    for (const { pool, tokenIsAssetA } of allPools) {
+      try {
+        const poolDetails = await this.getPool(pool.lpPublicKey);
+        const assetInAddress = tokenIsAssetA
+          ? poolDetails.assetAAddress
+          : poolDetails.assetBAddress;
+        const assetOutAddress = tokenIsAssetA
+          ? poolDetails.assetBAddress
+          : poolDetails.assetAAddress;
+
+        const simulation = await this.simulateSwap({
+          poolId: pool.lpPublicKey,
+          assetInAddress,
+          assetOutAddress,
+          amountIn: tokenAmount,
+          integratorBps: options?.integratorFeeRateBps,
+        });
+
+        const btcOut = BigInt(simulation.amountOut);
+        if (btcOut > bestBtcOut) {
+          bestBtcOut = btcOut;
+          bestResult = {
+            poolId: pool.lpPublicKey,
+            tokenIsAssetA,
+            simulation,
+            curveType: poolDetails.curveType,
+            poolReserves: {
+              assetAReserve: poolDetails.assetAReserve,
+              assetBReserve: poolDetails.assetBReserve,
+            },
+          };
+        }
+      } catch {
+        // Skip pools that fail simulation
+      }
+    }
+
+    if (!bestResult || bestBtcOut <= 0n) {
+      throw new FlashnetError(
+        "No pool can produce BTC output for the given token amount",
+        {
+          response: {
+            errorCode: "FSAG-4201",
+            errorCategory: "Business",
+            message:
+              "No pool can produce BTC output for the given token amount",
+            requestId: "",
+            timestamp: new Date().toISOString(),
+            service: "sdk",
+            severity: "Error",
+            remediation: "Try a larger token amount.",
+          },
+        }
+      );
+    }
+
+    // Estimate lightning fee from the BTC output
+    let lightningFeeEstimate: number;
+    try {
+      lightningFeeEstimate = await this.getLightningFeeEstimate(invoice);
+    } catch {
+      lightningFeeEstimate = Math.max(
+        5,
+        Math.ceil(Number(bestBtcOut) * 0.0017)
+      );
+    }
+
+    // Check minimum amounts
+    const minAmounts = await this.getEnabledMinAmountsMap();
+    const btcMinAmount = minAmounts.get(BTC_ASSET_PUBKEY.toLowerCase());
+    if (btcMinAmount && bestBtcOut < btcMinAmount) {
+      const msg = `BTC output too small. Minimum is ${btcMinAmount} sats, but swap would produce only ${bestBtcOut} sats.`;
+      throw new FlashnetError(msg, {
+        response: {
+          errorCode: "FSAG-1003",
+          errorCategory: "Validation",
+          message: msg,
+          requestId: "",
+          timestamp: new Date().toISOString(),
+          service: "sdk",
+          severity: "Error",
+          remediation: "Use a larger token amount.",
+        },
+      });
+    }
+
+    return {
+      poolId: bestResult.poolId,
+      tokenAddress: tokenHex,
+      tokenAmountRequired: tokenAmount,
+      btcAmountRequired: bestBtcOut.toString(),
+      invoiceAmountSats: 0,
+      estimatedAmmFee: bestResult.simulation.feePaidAssetIn || "0",
+      estimatedLightningFee: lightningFeeEstimate,
+      btcVariableFeeAdjustment: 0,
+      executionPrice: bestResult.simulation.executionPrice || "0",
+      priceImpactPct: bestResult.simulation.priceImpactPct || "0",
+      tokenIsAssetA: bestResult.tokenIsAssetA,
+      poolReserves: bestResult.poolReserves,
+      warningMessage: bestResult.simulation.warningMessage,
+      curveType: bestResult.curveType,
+      isZeroAmountInvoice: true,
     };
   }
 
@@ -2947,6 +3139,7 @@ export class FlashnetClient {
     const {
       invoice,
       tokenAddress,
+      tokenAmount,
       maxSlippageBps = 500, // 5% default
       maxLightningFeeSats,
       preferSpark = true,
@@ -2965,6 +3158,7 @@ export class FlashnetClient {
         {
           maxSlippageBps,
           integratorFeeRateBps,
+          tokenAmount,
         }
       );
 
@@ -2978,20 +3172,6 @@ export class FlashnetClient {
         ],
         errorPrefix: "Insufficient token balance for Lightning payment: ",
       });
-
-      // Determine if we can pay immediately using existing BTC balance
-      let canPayImmediately = false;
-      if (useExistingBtcBalance) {
-        const invoiceAmountSats = await this.decodeInvoiceAmount(invoice);
-        const effectiveMaxLightningFee =
-          maxLightningFeeSats ?? quote.estimatedLightningFee;
-        const btcNeededForPayment =
-          invoiceAmountSats + effectiveMaxLightningFee;
-
-        // Check if we have enough BTC (don't throw if not, just fall back to waiting)
-        const balance = await this.getBalance();
-        canPayImmediately = balance.balance >= BigInt(btcNeededForPayment);
-      }
 
       // Step 3: Get pool details
       const pool = await this.getPool(quote.poolId);
@@ -3034,7 +3214,18 @@ export class FlashnetClient {
         };
       }
 
-      // Step 5: Wait for the transfer to complete (unless paying immediately with existing BTC)
+      // Step 5: Wait for transfer (skip useExistingBtcBalance for zero-amount invoices)
+      let canPayImmediately = false;
+      if (!quote.isZeroAmountInvoice && useExistingBtcBalance) {
+        const invoiceAmountSats = await this.decodeInvoiceAmount(invoice);
+        const effectiveMaxLightningFee =
+          maxLightningFeeSats ?? quote.estimatedLightningFee;
+        const btcNeededForPayment =
+          invoiceAmountSats + effectiveMaxLightningFee;
+        const balance = await this.getBalance();
+        canPayImmediately = balance.balance >= BigInt(btcNeededForPayment);
+      }
+
       if (!canPayImmediately) {
         const transferComplete = await this.waitForTransferCompletion(
           swapResponse.outboundTransferId,
@@ -3054,20 +3245,49 @@ export class FlashnetClient {
         }
       }
 
-      // Step 6: Calculate Lightning fee limit - use the quoted estimate, not a recalculation
+      // Step 6: Calculate Lightning fee and payment amount
       const effectiveMaxLightningFee =
         maxLightningFeeSats ?? quote.estimatedLightningFee;
+      const btcReceived = swapResponse.amountOut || quote.btcAmountRequired;
 
       // Step 7: Pay the Lightning invoice
-      const btcReceived = swapResponse.amountOut || quote.btcAmountRequired;
       try {
-        const lightningPayment = await (
-          this._wallet as any
-        ).payLightningInvoice({
-          invoice,
-          maxFeeSats: effectiveMaxLightningFee,
-          preferSpark,
-        });
+        let lightningPayment: { id: string };
+        let invoiceAmountPaid: number | undefined;
+
+        if (quote.isZeroAmountInvoice) {
+          // Zero-amount invoice: pay whatever BTC we received minus lightning fee
+          const actualBtc = BigInt(btcReceived);
+          const lnFee = BigInt(effectiveMaxLightningFee);
+          const amountToPay = actualBtc - lnFee;
+
+          if (amountToPay <= 0n) {
+            return {
+              success: false,
+              poolId: quote.poolId,
+              tokenAmountSpent: quote.tokenAmountRequired,
+              btcAmountReceived: btcReceived,
+              swapTransferId: swapResponse.outboundTransferId,
+              ammFeePaid: quote.estimatedAmmFee,
+              error: `BTC received (${btcReceived} sats) is not enough to cover lightning fee (${effectiveMaxLightningFee} sats).`,
+            };
+          }
+
+          invoiceAmountPaid = Number(amountToPay);
+          lightningPayment = await (this._wallet as any).payLightningInvoice({
+            invoice,
+            amountSats: invoiceAmountPaid,
+            maxFeeSats: effectiveMaxLightningFee,
+            preferSpark,
+          });
+        } else {
+          // Standard invoice: pay the specified amount
+          lightningPayment = await (this._wallet as any).payLightningInvoice({
+            invoice,
+            maxFeeSats: effectiveMaxLightningFee,
+            preferSpark,
+          });
+        }
 
         return {
           success: true,
@@ -3078,6 +3298,7 @@ export class FlashnetClient {
           lightningPaymentId: lightningPayment.id,
           ammFeePaid: quote.estimatedAmmFee,
           lightningFeePaid: effectiveMaxLightningFee,
+          invoiceAmountPaid,
         };
       } catch (lightningError) {
         // Lightning payment failed after swap succeeded
@@ -3209,7 +3430,7 @@ export class FlashnetClient {
    */
   private async findBestPoolForTokenToBtc(
     tokenAddress: string,
-    btcAmountNeeded: string,
+    baseBtcNeeded: string,
     integratorFeeRateBps?: number
   ): Promise<{
     poolId: string;
@@ -3223,6 +3444,8 @@ export class FlashnetClient {
       assetBReserve: string;
     };
     warningMessage?: string;
+    btcAmountUsed: string;
+    curveType: string;
   }> {
     const tokenHex = this.toHexTokenIdentifier(tokenAddress);
     const btcHex = BTC_ASSET_PUBKEY;
@@ -3284,8 +3507,8 @@ export class FlashnetClient {
     const btcMinAmount = minAmounts.get(BTC_ASSET_PUBKEY.toLowerCase());
 
     // Check if the BTC amount needed is below the minimum
-    if (btcMinAmount && BigInt(btcAmountNeeded) < btcMinAmount) {
-      const msg = `Invoice amount too small. Minimum ${btcMinAmount} sats required, but invoice only requires ${btcAmountNeeded} sats.`;
+    if (btcMinAmount && BigInt(baseBtcNeeded) < btcMinAmount) {
+      const msg = `Invoice amount too small. Minimum ${btcMinAmount} sats required, but invoice only requires ${baseBtcNeeded} sats.`;
       throw new FlashnetError(msg, {
         response: {
           errorCode: "FSAG-1003",
@@ -3300,9 +3523,19 @@ export class FlashnetClient {
       });
     }
 
+    // Compute V2 masked BTC amount (round up to next multiple of 64 for bit masking)
+    const baseBtc = BigInt(baseBtcNeeded);
+    const BTC_VARIABLE_FEE_BITS = 6n;
+    const BTC_VARIABLE_FEE_MASK = 1n << BTC_VARIABLE_FEE_BITS; // 64
+    const maskedBtc =
+      ((baseBtc + BTC_VARIABLE_FEE_MASK - 1n) / BTC_VARIABLE_FEE_MASK) *
+      BTC_VARIABLE_FEE_MASK;
+
     // Find the best pool (lowest token cost for the required BTC)
     let bestPool: (typeof allPools)[0] | null = null;
     let bestTokenAmount = BigInt(Number.MAX_SAFE_INTEGER);
+    let bestBtcTarget = 0n;
+    let bestCurveType = "";
     let bestSimulation: {
       amountIn: string;
       fee: string;
@@ -3320,62 +3553,99 @@ export class FlashnetClient {
 
     for (const pool of allPools) {
       try {
-        // Get pool details for reserves
+        // Get pool details for reserves and curve type
         const poolDetails = await this.getPool(pool.lpPublicKey);
+        const isV3 = poolDetails.curveType === "V3_CONCENTRATED";
 
-        // Calculate the token amount needed using AMM math
-        const calculation = this.calculateTokenAmountForBtcOutput(
-          btcAmountNeeded,
-          poolDetails.assetAReserve,
-          poolDetails.assetBReserve,
-          poolDetails.lpFeeBps,
-          poolDetails.hostFeeBps,
-          pool.tokenIsAssetA,
-          integratorFeeRateBps
-        );
+        // V3 pools use exact BTC amount, V2 pools use masked amount
+        const btcTarget = isV3 ? baseBtc : maskedBtc;
 
-        const tokenAmount = BigInt(calculation.amountIn);
+        const assetInAddress = pool.tokenIsAssetA
+          ? poolDetails.assetAAddress
+          : poolDetails.assetBAddress;
+        const assetOutAddress = pool.tokenIsAssetA
+          ? poolDetails.assetBAddress
+          : poolDetails.assetAAddress;
 
-        // Check if this is better than our current best
-        if (tokenAmount < bestTokenAmount) {
+        let tokenAmount: bigint;
+        let fee: string;
+        let executionPrice: string;
+        let priceImpactPct: string;
+        let warningMessage: string | undefined;
+
+        if (isV3) {
+          // V3: binary search with simulateSwap
+          const v3Result = await this.findV3TokenAmountForBtcOutput({
+            poolId: pool.lpPublicKey,
+            assetInAddress,
+            assetOutAddress,
+            desiredBtcOut: btcTarget,
+            currentPriceAInB: poolDetails.currentPriceAInB,
+            tokenIsAssetA: pool.tokenIsAssetA,
+            integratorBps: integratorFeeRateBps,
+          });
+
+          tokenAmount = BigInt(v3Result.amountIn);
+          fee = v3Result.totalFee;
+          executionPrice = v3Result.simulation.executionPrice || "0";
+          priceImpactPct = v3Result.simulation.priceImpactPct || "0";
+          warningMessage = v3Result.simulation.warningMessage;
+        } else {
+          // V2: constant product math + simulation verification
+          const calculation = this.calculateTokenAmountForBtcOutput(
+            btcTarget.toString(),
+            poolDetails.assetAReserve,
+            poolDetails.assetBReserve,
+            poolDetails.lpFeeBps,
+            poolDetails.hostFeeBps,
+            pool.tokenIsAssetA,
+            integratorFeeRateBps
+          );
+
+          tokenAmount = BigInt(calculation.amountIn);
+
           // Verify with simulation
           const simulation = await this.simulateSwap({
             poolId: pool.lpPublicKey,
-            assetInAddress: pool.tokenIsAssetA
-              ? poolDetails.assetAAddress
-              : poolDetails.assetBAddress,
-            assetOutAddress: pool.tokenIsAssetA
-              ? poolDetails.assetBAddress
-              : poolDetails.assetAAddress,
+            assetInAddress,
+            assetOutAddress,
             amountIn: calculation.amountIn,
             integratorBps: integratorFeeRateBps,
           });
 
-          // Verify the output is sufficient
-          if (BigInt(simulation.amountOut) >= BigInt(btcAmountNeeded)) {
-            bestPool = pool;
-            bestTokenAmount = tokenAmount;
-            bestSimulation = {
-              amountIn: calculation.amountIn,
-              fee: calculation.totalFee,
-              executionPrice: simulation.executionPrice || "0",
-              priceImpactPct: simulation.priceImpactPct || "0",
-              warningMessage: simulation.warningMessage,
-            };
-          } else {
-            // Simulation output was insufficient
+          if (BigInt(simulation.amountOut) < btcTarget) {
             const btcReserve = pool.tokenIsAssetA
               ? poolDetails.assetBReserve
               : poolDetails.assetAReserve;
             poolErrors.push({
               poolId: pool.lpPublicKey,
-              error: `Simulation output (${simulation.amountOut} sats) < required (${btcAmountNeeded} sats)`,
+              error: `Simulation output (${simulation.amountOut} sats) < required (${btcTarget} sats)`,
               btcReserve,
             });
+            continue;
           }
+
+          fee = calculation.totalFee;
+          executionPrice = simulation.executionPrice || "0";
+          priceImpactPct = simulation.priceImpactPct || "0";
+          warningMessage = simulation.warningMessage;
+        }
+
+        // Check if this pool offers a better rate
+        if (tokenAmount < bestTokenAmount) {
+          bestPool = pool;
+          bestTokenAmount = tokenAmount;
+          bestBtcTarget = btcTarget;
+          bestCurveType = poolDetails.curveType;
+          bestSimulation = {
+            amountIn: tokenAmount.toString(),
+            fee,
+            executionPrice,
+            priceImpactPct,
+            warningMessage,
+          };
         }
       } catch (e) {
-        // Capture pool errors for diagnostics
         const errorMessage = e instanceof Error ? e.message : String(e);
         poolErrors.push({
           poolId: pool.lpPublicKey,
@@ -3385,7 +3655,7 @@ export class FlashnetClient {
     }
 
     if (!bestPool || !bestSimulation) {
-      let errorMessage = `No pool has sufficient liquidity for ${btcAmountNeeded} sats`;
+      let errorMessage = `No pool has sufficient liquidity for ${baseBtcNeeded} sats`;
       if (poolErrors.length > 0) {
         const details = poolErrors
           .map((pe) => {
@@ -3427,6 +3697,8 @@ export class FlashnetClient {
         assetBReserve: poolDetails.assetBReserve,
       },
       warningMessage: bestSimulation.warningMessage,
+      btcAmountUsed: bestBtcTarget.toString(),
+      curveType: bestCurveType,
     };
   }
 
@@ -3532,6 +3804,162 @@ export class FlashnetClient {
         totalFee: totalFee.toString(),
       };
     }
+  }
+
+  /**
+   * Find the token amount needed to get a specific BTC output from a V3 concentrated liquidity pool.
+   * Uses binary search with simulateSwap since V3 tick-based math can't be inverted locally.
+   * @private
+   */
+  private async findV3TokenAmountForBtcOutput(params: {
+    poolId: string;
+    assetInAddress: string;
+    assetOutAddress: string;
+    desiredBtcOut: bigint;
+    currentPriceAInB?: string;
+    tokenIsAssetA: boolean;
+    integratorBps?: number;
+  }): Promise<{
+    amountIn: string;
+    totalFee: string;
+    simulation: SimulateSwapResponse;
+  }> {
+    const {
+      poolId,
+      assetInAddress,
+      assetOutAddress,
+      desiredBtcOut,
+      currentPriceAInB,
+      tokenIsAssetA,
+      integratorBps,
+    } = params;
+
+    // Step 1: Compute initial estimate from pool price
+    let estimate: bigint;
+    if (currentPriceAInB && currentPriceAInB !== "0") {
+      const price = Number(currentPriceAInB);
+      if (tokenIsAssetA) {
+        // priceAInB = how much B (BTC) per 1 A (token), so tokenNeeded = btcOut / price
+        estimate = BigInt(Math.ceil(Number(desiredBtcOut) / price));
+      } else {
+        // priceAInB = how much B (token) per 1 A (BTC), so tokenNeeded = btcOut * price
+        estimate = BigInt(Math.ceil(Number(desiredBtcOut) * price));
+      }
+      // Ensure non-zero
+      if (estimate <= 0n) {
+        estimate = desiredBtcOut * 2n;
+      }
+    } else {
+      estimate = desiredBtcOut * 2n;
+    }
+
+    // Step 2: Find upper bound by simulating with estimate + 10% buffer
+    let upperBound = (estimate * 110n) / 100n;
+    if (upperBound <= 0n) {
+      upperBound = 1n;
+    }
+    let upperSim: SimulateSwapResponse | null = null;
+
+    for (let attempt = 0; attempt < 3; attempt++) {
+      const sim = await this.simulateSwap({
+        poolId,
+        assetInAddress,
+        assetOutAddress,
+        amountIn: upperBound.toString(),
+        integratorBps,
+      });
+
+      if (BigInt(sim.amountOut) >= desiredBtcOut) {
+        upperSim = sim;
+        break;
+      }
+      // Double the upper bound
+      upperBound = upperBound * 2n;
+    }
+
+    if (!upperSim) {
+      throw new Error(
+        `V3 pool ${poolId} has insufficient liquidity for ${desiredBtcOut} sats`
+      );
+    }
+
+    // Step 3: Refine estimate via linear interpolation
+    const upperOut = BigInt(upperSim.amountOut);
+    // Scale proportionally: if upperBound produced upperOut, we need roughly
+    // (upperBound * desiredBtcOut / upperOut). Add +1 to avoid undershoot from truncation.
+    let refined = (upperBound * desiredBtcOut) / upperOut + 1n;
+    if (refined <= 0n) {
+      refined = 1n;
+    }
+
+    let bestAmountIn = upperBound;
+    let bestSim = upperSim;
+
+    // Check if the refined estimate is tighter
+    if (refined < upperBound) {
+      const refinedSim = await this.simulateSwap({
+        poolId,
+        assetInAddress,
+        assetOutAddress,
+        amountIn: refined.toString(),
+        integratorBps,
+      });
+
+      if (BigInt(refinedSim.amountOut) >= desiredBtcOut) {
+        bestAmountIn = refined;
+        bestSim = refinedSim;
+      } else {
+        // Refined estimate was slightly too low. Keep upperBound as best,
+        // and let binary search narrow between refined (too low) and upperBound (sufficient).
+        bestAmountIn = upperBound;
+        bestSim = upperSim;
+      }
+    }
+
+    // Step 4: Binary search to converge on minimum amountIn
+    // Use a tight range: the interpolation is close, so search between 99.5% and 100% of best
+    let lo =
+      bestAmountIn === upperBound
+        ? refined < upperBound
+          ? refined
+          : (bestAmountIn * 99n) / 100n
+        : (bestAmountIn * 999n) / 1000n;
+    if (lo <= 0n) {
+      lo = 1n;
+    }
+    let hi = bestAmountIn;
+
+    for (let i = 0; i < 6; i++) {
+      if (hi - lo <= 1n) {
+        break;
+      }
+
+      const mid = (lo + hi) / 2n;
+      const midSim = await this.simulateSwap({
+        poolId,
+        assetInAddress,
+        assetOutAddress,
+        amountIn: mid.toString(),
+        integratorBps,
+      });
+
+      if (BigInt(midSim.amountOut) >= desiredBtcOut) {
+        hi = mid;
+        bestAmountIn = mid;
+        bestSim = midSim;
+      } else {
+        lo = mid;
+      }
+    }
+
+    // Compute fee from the best simulation
+    const totalFee = bestSim.feePaidAssetIn || "0";
+
+    return {
+      amountIn: bestAmountIn.toString(),
+      totalFee,
+      simulation: bestSim,
+    };
   }
 
   /**
