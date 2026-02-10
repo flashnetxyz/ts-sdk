@@ -726,7 +726,7 @@ export class FlashnetClient {
     /** When true, checks against availableToSendBalance instead of total balance */
     useAvailableBalance?: boolean;
   }): Promise<void> {
-    const balance = await this.getBalance();
+    const balance = params.walletBalance ?? (await this.getBalance());
 
     // Check balance
     const requirements: { btc?: bigint; tokens?: Map<string, bigint> } = {
