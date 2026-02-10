@@ -206,6 +206,8 @@ export interface PayLightningWithTokenOptions {
    * Ignored for invoices with a specified amount.
    */
   tokenAmount?: string;
+  /** When true, checks against availableToSendBalance instead of total balance (default: false) */
+  useAvailableBalance?: boolean;
 }
 
 /**
@@ -717,6 +719,8 @@ export class FlashnetClient {
     }[];
     errorPrefix?: string;
     walletBalance?: WalletBalance;
+    /** When true, checks against availableToSendBalance instead of total balance */
+    useAvailableBalance?: boolean;
   }): Promise<void> {
     const balance = await this.getBalance();
 
@@ -755,7 +759,9 @@ export class FlashnetClient {
         const effectiveTokenBalance =
           balance.tokenBalances.get(tokenPubkey) ??
           balance.tokenBalances.get(hrKey);
-        const available = effectiveTokenBalance?.balance ?? 0n;
+        const available = params.useAvailableBalance
+          ? (effectiveTokenBalance?.availableToSendBalance ?? 0n)
+          : (effectiveTokenBalance?.balance ?? 0n);
 
         if (available < requiredAmount) {
           throw new Error(
@@ -824,6 +830,8 @@ export class FlashnetClient {
       assetAMinAmountIn: bigint;
       assetBMinAmountIn: bigint;
     };
+    /** When true, checks against availableToSendBalance instead of total balance */
+    useAvailableBalance?: boolean;
   }): Promise<CreatePoolResponse> {
     await this.ensureInitialized();
 
@@ -846,6 +854,7 @@ export class FlashnetClient {
           },
         ],
         errorPrefix: "Insufficient balance for initial liquidity: ",
+        useAvailableBalance: params.useAvailableBalance,
       });
     }
 
@@ -1017,6 +1026,8 @@ export class FlashnetClient {
     poolOwnerPublicKey?: string;
     hostNamespace?: string;
     disableInitialDeposit?: boolean;
+    /** When true, checks against availableToSendBalance instead of total balance */
+    useAvailableBalance?: boolean;
   }): Promise<CreatePoolResponse> {
     await this.ensureInitialized();
 
@@ -1053,6 +1064,7 @@ export class FlashnetClient {
         },
       ],
       errorPrefix: "Insufficient balance for pool creation: ",
+      useAvailableBalance: params.useAvailableBalance,
     });
 
     const poolOwnerPublicKey = params.poolOwnerPublicKey ?? this.publicKey;
@@ -1394,6 +1406,8 @@ export class FlashnetClient {
     minAmountOut: string;
     integratorFeeRateBps?: number;
     integratorPublicKey?: string;
+    /** When true, checks against availableToSendBalance instead of total balance */
+    useAvailableBalance?: boolean;
   }): Promise<ExecuteRouteSwapResponse> {
     await this.ensureInitialized();
 
@@ -1436,7 +1450,8 @@ export class FlashnetClient {
         assetAddress: params.initialAssetAddress,
         amount: params.inputAmount,
       },
-      "Insufficient balance for route swap: "
+      "Insufficient balance for route swap: ",
+      params.useAvailableBalance
     );
 
     // Execute with auto-clawback on failure
@@ -1562,6 +1577,8 @@ export class FlashnetClient {
     assetBAmount: string;
     assetAMinAmountIn: string;
     assetBMinAmountIn: string;
+    /** When true, checks against availableToSendBalance instead of total balance */
+    useAvailableBalance?: boolean;
   }): Promise<AddLiquidityResponse> {
     await this.ensureInitialized();
 
@@ -1596,7 +1613,8 @@ export class FlashnetClient {
           amount: params.assetBAmount,
         },
       ],
-      "Insufficient balance for adding liquidity: "
+      "Insufficient balance for adding liquidity: ",
+      params.useAvailableBalance
     );
 
     // Execute with auto-clawback on failure
@@ -1968,6 +1986,8 @@ export class FlashnetClient {
     abandonHost?: string;
     abandonConditions?: Condition[];
     autoFund?: boolean;
+    /** When true, checks against availableToSendBalance instead of total balance */
+    useAvailableBalance?: boolean;
   }): Promise<CreateEscrowResponse | FundEscrowResponse> {
     await this.ensureInitialized();
     await this.ensurePingOk();
@@ -2023,6 +2043,7 @@ export class FlashnetClient {
       depositAddress: createResponse.depositAddress,
       assetId: params.assetId,
       assetAmount: params.assetAmount,
+      useAvailableBalance: params.useAvailableBalance,
     });
   }
 
@@ -2037,6 +2058,8 @@ export class FlashnetClient {
     depositAddress: string;
     assetId: string;
     assetAmount: string;
+    /** When true, checks against availableToSendBalance instead of total balance */
+    useAvailableBalance?: boolean;
   }): Promise<FundEscrowResponse> {
     await this.ensureInitialized();
     await this.ensurePingOk();
@@ -2047,6 +2070,7 @@ export class FlashnetClient {
         { assetAddress: params.assetId, amount: params.assetAmount },
       ],
       errorPrefix: "Insufficient balance to fund escrow: ",
+      useAvailableBalance: params.useAvailableBalance,
     });
 
     // 2. Perform transfer
@@ -2691,11 +2715,13 @@ export class FlashnetClient {
    */
   async transferAsset(
     recipient: TransferAssetRecipient,
-    checkBalanceErrorPrefix?: string
+    checkBalanceErrorPrefix?: string,
+    useAvailableBalance?: boolean
   ): Promise<string> {
     const transferIds = await this.transferAssets<1>(
       [recipient],
-      checkBalanceErrorPrefix
+      checkBalanceErrorPrefix,
+      useAvailableBalance
     );
     return transferIds[0];
   }
@@ -2706,12 +2732,14 @@ export class FlashnetClient {
    */
   async transferAssets<N extends number | unknown = unknown>(
     recipients: TupleArray<TransferAssetRecipient, N>,
-    checkBalanceErrorPrefix?: string
+    checkBalanceErrorPrefix?: string,
+    useAvailableBalance?: boolean
   ): Promise<TupleArray<string, N>> {
     if (checkBalanceErrorPrefix) {
       await this.checkBalance({
         balancesToCheck: recipients,
         errorPrefix: checkBalanceErrorPrefix,
+        useAvailableBalance,
       });
     }
 
@@ -3152,6 +3180,7 @@ export class FlashnetClient {
       transferTimeoutMs = 30000, // 30s default
       rollbackOnFailure = false,
       useExistingBtcBalance = false,
+      useAvailableBalance = false,
     } = options;
 
     try {
@@ -3175,6 +3204,7 @@ export class FlashnetClient {
           },
         ],
         errorPrefix: "Insufficient token balance for Lightning payment: ",
+        useAvailableBalance,
       });
 
       // Step 3: Get pool details
@@ -3204,6 +3234,7 @@ export class FlashnetClient {
         minAmountOut: minBtcOut,
         integratorFeeRateBps,
         integratorPublicKey,
+        useAvailableBalance,
       });
 
       if (!swapResponse.accepted || !swapResponse.outboundTransferId) {
@@ -4503,6 +4534,8 @@ ${relaxed.toString()} (50% relaxed), provided minAmountOut ${minAmountOut.toStri
     amountBMin: string;
     useFreeBalance?: boolean;
     retainExcessInBalance?: boolean;
+    /** When true, checks against availableToSendBalance instead of total balance */
+    useAvailableBalance?: boolean;
   }): Promise<IncreaseLiquidityResponse> {
     await this.ensureInitialized();
 
@@ -4530,7 +4563,8 @@ ${relaxed.toString()} (50% relaxed), provided minAmountOut ${minAmountOut.toStri
             assetAddress: pool.assetAAddress,
             amount: params.amountADesired,
           },
-          "Insufficient balance for adding V3 liquidity (Asset A): "
+          "Insufficient balance for adding V3 liquidity (Asset A): ",
+          params.useAvailableBalance
         );
         transferIds.push(assetATransferId);
       }
@@ -4542,7 +4576,8 @@ ${relaxed.toString()} (50% relaxed), provided minAmountOut ${minAmountOut.toStri
             assetAddress: pool.assetBAddress,
             amount: params.amountBDesired,
           },
-          "Insufficient balance for adding V3 liquidity (Asset B): "
+          "Insufficient balance for adding V3 liquidity (Asset B): ",
+          params.useAvailableBalance
         );
         transferIds.push(assetBTransferId);
       }
@@ -4782,6 +4817,8 @@ ${relaxed.toString()} (50% relaxed), provided minAmountOut ${minAmountOut.toStri
     additionalAmountA?: string;
     additionalAmountB?: string;
     retainInBalance?: boolean;
+    /** When true, checks against availableToSendBalance instead of total balance */
+    useAvailableBalance?: boolean;
   }): Promise<RebalancePositionResponse> {
     await this.ensureInitialized();
 
@@ -4806,7 +4843,8 @@ ${relaxed.toString()} (50% relaxed), provided minAmountOut ${minAmountOut.toStri
           assetAddress: pool.assetAAddress,
           amount: params.additionalAmountA,
         },
-        "Insufficient balance for rebalance (Asset A): "
+        "Insufficient balance for rebalance (Asset A): ",
+        params.useAvailableBalance
       );
     }
 
@@ -4817,7 +4855,8 @@ ${relaxed.toString()} (50% relaxed), provided minAmountOut ${minAmountOut.toStri
           assetAddress: pool.assetBAddress,
           amount: params.additionalAmountB,
         },
-        "Insufficient balance for rebalance (Asset B): "
+        "Insufficient balance for rebalance (Asset B): ",
+        params.useAvailableBalance
       );
     }
 
@@ -5042,6 +5081,8 @@ ${relaxed.toString()} (50% relaxed), provided minAmountOut ${minAmountOut.toStri
     poolId: string;
     amountA: string;
     amountB: string;
+    /** When true, checks against availableToSendBalance instead of total balance */
+    useAvailableBalance?: boolean;
   }): Promise<DepositBalanceResponse> {
     await this.ensureInitialized();
 
@@ -5065,7 +5106,8 @@ ${relaxed.toString()} (50% relaxed), provided minAmountOut ${minAmountOut.toStri
           assetAddress: pool.assetAAddress,
           amount: params.amountA,
         },
-        "Insufficient balance for depositing to V3 pool (Asset A): "
+        "Insufficient balance for depositing to V3 pool (Asset A): ",
+        params.useAvailableBalance
       );
       transferIds.push(assetATransferId);
     }
@@ -5077,7 +5119,8 @@ ${relaxed.toString()} (50% relaxed), provided minAmountOut ${minAmountOut.toStri
           assetAddress: pool.assetBAddress,
           amount: params.amountB,
         },
-        "Insufficient balance for depositing to V3 pool (Asset B): "
+        "Insufficient balance for depositing to V3 pool (Asset B): ",
+        params.useAvailableBalance
       );
       transferIds.push(assetBTransferId);
     }
