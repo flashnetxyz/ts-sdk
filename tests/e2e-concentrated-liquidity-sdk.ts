@@ -285,10 +285,10 @@ async function main(): Promise<void> {
 
   logKV("Token address (Bech32m)", tokenAddressBech32);
   logKV("Token identifier (hex)", tokenIdentifierHex);
-  logKV("Token balance", tokenEntry[1].balance.toString());
+  logKV("Token balance", tokenEntry[1].ownedBalance.toString());
   logKV(
     "Token balance (USDB)",
-    (Number(tokenEntry[1].balance) / 1e6).toFixed(2)
+    (Number(tokenEntry[1].ownedBalance) / 1e6).toFixed(2)
   );
 
   logSection("5. Create V3 Concentrated Liquidity Pool (BTC/USDB)");
@@ -953,8 +953,8 @@ async function main(): Promise<void> {
 
   if (finalBalance.tokenBalances) {
     for (const [addr, info] of finalBalance.tokenBalances) {
-      const usdbValue = Number(info.balance) / 1e6;
-      logKV(`Token ${addr}`, `${info.balance} (${usdbValue.toFixed(2)} USDB)`);
+      const usdbValue = Number(info.ownedBalance) / 1e6;
+      logKV(`Token ${addr}`, `${info.ownedBalance} (${usdbValue.toFixed(2)} USDB)`);
     }
   }
 

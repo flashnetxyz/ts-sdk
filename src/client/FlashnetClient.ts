@@ -152,7 +152,10 @@ import {
 } from "../utils/tokenAddress";
 
 export interface TokenBalance {
+  /** Total token balance owned (includes locked/pending) */
   balance: bigint;
+  /** Token balance available to send (excludes locked/pending) */
+  availableToSendBalance: bigint;
   tokenInfo?: {
     tokenIdentifier: string;
     tokenAddress: string;
@@ -684,7 +687,8 @@ export class FlashnetClient {
         );
 
         tokenBalances.set(tokenPubkey, {
-          balance: BigInt(tokenData.balance),
+          balance: BigInt(tokenData.ownedBalance),
+          availableToSendBalance: BigInt(tokenData.availableToSendBalance),
           tokenInfo: {
             tokenIdentifier: tokenIdentifierHex,
             tokenAddress,
