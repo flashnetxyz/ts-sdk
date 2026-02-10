@@ -1246,10 +1246,14 @@ export class FlashnetClient {
 
     // If using free balance (V3 pools only), skip the Spark transfer
     if (params.useFreeBalance) {
-      return this.executeSwapIntent({
+      const swapResponse = await this.executeSwapIntent({
         ...params,
         // No transferId - triggers free balance mode
       });
+      return {
+        ...swapResponse,
+        inboundSparkTransferId: "00000000-0000-0000-0000-000000000000",
+      };
     }
 
     // Transfer assets to pool using new address encoding
