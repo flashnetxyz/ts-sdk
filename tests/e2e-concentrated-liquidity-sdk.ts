@@ -596,8 +596,6 @@ async function main(): Promise<void> {
     poolId: POOL_ID,
     amountA: "0", // No USDB deposit
     amountB: depositAmountBtc, // Deposit BTC
-    assetASparkTransferId: "", // Empty for no asset A
-    assetBSparkTransferId: sparkTransferId, // Transfer ID for BTC
   });
   const t_dep2 = Date.now();
 
