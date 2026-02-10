@@ -224,7 +224,7 @@ export interface PayLightningWithTokenResult {
   btcAmountReceived: string;
   /** Swap transaction ID */
   swapTransferId: string;
-  /** Lightning payment ID */
+  /** Lightning payment SSP request ID (e.g. SparkLightningSendRequest:...) */
   lightningPaymentId?: string;
   /** AMM fee paid in token units */
   ammFeePaid: string;
@@ -232,6 +232,10 @@ export interface PayLightningWithTokenResult {
   lightningFeePaid?: number;
   /** For zero-amount invoices: BTC amount actually paid to the invoice */
   invoiceAmountPaid?: number;
+  /** Spark transfer ID for the token transfer to the pool (visible on Sparkscan) */
+  sparkTokenTransferId?: string;
+  /** Spark transfer ID for the Lightning payment (visible on Sparkscan) */
+  sparkLightningTransferId?: string;
   /** Error message if failed */
   error?: string;
 }
@@ -1226,7 +1230,9 @@ export class FlashnetClient {
     integratorPublicKey?: string;
     /** When true, uses free balance from V3 pool instead of making a Spark transfer */
     useFreeBalance?: boolean;
-  }): Promise<SwapResponse> {
+    /** When true, checks against availableToSendBalance instead of total balance */
+    useAvailableBalance?: boolean;
+  }): Promise<SwapResponse & { inboundSparkTransferId?: string }> {
     await this.ensureInitialized();
 
     // Gate by feature flags and ping, and enforce min-amount policy before transfers
@@ -1258,11 +1264,12 @@ export class FlashnetClient {
         assetAddress: params.assetInAddress,
         amount: params.amountIn,
       },
-      "Insufficient balance for swap: "
+      "Insufficient balance for swap: ",
+      params.useAvailableBalance
     );
 
     // Execute with auto-clawback on failure
-    return this.executeWithAutoClawback(
+    const swapResponse = await this.executeWithAutoClawback(
       () =>
         this.executeSwapIntent({
           ...params,
@@ -1271,6 +1278,8 @@ export class FlashnetClient {
       [transferId],
       params.poolId
     );
+
+    return { ...swapResponse, inboundSparkTransferId: transferId };
   }
 
   /**
@@ -3245,6 +3254,7 @@ export class FlashnetClient {
           btcAmountReceived: "0",
           swapTransferId: swapResponse.outboundTransferId || "",
           ammFeePaid: quote.estimatedAmmFee,
+          sparkTokenTransferId: swapResponse.inboundSparkTransferId,
           error: swapResponse.error || "Swap was not accepted",
         };
       }
@@ -3275,6 +3285,7 @@ export class FlashnetClient {
             btcAmountReceived: swapResponse.amountOut || "0",
             swapTransferId: swapResponse.outboundTransferId,
             ammFeePaid: quote.estimatedAmmFee,
+            sparkTokenTransferId: swapResponse.inboundSparkTransferId,
             error: "Transfer did not complete within timeout",
           };
         }
@@ -3304,6 +3315,7 @@ export class FlashnetClient {
               btcAmountReceived: btcReceived,
               swapTransferId: swapResponse.outboundTransferId,
               ammFeePaid: quote.estimatedAmmFee,
+              sparkTokenTransferId: swapResponse.inboundSparkTransferId,
               error: `BTC received (${btcReceived} sats) is not enough to cover lightning fee (${effectiveMaxLightningFee} sats).`,
             };
           }
@@ -3324,6 +3336,15 @@ export class FlashnetClient {
           });
         }
 
+        // Extract the Spark transfer ID from the lightning payment result.
+        // payLightningInvoice returns LightningSendRequest | WalletTransfer:
+        //   - LightningSendRequest has .transfer?.sparkId (the Sparkscan-visible transfer ID)
+        //   - WalletTransfer (Spark-to-Spark) has .id directly as the transfer ID
+        // Note: lightningPayment.id (the SSP request ID) is already returned as lightningPaymentId
+        const sparkLightningTransferId: string | undefined = (
+          lightningPayment as any
+        ).transfer?.sparkId;
+
         return {
           success: true,
           poolId: quote.poolId,
@@ -3334,6 +3355,8 @@ export class FlashnetClient {
           ammFeePaid: quote.estimatedAmmFee,
           lightningFeePaid: effectiveMaxLightningFee,
           invoiceAmountPaid,
+          sparkTokenTransferId: swapResponse.inboundSparkTransferId,
+          sparkLightningTransferId,
         };
       } catch (lightningError) {
         // Lightning payment failed after swap succeeded
@@ -3360,6 +3383,7 @@ export class FlashnetClient {
                 btcAmountReceived: "0",
                 swapTransferId: swapResponse.outboundTransferId,
                 ammFeePaid: quote.estimatedAmmFee,
+                sparkTokenTransferId: swapResponse.inboundSparkTransferId,
                 error: `Lightning payment failed: ${lightningErrorMessage}. Funds rolled back to ${rollbackResult.tokenAmount} tokens.`,
               };
             }
@@ -3375,6 +3399,7 @@ export class FlashnetClient {
               btcAmountReceived: btcReceived,
               swapTransferId: swapResponse.outboundTransferId,
               ammFeePaid: quote.estimatedAmmFee,
+              sparkTokenTransferId: swapResponse.inboundSparkTransferId,
               error: `Lightning payment failed: ${lightningErrorMessage}. Rollback also failed: ${rollbackErrorMessage}. BTC remains in wallet.`,
             };
           }
@@ -3387,6 +3412,7 @@ export class FlashnetClient {
           btcAmountReceived: btcReceived,
           swapTransferId: swapResponse.outboundTransferId,
           ammFeePaid: quote.estimatedAmmFee,
+          sparkTokenTransferId: swapResponse.inboundSparkTransferId,
           error: `Lightning payment failed: ${lightningErrorMessage}. BTC (${btcReceived} sats) remains in wallet.`,
         };
       }
