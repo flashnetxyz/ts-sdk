@@ -232,9 +232,9 @@ export interface PayLightningWithTokenResult {
   lightningFeePaid?: number;
   /** For zero-amount invoices: BTC amount actually paid to the invoice */
   invoiceAmountPaid?: number;
-  /** Spark transfer ID for the token transfer to the pool (visible on Sparkscan) */
+  /** Spark transfer ID for the token transfer to the pool */
   sparkTokenTransferId?: string;
-  /** Spark transfer ID for the Lightning payment (visible on Sparkscan) */
+  /** Spark transfer ID for the Lightning payment */
   sparkLightningTransferId?: string;
   /** Error message if failed */
   error?: string;
