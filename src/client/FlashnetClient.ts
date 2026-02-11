@@ -693,8 +693,8 @@ export class FlashnetClient {
         );
 
         tokenBalances.set(tokenPubkey, {
-          balance: BigInt(tokenData.ownedBalance),
-          availableToSendBalance: BigInt(tokenData.availableToSendBalance),
+          balance: BigInt(tokenData.ownedBalance ?? "0"),
+          availableToSendBalance: BigInt(tokenData.availableToSendBalance ?? "0"),
           tokenInfo: {
             tokenIdentifier: tokenIdentifierHex,
             tokenAddress,
@@ -708,7 +708,7 @@ export class FlashnetClient {
     }
 
     return {
-      balance: BigInt(balance.balance),
+      balance: BigInt(balance.balance ?? 0),
       tokenBalances,
     };
   }
@@ -2769,7 +2769,7 @@ export class FlashnetClient {
           tokenIdentifier: this.toHumanReadableTokenIdentifier(
             recipient.assetAddress
           ) as any,
-          tokenAmount: BigInt(recipient.amount),
+          tokenAmount: BigInt(recipient.amount ?? "0"),
           receiverSparkAddress: recipient.receiverSparkAddress,
         });
         transferIds.push(transferId);
@@ -3082,7 +3082,7 @@ export class FlashnetClient {
           integratorBps: options?.integratorFeeRateBps,
         });
 
-        const btcOut = BigInt(simulation.amountOut);
+        const btcOut = BigInt(simulation.amountOut ?? "0");
         if (btcOut > bestBtcOut) {
           bestBtcOut = btcOut;
           bestResult = {
@@ -3307,8 +3307,8 @@ export class FlashnetClient {
 
         if (quote.isZeroAmountInvoice) {
           // Zero-amount invoice: pay whatever BTC we received minus lightning fee
-          const actualBtc = BigInt(btcReceived);
-          const lnFee = BigInt(effectiveMaxLightningFee);
+          const actualBtc = BigInt(btcReceived ?? "0");
+          const lnFee = BigInt(effectiveMaxLightningFee ?? 0);
           const amountToPay = actualBtc - lnFee;
 
           if (amountToPay <= 0n) {
@@ -4292,6 +4292,9 @@ export class FlashnetClient {
     const map = new Map<string, bigint>();
     for (const item of config) {
       if (item.enabled) {
+        if (item.min_amount == null) {
+          continue;
+        }
         const key = item.asset_identifier.toLowerCase();
         const value = BigInt(String(item.min_amount));
         map.set(key, value);
@@ -4324,8 +4327,8 @@ export class FlashnetClient {
     const minIn = minMap.get(inHex);
     const minOut = minMap.get(outHex);
 
-    const amountIn = BigInt(String(params.amountIn));
-    const minAmountOut = BigInt(String(params.minAmountOut));
+    const amountIn = BigInt(String(params.amountIn ?? "0"));
+    const minAmountOut = BigInt(String(params.minAmountOut ?? "0"));
 
     if (minIn && minOut) {
       if (amountIn < minIn) {
@@ -4375,7 +4378,7 @@ ${relaxed.toString()} (50% relaxed), provided minAmountOut ${minAmountOut.toStri
     const bMin = minMap.get(bHex);
 
     if (aMin) {
-      const aAmt = BigInt(String(params.assetAAmount));
+      const aAmt = BigInt(String(params.assetAAmount ?? "0"));
       if (aAmt < aMin) {
         throw new Error(
           `Minimum amount not met for Asset A. Required ${aMin.toString()}, provided ${aAmt.toString()}`
@@ -4384,7 +4387,7 @@ ${relaxed.toString()} (50% relaxed), provided minAmountOut ${minAmountOut.toStri
     }
 
     if (bMin) {
-      const bAmt = BigInt(String(params.assetBAmount));
+      const bAmt = BigInt(String(params.assetBAmount ?? "0"));
       if (bAmt < bMin) {
         throw new Error(
           `Minimum amount not met for Asset B. Required ${bMin.toString()}, provided ${bAmt.toString()}`
@@ -4415,7 +4418,7 @@ ${relaxed.toString()} (50% relaxed), provided minAmountOut ${minAmountOut.toStri
     const bMin = minMap.get(bHex);
 
     if (aMin) {
-      const predictedAOut = BigInt(String(simulation.assetAAmount));
+      const predictedAOut = BigInt(String(simulation.assetAAmount ?? "0"));
       const relaxedA = aMin / 2n; // apply 50% relaxation for outputs
       if (predictedAOut < relaxedA) {
         throw new Error(
@@ -4425,7 +4428,7 @@ ${relaxed.toString()} (50% relaxed), provided minAmountOut ${minAmountOut.toStri
     }
 
     if (bMin) {
-      const predictedBOut = BigInt(String(simulation.assetBAmount));
+      const predictedBOut = BigInt(String(simulation.assetBAmount ?? "0"));
       const relaxedB = bMin / 2n;
       if (predictedBOut < relaxedB) {
         throw new Error(

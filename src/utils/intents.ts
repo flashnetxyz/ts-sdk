@@ -158,10 +158,10 @@ export function generateAddLiquidityIntentMessage(
     lpIdentityPublicKey: params.lpIdentityPublicKey,
     assetASparkTransferId: params.assetASparkTransferId,
     assetBSparkTransferId: params.assetBSparkTransferId,
-    assetAAmount: BigInt(params.assetAAmount).toString(),
-    assetBAmount: BigInt(params.assetBAmount).toString(),
-    assetAMinAmountIn: BigInt(params.assetAMinAmountIn).toString(),
-    assetBMinAmountIn: BigInt(params.assetBMinAmountIn).toString(),
+    assetAAmount: BigInt(params.assetAAmount ?? "0").toString(),
+    assetBAmount: BigInt(params.assetBAmount ?? "0").toString(),
+    assetAMinAmountIn: BigInt(params.assetAMinAmountIn ?? "0").toString(),
+    assetBMinAmountIn: BigInt(params.assetBMinAmountIn ?? "0").toString(),
     nonce: params.nonce,
   };
 
