@@ -22,6 +22,7 @@ import type {
   ValidateRouteSwapData,
   ValidateWithdrawBalanceData,
 } from "../types";
+import { safeBigInt } from "./bigint";
 
 /**
  * Generates a pool initialization intent message
@@ -158,10 +159,10 @@ export function generateAddLiquidityIntentMessage(
     lpIdentityPublicKey: params.lpIdentityPublicKey,
     assetASparkTransferId: params.assetASparkTransferId,
     assetBSparkTransferId: params.assetBSparkTransferId,
-    assetAAmount: BigInt(params.assetAAmount ?? "0").toString(),
-    assetBAmount: BigInt(params.assetBAmount ?? "0").toString(),
-    assetAMinAmountIn: BigInt(params.assetAMinAmountIn ?? "0").toString(),
-    assetBMinAmountIn: BigInt(params.assetBMinAmountIn ?? "0").toString(),
+    assetAAmount: safeBigInt(params.assetAAmount).toString(),
+    assetBAmount: safeBigInt(params.assetBAmount).toString(),
+    assetAMinAmountIn: safeBigInt(params.assetAMinAmountIn).toString(),
+    assetBMinAmountIn: safeBigInt(params.assetBMinAmountIn).toString(),
     nonce: params.nonce,
   };
 
