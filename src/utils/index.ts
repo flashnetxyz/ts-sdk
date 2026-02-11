@@ -78,3 +78,6 @@ export function compareDecimalStrings(a: string, b: string): number {
 
 // Export the createWalletSigner utility
 export { createWalletSigner } from "../utils/signer";
+
+// Re-export safeBigInt from dedicated module
+export { safeBigInt } from "./bigint";
