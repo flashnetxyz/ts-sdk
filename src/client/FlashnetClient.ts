@@ -693,8 +693,10 @@ export class FlashnetClient {
         );
 
         tokenBalances.set(tokenPubkey, {
-          balance: BigInt(tokenData.ownedBalance ?? "0"),
-          availableToSendBalance: BigInt(tokenData.availableToSendBalance ?? "0"),
+          balance: FlashnetClient.safeBigInt(tokenData.ownedBalance),
+          availableToSendBalance: FlashnetClient.safeBigInt(
+            tokenData.availableToSendBalance
+          ),
           tokenInfo: {
             tokenIdentifier: tokenIdentifierHex,
             tokenAddress,
@@ -708,7 +710,7 @@ export class FlashnetClient {
     }
 
     return {
-      balance: BigInt(balance.balance ?? 0),
+      balance: FlashnetClient.safeBigInt(balance.balance),
       tokenBalances,
     };
   }
@@ -735,9 +737,12 @@ export class FlashnetClient {
 
     for (const balance of params.balancesToCheck) {
       if (balance.assetAddress === BTC_ASSET_PUBKEY) {
-        requirements.btc = BigInt(balance.amount);
+        requirements.btc = FlashnetClient.safeBigInt(balance.amount);
       } else {
-        requirements.tokens?.set(balance.assetAddress, BigInt(balance.amount));
+        requirements.tokens?.set(
+          balance.assetAddress,
+          FlashnetClient.safeBigInt(balance.amount)
+        );
       }
     }
 
@@ -998,7 +1003,9 @@ export class FlashnetClient {
       params.targetRaise,
       "Target raise"
     );
-    const graduationThresholdPct = BigInt(params.graduationThresholdPct);
+    const graduationThresholdPct = FlashnetClient.safeBigInt(
+      params.graduationThresholdPct
+    );
 
     // Align bounds with Rust AMM (20%..95%), then check feasibility for g=1 (requires >50%).
     const MIN_PCT = 20n;
@@ -2792,7 +2799,7 @@ export class FlashnetClient {
           tokenIdentifier: this.toHumanReadableTokenIdentifier(
             recipient.assetAddress
           ) as any,
-          tokenAmount: BigInt(recipient.amount ?? "0"),
+          tokenAmount: FlashnetClient.safeBigInt(recipient.amount),
           receiverSparkAddress: recipient.receiverSparkAddress,
         });
         transferIds.push(transferId);
@@ -2943,7 +2950,8 @@ export class FlashnetClient {
     // Total BTC needed = invoice amount + lightning fee (unmasked).
     // Bitmasking for V2 pools is handled inside findBestPoolForTokenToBtc.
     const baseBtcNeeded =
-      BigInt(invoiceAmountSats) + BigInt(lightningFeeEstimate);
+      FlashnetClient.safeBigInt(invoiceAmountSats) +
+      FlashnetClient.safeBigInt(lightningFeeEstimate);
 
     // Check Flashnet minimum amounts early to provide clear error messages
     const minAmounts = await this.getEnabledMinAmountsMap();
@@ -2979,7 +2987,7 @@ export class FlashnetClient {
     const tokenMinAmount = minAmounts.get(tokenHex);
     if (
       tokenMinAmount &&
-      BigInt(poolQuote.tokenAmountRequired) < tokenMinAmount
+      FlashnetClient.safeBigInt(poolQuote.tokenAmountRequired) < tokenMinAmount
     ) {
       const msg = `Token amount too small. Minimum input is ${tokenMinAmount} units, but calculated amount is only ${poolQuote.tokenAmountRequired} units.`;
       throw new FlashnetError(msg, {
@@ -2999,7 +3007,7 @@ export class FlashnetClient {
     // BTC variable fee adjustment: difference between what the pool targets and unmasked base.
     // For V3 pools this is 0 (no masking). For V2 it's the rounding overhead.
     const btcVariableFeeAdjustment = Number(
-      BigInt(poolQuote.btcAmountUsed) - baseBtcNeeded
+      FlashnetClient.safeBigInt(poolQuote.btcAmountUsed) - baseBtcNeeded
     );
 
     return {
@@ -3105,7 +3113,7 @@ export class FlashnetClient {
           integratorBps: options?.integratorFeeRateBps,
         });
 
-        const btcOut = BigInt(simulation.amountOut ?? "0");
+        const btcOut = FlashnetClient.safeBigInt(simulation.amountOut);
         if (btcOut > bestBtcOut) {
           bestBtcOut = btcOut;
           bestResult = {
@@ -3295,7 +3303,8 @@ export class FlashnetClient {
         const btcNeededForPayment =
           invoiceAmountSats + effectiveMaxLightningFee;
         const balance = await this.getBalance();
-        canPayImmediately = balance.balance >= BigInt(btcNeededForPayment);
+        canPayImmediately =
+          balance.balance >= FlashnetClient.safeBigInt(btcNeededForPayment);
       }
 
       if (!canPayImmediately) {
@@ -3330,8 +3339,8 @@ export class FlashnetClient {
 
         if (quote.isZeroAmountInvoice) {
           // Zero-amount invoice: pay whatever BTC we received minus lightning fee
-          const actualBtc = BigInt(btcReceived ?? "0");
-          const lnFee = BigInt(effectiveMaxLightningFee ?? 0);
+          const actualBtc = FlashnetClient.safeBigInt(btcReceived);
+          const lnFee = FlashnetClient.safeBigInt(effectiveMaxLightningFee);
           const amountToPay = actualBtc - lnFee;
 
           if (amountToPay <= 0n) {
@@ -3673,7 +3682,7 @@ export class FlashnetClient {
             integratorBps: integratorFeeRateBps,
           });
 
-          tokenAmount = BigInt(v3Result.amountIn);
+          tokenAmount = FlashnetClient.safeBigInt(v3Result.amountIn);
           fee = v3Result.totalFee;
           executionPrice = v3Result.simulation.executionPrice || "0";
           priceImpactPct = v3Result.simulation.priceImpactPct || "0";
@@ -3690,7 +3699,7 @@ export class FlashnetClient {
             integratorFeeRateBps
           );
 
-          tokenAmount = BigInt(calculation.amountIn);
+          tokenAmount = FlashnetClient.safeBigInt(calculation.amountIn);
 
           // Verify with simulation
           const simulation = await this.simulateSwap({
@@ -3701,7 +3710,7 @@ export class FlashnetClient {
             integratorBps: integratorFeeRateBps,
           });
 
-          if (BigInt(simulation.amountOut) < btcTarget) {
+          if (FlashnetClient.safeBigInt(simulation.amountOut) < btcTarget) {
             const btcReserve = pool.tokenIsAssetA
               ? poolDetails.assetBReserve
               : poolDetails.assetAReserve;
@@ -3804,9 +3813,9 @@ export class FlashnetClient {
     tokenIsAssetA: boolean,
     integratorFeeBps?: number
   ): { amountIn: string; totalFee: string } {
-    const amountOut = BigInt(btcAmountOut);
-    const resA = BigInt(reserveA);
-    const resB = BigInt(reserveB);
+    const amountOut = FlashnetClient.safeBigInt(btcAmountOut);
+    const resA = FlashnetClient.safeBigInt(reserveA);
+    const resB = FlashnetClient.safeBigInt(reserveB);
     const totalFeeBps = lpFeeBps + hostFeeBps + (integratorFeeBps || 0);
     const feeRate = Number(totalFeeBps) / 10000; // Convert bps to decimal
 
@@ -3957,7 +3966,7 @@ export class FlashnetClient {
         integratorBps,
       });
 
-      if (BigInt(sim.amountOut) >= desiredBtcOut) {
+      if (FlashnetClient.safeBigInt(sim.amountOut) >= desiredBtcOut) {
         upperSim = sim;
         break;
       }
@@ -3972,7 +3981,7 @@ export class FlashnetClient {
     }
 
     // Step 3: Refine estimate via linear interpolation
-    const upperOut = BigInt(upperSim.amountOut);
+    const upperOut = FlashnetClient.safeBigInt(upperSim.amountOut);
     // Scale proportionally: if upperBound produced upperOut, we need roughly
     // (upperBound * desiredBtcOut / upperOut). Add +1 to avoid undershoot from truncation.
     let refined = (upperBound * desiredBtcOut) / upperOut + 1n;
@@ -3993,7 +4002,7 @@ export class FlashnetClient {
         integratorBps,
       });
 
-      if (BigInt(refinedSim.amountOut) >= desiredBtcOut) {
+      if (FlashnetClient.safeBigInt(refinedSim.amountOut) >= desiredBtcOut) {
         bestAmountIn = refined;
         bestSim = refinedSim;
       } else {
@@ -4031,7 +4040,7 @@ export class FlashnetClient {
         integratorBps,
       });
 
-      if (BigInt(midSim.amountOut) >= desiredBtcOut) {
+      if (FlashnetClient.safeBigInt(midSim.amountOut) >= desiredBtcOut) {
         hi = mid;
         bestAmountIn = mid;
         bestSim = midSim;
@@ -4058,7 +4067,7 @@ export class FlashnetClient {
     expectedAmount: string,
     slippageBps: number
   ): string {
-    const amount = BigInt(expectedAmount);
+    const amount = FlashnetClient.safeBigInt(expectedAmount);
     const slippageFactor = BigInt(10000 - slippageBps);
     const minAmount = (amount * slippageFactor) / 10000n;
     return minAmount.toString();
@@ -4319,7 +4328,7 @@ export class FlashnetClient {
           continue;
         }
         const key = item.asset_identifier.toLowerCase();
-        const value = BigInt(String(item.min_amount));
+        const value = FlashnetClient.safeBigInt(item.min_amount);
         map.set(key, value);
       }
     }
@@ -4350,8 +4359,8 @@ export class FlashnetClient {
     const minIn = minMap.get(inHex);
     const minOut = minMap.get(outHex);
 
-    const amountIn = BigInt(String(params.amountIn ?? "0"));
-    const minAmountOut = BigInt(String(params.minAmountOut ?? "0"));
+    const amountIn = FlashnetClient.safeBigInt(params.amountIn);
+    const minAmountOut = FlashnetClient.safeBigInt(params.minAmountOut);
 
     if (minIn && minOut) {
       if (amountIn < minIn) {
@@ -4401,7 +4410,7 @@ ${relaxed.toString()} (50% relaxed), provided minAmountOut ${minAmountOut.toStri
     const bMin = minMap.get(bHex);
 
     if (aMin) {
-      const aAmt = BigInt(String(params.assetAAmount ?? "0"));
+      const aAmt = FlashnetClient.safeBigInt(params.assetAAmount);
       if (aAmt < aMin) {
         throw new Error(
           `Minimum amount not met for Asset A. Required ${aMin.toString()}, provided ${aAmt.toString()}`
@@ -4410,7 +4419,7 @@ ${relaxed.toString()} (50% relaxed), provided minAmountOut ${minAmountOut.toStri
     }
 
     if (bMin) {
-      const bAmt = BigInt(String(params.assetBAmount ?? "0"));
+      const bAmt = FlashnetClient.safeBigInt(params.assetBAmount);
       if (bAmt < bMin) {
         throw new Error(
           `Minimum amount not met for Asset B. Required ${bMin.toString()}, provided ${bAmt.toString()}`
@@ -4441,7 +4450,7 @@ ${relaxed.toString()} (50% relaxed), provided minAmountOut ${minAmountOut.toStri
     const bMin = minMap.get(bHex);
 
     if (aMin) {
-      const predictedAOut = BigInt(String(simulation.assetAAmount ?? "0"));
+      const predictedAOut = FlashnetClient.safeBigInt(simulation.assetAAmount);
       const relaxedA = aMin / 2n; // apply 50% relaxation for outputs
       if (predictedAOut < relaxedA) {
         throw new Error(
@@ -4451,7 +4460,7 @@ ${relaxed.toString()} (50% relaxed), provided minAmountOut ${minAmountOut.toStri
     }
 
     if (bMin) {
-      const predictedBOut = BigInt(String(simulation.assetBAmount ?? "0"));
+      const predictedBOut = FlashnetClient.safeBigInt(simulation.assetBAmount);
       const relaxedB = bMin / 2n;
       if (predictedBOut < relaxedB) {
         throw new Error(
@@ -4612,7 +4621,7 @@ ${relaxed.toString()} (50% relaxed), provided minAmountOut ${minAmountOut.toStri
 
     // Transfer assets if not using free balance
     if (!params.useFreeBalance) {
-      if (BigInt(params.amountADesired) > 0n) {
+      if (FlashnetClient.safeBigInt(params.amountADesired) > 0n) {
         assetATransferId = await this.transferAsset(
           {
             receiverSparkAddress: lpSparkAddress,
@@ -4625,7 +4634,7 @@ ${relaxed.toString()} (50% relaxed), provided minAmountOut ${minAmountOut.toStri
         transferIds.push(assetATransferId);
       }
 
-      if (BigInt(params.amountBDesired) > 0n) {
+      if (FlashnetClient.safeBigInt(params.amountBDesired) > 0n) {
         assetBTransferId = await this.transferAsset(
           {
             receiverSparkAddress: lpSparkAddress,
@@ -5155,7 +5164,7 @@ ${relaxed.toString()} (50% relaxed), provided minAmountOut ${minAmountOut.toStri
     const transferIds: string[] = [];
 
     // Transfer assets to pool
-    if (BigInt(params.amountA) > 0n) {
+    if (FlashnetClient.safeBigInt(params.amountA) > 0n) {
       assetATransferId = await this.transferAsset(
         {
           receiverSparkAddress: lpSparkAddress,
@@ -5168,7 +5177,7 @@ ${relaxed.toString()} (50% relaxed), provided minAmountOut ${minAmountOut.toStri
       transferIds.push(assetATransferId);
     }
 
-    if (BigInt(params.amountB) > 0n) {
+    if (FlashnetClient.safeBigInt(params.amountB) > 0n) {
       assetBTransferId = await this.transferAsset(
         {
           receiverSparkAddress: lpSparkAddress,
