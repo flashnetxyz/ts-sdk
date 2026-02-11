@@ -115,7 +115,7 @@ import {
   type WithdrawIntegratorFeesRequest,
   type WithdrawIntegratorFeesResponse,
 } from "../types";
-import { compareDecimalStrings, generateNonce } from "../utils";
+import { compareDecimalStrings, generateNonce, safeBigInt } from "../utils";
 import { AuthManager } from "../utils/auth";
 import { getHexFromUint8Array } from "../utils/hex";
 import {
@@ -946,26 +946,13 @@ export class FlashnetClient {
   }
 
   /**
-   * Safely convert a value to BigInt, returning a default (0n) when the value
-   * is undefined, null, empty-string, or otherwise un-parseable.
-   * Use this everywhere instead of raw `BigInt(x)` on data coming from API
-   * responses or optional fields.
+   * Safely convert a value to BigInt. Delegates to the shared `safeBigInt` utility.
    */
   private static safeBigInt(
     value: bigint | number | string | null | undefined,
     fallback: bigint = 0n
   ): bigint {
-    if (value == null || value === "") {
-      return fallback;
-    }
-    if (typeof value === "bigint") {
-      return value;
-    }
-    try {
-      return BigInt(value);
-    } catch {
-      return fallback;
-    }
+    return safeBigInt(value, fallback);
   }
 
   /**
