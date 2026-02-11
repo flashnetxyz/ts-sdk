@@ -941,6 +941,29 @@ export class FlashnetClient {
   }
 
   /**
+   * Safely convert a value to BigInt, returning a default (0n) when the value
+   * is undefined, null, empty-string, or otherwise un-parseable.
+   * Use this everywhere instead of raw `BigInt(x)` on data coming from API
+   * responses or optional fields.
+   */
+  private static safeBigInt(
+    value: bigint | number | string | null | undefined,
+    fallback: bigint = 0n
+  ): bigint {
+    if (value == null || value === "") {
+      return fallback;
+    }
+    if (typeof value === "bigint") {
+      return value;
+    }
+    try {
+      return BigInt(value);
+    } catch {
+      return fallback;
+    }
+  }
+
+  /**
    * Calculates virtual reserves for a bonding curve AMM.
    *
    * This helper function calculates the initial virtual reserves (`v_A^0`, `v_B^0`)
