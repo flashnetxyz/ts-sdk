@@ -675,6 +675,342 @@ async function main() {
       logKV("V3 BTC balance after (sats)", v3BalAfter.balance.toString());
     }
   }
+  // Low BTC reserve liquidity test:
+  // A V2 pool with large token supply but low BTC reserve fails to get
+  // a quote for 1455 sats. The error is "No pool has sufficient liquidity"
+  // even though the pool has plenty of tokens. The root cause is the BTC
+  // reserve being too low for the required swap output after bit masking.
+  //
+  // This test creates a V2 pool with 117M tokens but a small BTC seed,
+  // then tests with a 1455-sat invoice.
+  logSection("15. Low BTC reserve liquidity test (1455 sats)");
+
+  const LOW_BTC_INVOICE_SATS = 1455;
+  const LOW_BTC_TOKEN_SUPPLY = BigInt(117_000_000); // 117M tokens (0 decimals)
+
+  // Create a fresh wallet for this test
+  const lowBtcSeed = randomBytes(32);
+  const { wallet: lowBtcWallet } = await IssuerSparkWallet.initialize({
+    mnemonicOrSeed: lowBtcSeed,
+    options: { network: SPARK_NETWORK as any },
+  });
+  const lowBtcPub = await lowBtcWallet.getIdentityPublicKey();
+  const lowBtcSpark = await lowBtcWallet.getSparkAddress();
+
+  logKV("Low BTC test wallet", lowBtcSpark);
+
+  // Fund wallet
+  await fundViaFaucet(lowBtcWallet, lowBtcSpark, FAUCET_FUND_SATS);
+  logKV("Low BTC wallet funded", `${FAUCET_FUND_SATS} sats`);
+
+  // Create token with large supply
+  await lowBtcWallet.createToken({
+    tokenName: "LBR Test",
+    tokenTicker: "LBR",
+    decimals: 0,
+    isFreezable: false,
+    maxSupply: LOW_BTC_TOKEN_SUPPLY,
+  });
+  await lowBtcWallet.mintTokens(LOW_BTC_TOKEN_SUPPLY);
+
+  const lowBtcBalance = await lowBtcWallet.getBalance();
+  const lowBtcTokenEntry = lowBtcBalance.tokenBalances!.entries().next().value!;
+  const lowBtcTokenHex = Buffer.from(
+    lowBtcTokenEntry[1].tokenMetadata.rawTokenIdentifier
+  ).toString("hex");
+
+  logKV("LBR token identifier (hex)", lowBtcTokenHex);
+  logKV("LBR token balance", lowBtcTokenEntry[1].ownedBalance.toString());
+
+  // Initialize FlashnetClient
+  const lowBtcClient = new FlashnetClient(lowBtcWallet, {
+    sparkNetworkType: SPARK_NETWORK as SparkNetworkType,
+    clientNetworkConfig: {
+      ammGatewayUrl: AMM_URL!,
+      mempoolApiUrl: MEMPOOL_URL!,
+      explorerUrl: MEMPOOL_URL!,
+      sparkScanUrl: SPARKSCAN_URL,
+    },
+    autoAuthenticate: true,
+  });
+  await lowBtcClient.initialize();
+
+  // Register host
+  const lowBtcNs = Math.random().toString(36).substring(2, 7);
+  await lowBtcClient.registerHost({
+    namespace: lowBtcNs,
+    minFeeBps: V2_HOST_FEE_BPS,
+  });
+
+  // Create V2 pool with all tokens
+  const lowBtcReserves = FlashnetClient.calculateVirtualReserves({
+    initialTokenSupply: Number(LOW_BTC_TOKEN_SUPPLY),
+    graduationThresholdPct: V2_GRADUATION_PCT,
+    targetRaise: Number(V2_TARGET_RAISE),
+  });
+
+  const lowBtcPoolResp = await lowBtcClient.createSingleSidedPool({
+    assetAAddress: lowBtcTokenHex,
+    assetBAddress: BTC_ASSET_PUBKEY,
+    assetAInitialReserve: LOW_BTC_TOKEN_SUPPLY.toString(),
+    virtualReserveA: lowBtcReserves.virtualReserveA.toString(),
+    virtualReserveB: lowBtcReserves.virtualReserveB.toString(),
+    threshold: lowBtcReserves.threshold.toString(),
+    lpFeeRateBps: V2_LP_FEE_BPS,
+    totalHostFeeRateBps: V2_HOST_FEE_BPS,
+    hostNamespace: lowBtcNs,
+  });
+
+  const lowBtcPoolId = lowBtcPoolResp.poolId;
+  logKV("Low BTC Pool ID", lowBtcPoolId);
+
+  // Seed pool with a small BTC buy (low BTC reserve scenario)
+  const lowBtcSeedAmount = "5000"; // Only 5k sats to keep BTC reserve low
+  const lowBtcSwap = await lowBtcClient.executeSwap({
+    poolId: lowBtcPoolId,
+    assetInAddress: BTC_ASSET_PUBKEY,
+    assetOutAddress: lowBtcTokenHex,
+    amountIn: lowBtcSeedAmount,
+    minAmountOut: "0",
+    maxSlippageBps: 50000,
+  });
+  logKV("Low BTC pool seed swap accepted", lowBtcSwap.accepted);
+  logKV("Low BTC pool seed swap amountOut", lowBtcSwap.amountOut);
+
+  // Check reserves after seeding
+  const lowBtcPoolDetails = await typed.getPool(lowBtcPoolId);
+  logKV("Low BTC pool reserves", {
+    assetAReserve: lowBtcPoolDetails.assetAReserve,
+    assetBReserve: lowBtcPoolDetails.assetBReserve,
+    curveType: lowBtcPoolDetails.curveType,
+  });
+
+  // Create a 1455 sats invoice
+  const lowBtcInvoice = await walletB.createLightningInvoice({
+    amountSats: LOW_BTC_INVOICE_SATS,
+    memo: "low-btc-reserve-test",
+    expirySeconds: 3600,
+  });
+
+  const lowBtcInv = lowBtcInvoice.invoice.encodedInvoice;
+  logKV("Low BTC test invoice", typeof lowBtcInv === "string" ? lowBtcInv.substring(0, 80) + "..." : lowBtcInv);
+  logKV("Low BTC test invoice amount", `${LOW_BTC_INVOICE_SATS} sats`);
+
+  // Try to get a quote at 1455 sats with low BTC reserve
+  logSection("15b. Get quote for low BTC reserve pool at 1455 sats");
+
+  try {
+    const lowBtcQuote = await lowBtcClient.getPayLightningWithTokenQuote(
+      lowBtcInv,
+      lowBtcTokenHex,
+    );
+
+    logKV("Low BTC quote result", {
+      poolId: lowBtcQuote.poolId,
+      tokenAmountRequired: lowBtcQuote.tokenAmountRequired,
+      btcAmountRequired: lowBtcQuote.btcAmountRequired,
+      invoiceAmountSats: lowBtcQuote.invoiceAmountSats,
+      estimatedAmmFee: lowBtcQuote.estimatedAmmFee,
+      estimatedLightningFee: lowBtcQuote.estimatedLightningFee,
+      executionPrice: lowBtcQuote.executionPrice,
+      priceImpactPct: lowBtcQuote.priceImpactPct,
+      tokenIsAssetA: lowBtcQuote.tokenIsAssetA,
+      curveType: lowBtcQuote.curveType,
+      poolReserves: lowBtcQuote.poolReserves,
+      warningMessage: lowBtcQuote.warningMessage,
+    });
+
+    logKV("Low BTC quote success", "Quote obtained for 1455 sats");
+
+    // Also try paying the invoice
+    logSection("15c. Pay low BTC reserve invoice");
+
+    try {
+      const lowBtcPayResult = await lowBtcClient.payLightningWithToken({
+        invoice: lowBtcInv,
+        tokenAddress: lowBtcTokenHex,
+        maxSlippageBps: 5000,
+        useExistingBtcBalance: false,
+      });
+
+      logKV("Low BTC payment result", {
+        success: lowBtcPayResult.success,
+        poolId: lowBtcPayResult.poolId,
+        tokenAmountSpent: lowBtcPayResult.tokenAmountSpent,
+        btcAmountReceived: lowBtcPayResult.btcAmountReceived,
+        sparkTokenTransferId: lowBtcPayResult.sparkTokenTransferId,
+        sparkLightningTransferId: lowBtcPayResult.sparkLightningTransferId,
+        error: lowBtcPayResult.error,
+      });
+    } catch (e: any) {
+      logKV("Low BTC payment error", e.message || String(e));
+    }
+  } catch (e: any) {
+    logKV("Low BTC quote error (expected)", e.message || String(e));
+    console.log("  Pool reserves:", JSON.stringify({
+      assetAReserve: lowBtcPoolDetails.assetAReserve,
+      assetBReserve: lowBtcPoolDetails.assetBReserve,
+    }));
+    console.log("  Pool has sufficient token reserves but insufficient BTC reserve.");
+  }
+
+  // Token-only payer test:
+  // A wallet that holds only tokens (zero BTC balance) attempts to pay
+  // a Lightning invoice using payLightningWithToken. The wallet must swap
+  // tokens for BTC via the existing V2 pool, then pay the invoice with
+  // the received BTC.
+  if (!V3_ONLY && v2PoolId) {
+    logSection("16. Token-only payer test (0 BTC wallet)");
+
+    // Re-seed V2 pool with BTC (previous payment may have depleted it)
+    const reSeedAmount = "20000";
+    logKV("Re-seeding V2 pool with BTC", `${reSeedAmount} sats`);
+    const reSeedSwap = await clientA.executeSwap({
+      poolId: v2PoolId,
+      assetInAddress: BTC_ASSET_PUBKEY,
+      assetOutAddress: v2TokenIdentifierHex,
+      amountIn: reSeedAmount,
+      minAmountOut: "0",
+      maxSlippageBps: 50000,
+    });
+    logKV("Re-seed swap accepted", reSeedSwap.accepted);
+    logKV("V2 pool BTC reserve after re-seed", (await typed.getPool(v2PoolId)).assetBReserve);
+
+    // Create wallet C - the token-only payer (do NOT fund with BTC)
+    const seedC = randomBytes(32);
+    const { wallet: walletC } = await IssuerSparkWallet.initialize({
+      mnemonicOrSeed: seedC,
+      options: { network: SPARK_NETWORK as any },
+    });
+    const userPubC = await walletC.getIdentityPublicKey();
+    const userSparkC = await walletC.getSparkAddress();
+
+    logKV("Wallet C public key", userPubC);
+    logKV("Wallet C Spark address", userSparkC);
+
+    // Confirm wallet C has 0 BTC
+    const balC = await walletC.getBalance();
+    logKV("Wallet C BTC balance", balC.balance.toString());
+    logKV("Wallet C token balances", balC.tokenBalances?.size.toString() || "0");
+
+    // Transfer LNT tokens from wallet A to wallet C
+    const tokenTransferAmount = 50000n;
+    logKV("Transferring tokens from wallet A to wallet C", tokenTransferAmount.toString());
+
+    const transferTxId = await walletA.transferTokens({
+      tokenIdentifier: v2TokenAddress as any,
+      tokenAmount: tokenTransferAmount,
+      receiverSparkAddress: userSparkC,
+    });
+    logKV("Token transfer tx ID", transferTxId);
+
+    // Wait for transfer to settle
+    await new Promise((r) => setTimeout(r, 5000));
+
+    // Check wallet C balances after receiving tokens
+    const balCAfterTransfer = await walletC.getBalance();
+    const tokenBalC = await getTokenBalanceByHex(walletC, v2TokenIdentifierHex);
+    logKV("Wallet C BTC balance after transfer", balCAfterTransfer.balance.toString());
+    logKV("Wallet C LNT token balance", tokenBalC.toString());
+
+    if (tokenBalC === 0n) {
+      logKV("ERROR", "Wallet C did not receive tokens, skipping payment test");
+    } else {
+      // Initialize FlashnetClient for wallet C
+      const clientC = new FlashnetClient(walletC, {
+        sparkNetworkType: SPARK_NETWORK as SparkNetworkType,
+        clientNetworkConfig: {
+          ammGatewayUrl: AMM_URL!,
+          mempoolApiUrl: MEMPOOL_URL!,
+          explorerUrl: MEMPOOL_URL!,
+          sparkScanUrl: SPARKSCAN_URL,
+        },
+        autoAuthenticate: true,
+      });
+      await clientC.initialize();
+
+      // Create a fresh invoice from wallet B
+      const invoiceC = await walletB.createLightningInvoice({
+        amountSats: INVOICE_AMOUNT_SATS,
+        memo: "token-only-payer-test",
+        expirySeconds: 3600,
+      });
+
+      const invC = invoiceC.invoice.encodedInvoice;
+      logKV("Token-only payer invoice", typeof invC === "string" ? invC.substring(0, 80) + "..." : invC);
+      logKV("Invoice amount", `${INVOICE_AMOUNT_SATS} sats`);
+
+      // Get a quote first
+      logSection("16b. Get quote for token-only payer");
+
+      try {
+        const quoteC = await clientC.getPayLightningWithTokenQuote(
+          invC,
+          v2TokenIdentifierHex,
+        );
+
+        logKV("Token-only payer quote", {
+          poolId: quoteC.poolId,
+          tokenAmountRequired: quoteC.tokenAmountRequired,
+          btcAmountRequired: quoteC.btcAmountRequired,
+          invoiceAmountSats: quoteC.invoiceAmountSats,
+          estimatedAmmFee: quoteC.estimatedAmmFee,
+          curveType: quoteC.curveType,
+        });
+      } catch (e: any) {
+        logKV("Token-only payer quote error", e.message || String(e));
+        failures.push(`Token-only payer quote: ${e.message || String(e)}`);
+      }
+
+      // Pay the Lightning invoice with tokens only (0 BTC in wallet)
+      logSection("16c. Pay Lightning invoice with 0 BTC (token-only)");
+
+      logKV("Wallet C BTC balance", balCAfterTransfer.balance.toString());
+      logKV("Wallet C LNT balance", tokenBalC.toString());
+
+      try {
+        const payResultC = await clientC.payLightningWithToken({
+          invoice: invC,
+          tokenAddress: v2TokenIdentifierHex,
+          maxSlippageBps: 5000,
+          useExistingBtcBalance: false,
+        });
+
+        logKV("Token-only payment result", {
+          success: payResultC.success,
+          poolId: payResultC.poolId,
+          tokenAmountSpent: payResultC.tokenAmountSpent,
+          btcAmountReceived: payResultC.btcAmountReceived,
+          swapTransferId: payResultC.swapTransferId,
+          ammFeePaid: payResultC.ammFeePaid,
+          lightningPaymentId: payResultC.lightningPaymentId,
+          sparkTokenTransferId: payResultC.sparkTokenTransferId,
+          sparkLightningTransferId: payResultC.sparkLightningTransferId,
+          error: payResultC.error,
+        });
+
+        if (payResultC.success) {
+          logKV("Token-only Lightning payment", "SUCCESS");
+        } else {
+          logKV("Token-only Lightning payment FAILED", payResultC.error);
+          failures.push(`Token-only payment failed: ${payResultC.error}`);
+        }
+      } catch (e: any) {
+        logKV("Token-only payLightningWithToken error", e.message || String(e));
+        if (e.response) {
+          logKV("Error response", e.response);
+        }
+        failures.push(`Token-only payment error: ${e.message || String(e)}`);
+      }
+
+      // Final balances
+      const balCFinal = await walletC.getBalance();
+      const tokenBalCFinal = await getTokenBalanceByHex(walletC, v2TokenIdentifierHex);
+      logKV("Wallet C final BTC balance", balCFinal.balance.toString());
+      logKV("Wallet C final LNT balance", tokenBalCFinal.toString());
+      logKV("Tokens spent", (tokenBalC - tokenBalCFinal).toString());
+    }
+  }
 
   logSection("Summary");
 
