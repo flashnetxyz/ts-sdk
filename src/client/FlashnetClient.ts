@@ -764,11 +764,13 @@ export class FlashnetClient {
         tokenPubkey,
         requiredAmount,
       ] of requirements.tokens.entries()) {
-        // If direct lookup fails (possible representation mismatch), try the human-readable form
+        // Support both hex and Bech32m token identifiers by trying all representations
         const hrKey = this.toHumanReadableTokenIdentifier(tokenPubkey);
+        const hexKey = this.toHexTokenIdentifier(tokenPubkey);
         const effectiveTokenBalance =
           balance.tokenBalances.get(tokenPubkey) ??
-          balance.tokenBalances.get(hrKey);
+          balance.tokenBalances.get(hrKey) ??
+          balance.tokenBalances.get(hexKey);
         const available = params.useAvailableBalance
           ? (effectiveTokenBalance?.availableToSendBalance ?? 0n)
           : (effectiveTokenBalance?.balance ?? 0n);
