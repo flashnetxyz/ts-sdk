@@ -694,9 +694,13 @@ export class FlashnetClient {
         );
 
         tokenBalances.set(tokenPubkey, {
-          balance: safeBigInt(tokenData.ownedBalance ?? (tokenData as any).balance),
+          balance: safeBigInt(
+            tokenData.ownedBalance ?? (tokenData as any).balance
+          ),
           availableToSendBalance: safeBigInt(
-            tokenData.availableToSendBalance ?? tokenData.ownedBalance ?? (tokenData as any).balance
+            tokenData.availableToSendBalance ??
+              tokenData.ownedBalance ??
+              (tokenData as any).balance
           ),
           tokenInfo: {
             tokenIdentifier: tokenIdentifierHex,
@@ -740,10 +744,7 @@ export class FlashnetClient {
       if (balance.assetAddress === BTC_ASSET_PUBKEY) {
         requirements.btc = BigInt(balance.amount);
       } else {
-        requirements.tokens?.set(
-          balance.assetAddress,
-          BigInt(balance.amount)
-        );
+        requirements.tokens?.set(balance.assetAddress, BigInt(balance.amount));
       }
     }
 
@@ -948,8 +949,6 @@ export class FlashnetClient {
     }
   }
 
-
-
   /**
    * Calculates virtual reserves for a bonding curve AMM.
    *
@@ -985,9 +984,7 @@ export class FlashnetClient {
       params.targetRaise,
       "Target raise"
     );
-    const graduationThresholdPct = BigInt(
-      params.graduationThresholdPct
-    );
+    const graduationThresholdPct = BigInt(params.graduationThresholdPct);
 
     // Align bounds with Rust AMM (20%..95%), then check feasibility for g=1 (requires >50%).
     const MIN_PCT = 20n;
@@ -2932,8 +2929,7 @@ export class FlashnetClient {
     // Total BTC needed = invoice amount + lightning fee (unmasked).
     // Bitmasking for V2 pools is handled inside findBestPoolForTokenToBtc.
     const baseBtcNeeded =
-      BigInt(invoiceAmountSats) +
-      BigInt(lightningFeeEstimate);
+      BigInt(invoiceAmountSats) + BigInt(lightningFeeEstimate);
 
     // Check Flashnet minimum amounts early to provide clear error messages
     const minAmounts = await this.getEnabledMinAmountsMap();
@@ -3285,8 +3281,7 @@ export class FlashnetClient {
         const btcNeededForPayment =
           invoiceAmountSats + effectiveMaxLightningFee;
         const balance = await this.getBalance();
-        canPayImmediately =
-          balance.balance >= safeBigInt(btcNeededForPayment);
+        canPayImmediately = balance.balance >= safeBigInt(btcNeededForPayment);
       }
 
       if (!canPayImmediately) {
