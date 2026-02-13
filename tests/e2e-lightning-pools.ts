@@ -158,6 +158,8 @@ async function getTokenBalanceByHex(wallet: any, hexId: string): Promise<bigint>
 }
 
 async function main() {
+  const failures: string[] = [];
+
   logSection("E2E Lightning Payment Test - V2 + V3 Pools");
 
   logSection("1. Create Wallet A (payer)");
@@ -492,6 +494,7 @@ async function main() {
     } catch (e: any) {
       logKV("V2 quote error", e.message || String(e));
       console.log("  This may indicate insufficient V2 pool liquidity for the invoice amount.");
+      failures.push(`V2 quote: ${e.message || String(e)}`);
     }
   }
 
@@ -539,6 +542,7 @@ async function main() {
     } catch (e: any) {
       logKV("V3 quote error", e.message || String(e));
       console.log("  This may indicate insufficient V3 pool liquidity for the invoice amount.");
+      failures.push(`V3 quote: ${e.message || String(e)}`);
     }
   }
 
@@ -576,12 +580,14 @@ async function main() {
         logKV("V2 Lightning payment", "SUCCESS");
       } else {
         logKV("V2 Lightning payment FAILED", payResult.error);
+        failures.push(`V2 payment failed: ${payResult.error}`);
       }
     } catch (e: any) {
       logKV("V2 payLightningWithToken error", e.message || String(e));
       if (e.response) {
         logKV("Error response", e.response);
       }
+      failures.push(`V2 payment error: ${e.message || String(e)}`);
     }
 
     const balAfter = await walletA.getBalance();
@@ -655,10 +661,12 @@ async function main() {
           logKV("V3 Lightning payment", "SUCCESS");
         } else {
           logKV("V3 Lightning payment FAILED", payResult.error);
+          failures.push(`V3 payment failed: ${payResult.error}`);
         }
       } catch (e: any) {
         logKV("V3 payLightningWithToken error", e.message || String(e));
         if (e.response) logKV("Error response", e.response);
+        failures.push(`V3 payment error: ${e.message || String(e)}`);
       }
 
       const v3BalAfter = await v3PayerWallet.getBalance();
@@ -681,6 +689,17 @@ async function main() {
   console.log(`AMM: ${AMM_URL}`);
 
   logSection("E2E Lightning Payment Test Complete");
+
+  if (failures.length > 0) {
+    console.error(`\n${failures.length} failure(s):`);
+    for (const f of failures) {
+      console.error(`  - ${f}`);
+    }
+    process.exit(1);
+  }
+
+  console.log("\nAll tests passed.");
+  process.exit(0);
 }
 
 main().catch((err) => {
