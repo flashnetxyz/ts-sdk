@@ -23,7 +23,6 @@ import type {
   ValidateWithdrawBalanceData,
 } from "../types";
 
-
 /**
  * Generates a pool initialization intent message
  * @param params Parameters for pool initialization
