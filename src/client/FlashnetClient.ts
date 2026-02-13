@@ -694,9 +694,9 @@ export class FlashnetClient {
         );
 
         tokenBalances.set(tokenPubkey, {
-          balance: safeBigInt(tokenData.ownedBalance),
+          balance: safeBigInt(tokenData.ownedBalance ?? (tokenData as any).balance),
           availableToSendBalance: safeBigInt(
-            tokenData.availableToSendBalance
+            tokenData.availableToSendBalance ?? tokenData.ownedBalance ?? (tokenData as any).balance
           ),
           tokenInfo: {
             tokenIdentifier: tokenIdentifierHex,
