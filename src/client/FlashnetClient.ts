@@ -1,6 +1,7 @@
 import type { IssuerSparkWallet } from "@buildonspark/issuer-sdk";
 import type { SparkWallet } from "@buildonspark/spark-sdk";
 import sha256 from "fast-sha256";
+import { decode as decodeBolt11 } from "light-bolt11-decoder";
 import { ApiClient } from "../api/client";
 import { TypedAmmApi } from "../api/typed-endpoints";
 import {
@@ -693,9 +694,13 @@ export class FlashnetClient {
         );
 
         tokenBalances.set(tokenPubkey, {
-          balance: safeBigInt(tokenData.ownedBalance),
+          balance: safeBigInt(
+            tokenData.ownedBalance ?? (tokenData as any).balance
+          ),
           availableToSendBalance: safeBigInt(
-            tokenData.availableToSendBalance
+            tokenData.availableToSendBalance ??
+              tokenData.ownedBalance ??
+              (tokenData as any).balance
           ),
           tokenInfo: {
             tokenIdentifier: tokenIdentifierHex,
@@ -739,10 +744,7 @@ export class FlashnetClient {
       if (balance.assetAddress === BTC_ASSET_PUBKEY) {
         requirements.btc = BigInt(balance.amount);
       } else {
-        requirements.tokens?.set(
-          balance.assetAddress,
-          BigInt(balance.amount)
-        );
+        requirements.tokens?.set(balance.assetAddress, BigInt(balance.amount));
       }
     }
 
@@ -763,11 +765,13 @@ export class FlashnetClient {
         tokenPubkey,
         requiredAmount,
       ] of requirements.tokens.entries()) {
-        // If direct lookup fails (possible representation mismatch), try the human-readable form
+        // Support both hex and Bech32m token identifiers by trying all representations
         const hrKey = this.toHumanReadableTokenIdentifier(tokenPubkey);
+        const hexKey = this.toHexTokenIdentifier(tokenPubkey);
         const effectiveTokenBalance =
           balance.tokenBalances.get(tokenPubkey) ??
-          balance.tokenBalances.get(hrKey);
+          balance.tokenBalances.get(hrKey) ??
+          balance.tokenBalances.get(hexKey);
         const available = params.useAvailableBalance
           ? (effectiveTokenBalance?.availableToSendBalance ?? 0n)
           : (effectiveTokenBalance?.balance ?? 0n);
@@ -945,8 +949,6 @@ export class FlashnetClient {
     }
   }
 
-
-
   /**
    * Calculates virtual reserves for a bonding curve AMM.
    *
@@ -982,9 +984,7 @@ export class FlashnetClient {
       params.targetRaise,
       "Target raise"
     );
-    const graduationThresholdPct = BigInt(
-      params.graduationThresholdPct
-    );
+    const graduationThresholdPct = BigInt(params.graduationThresholdPct);
 
     // Align bounds with Rust AMM (20%..95%), then check feasibility for g=1 (requires >50%).
     const MIN_PCT = 20n;
@@ -2929,8 +2929,7 @@ export class FlashnetClient {
     // Total BTC needed = invoice amount + lightning fee (unmasked).
     // Bitmasking for V2 pools is handled inside findBestPoolForTokenToBtc.
     const baseBtcNeeded =
-      BigInt(invoiceAmountSats) +
-      BigInt(lightningFeeEstimate);
+      BigInt(invoiceAmountSats) + BigInt(lightningFeeEstimate);
 
     // Check Flashnet minimum amounts early to provide clear error messages
     const minAmounts = await this.getEnabledMinAmountsMap();
@@ -3282,8 +3281,7 @@ export class FlashnetClient {
         const btcNeededForPayment =
           invoiceAmountSats + effectiveMaxLightningFee;
         const balance = await this.getBalance();
-        canPayImmediately =
-          balance.balance >= safeBigInt(btcNeededForPayment);
+        canPayImmediately = balance.balance >= safeBigInt(btcNeededForPayment);
       }
 
       if (!canPayImmediately) {
@@ -4158,68 +4156,28 @@ export class FlashnetClient {
 
   /**
    * Decode the amount from a Lightning invoice (in sats)
+   * Uses light-bolt11-decoder (same library as Spark SDK) for reliable parsing.
    * @private
    */
   private async decodeInvoiceAmount(invoice: string): Promise<number> {
-    // Extract amount from BOLT11 invoice
-    // Format: ln[network][amount][multiplier]...
-    // Amount multipliers: m = milli (0.001), u = micro (0.000001), n = nano, p = pico
+    try {
+      const decoded = decodeBolt11(invoice);
 
-    const lowerInvoice = invoice.toLowerCase();
+      const amountSection = decoded.sections.find(
+        (s: any) => s.name === "amount"
+      ) as { value?: string } | undefined;
 
-    // Find where the amount starts (after network prefix)
-    let amountStart = 0;
-    if (lowerInvoice.startsWith("lnbc")) {
-      amountStart = 4;
-    } else if (lowerInvoice.startsWith("lntb")) {
-      amountStart = 4;
-    } else if (lowerInvoice.startsWith("lnbcrt")) {
-      amountStart = 6;
-    } else if (lowerInvoice.startsWith("lntbs")) {
-      amountStart = 5;
-    } else {
-      // Unknown format, try to find amount
-      const match = lowerInvoice.match(/^ln[a-z]+/);
-      if (match) {
-        amountStart = match[0].length;
+      if (!amountSection?.value) {
+        return 0; // Zero-amount invoice
       }
+
+      // The library returns amount in millisatoshis as a string
+      const amountMSats = BigInt(amountSection.value);
+      return Number(amountMSats / 1000n);
+    } catch {
+      // Fallback: if library fails, return 0 (treated as zero-amount invoice)
+      return 0;
     }
-
-    // Extract amount and multiplier
-    const afterPrefix = lowerInvoice.substring(amountStart);
-    const amountMatch = afterPrefix.match(/^(\d+)([munp]?)/);
-
-    if (!amountMatch || !amountMatch[1]) {
-      return 0; // Zero-amount invoice
-    }
-
-    const amount = parseInt(amountMatch[1], 10);
-    const multiplier = amountMatch[2] ?? "";
-
-    // Convert to satoshis (1 BTC = 100,000,000 sats)
-    // Invoice amounts are in BTC by default
-    let btcAmount: number;
-
-    switch (multiplier) {
-      case "m": // milli-BTC (0.001 BTC)
-        btcAmount = amount * 0.001;
-        break;
-      case "u": // micro-BTC (0.000001 BTC)
-        btcAmount = amount * 0.000001;
-        break;
-      case "n": // nano-BTC (0.000000001 BTC)
-        btcAmount = amount * 0.000000001;
-        break;
-      case "p": // pico-BTC (0.000000000001 BTC)
-        btcAmount = amount * 0.000000000001;
-        break;
-      default: // BTC
-        btcAmount = amount;
-        break;
-    }
-
-    // Convert BTC to sats
-    return Math.round(btcAmount * 100000000);
   }
 
   /**
