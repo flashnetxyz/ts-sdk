@@ -3314,7 +3314,23 @@ export class FlashnetClient {
       }
 
       // Step 6: Calculate payment amount
+      const requestedMaxLightningFee = effectiveMaxLightningFee;
       const btcReceived = swapResponse.amountOut || quote.btcAmountRequired;
+
+      // Cap the lightning fee budget to what the wallet can actually cover.
+      // The swap output may be slightly less than quoted due to rounding or
+      // price movement between quote and execution. The Spark SDK requires
+      // invoiceAmount + maxFeeSats as balance, so we adjust maxFeeSats down
+      // to avoid "Insufficient balance" rejections.
+      let cappedMaxLightningFee = requestedMaxLightningFee;
+      if (!quote.isZeroAmountInvoice) {
+        const actualBtc = safeBigInt(btcReceived);
+        const invoiceAmount = safeBigInt(quote.invoiceAmountSats);
+        const available = actualBtc - invoiceAmount;
+        if (available > 0n && available < safeBigInt(cappedMaxLightningFee)) {
+          cappedMaxLightningFee = Number(available);
+        }
+      }
 
       // Step 7: Pay the Lightning invoice
       try {
@@ -3322,9 +3338,8 @@ export class FlashnetClient {
         let invoiceAmountPaid: number | undefined;
 
         if (quote.isZeroAmountInvoice) {
-          // Zero-amount invoice: pay whatever BTC we received minus lightning fee
           const actualBtc = safeBigInt(btcReceived);
-          const lnFee = safeBigInt(effectiveMaxLightningFee);
+          const lnFee = safeBigInt(cappedMaxLightningFee);
           const amountToPay = actualBtc - lnFee;
 
           if (amountToPay <= 0n) {
@@ -3336,7 +3351,7 @@ export class FlashnetClient {
               swapTransferId: swapResponse.outboundTransferId,
               ammFeePaid: quote.estimatedAmmFee,
               sparkTokenTransferId: swapResponse.inboundSparkTransferId,
-              error: `BTC received (${btcReceived} sats) is not enough to cover lightning fee (${effectiveMaxLightningFee} sats).`,
+              error: `BTC received (${btcReceived} sats) is not enough to cover lightning fee (${cappedMaxLightningFee} sats).`,
             };
           }
 
@@ -3344,37 +3359,13 @@ export class FlashnetClient {
           lightningPayment = await (this._wallet as any).payLightningInvoice({
             invoice,
             amountSats: invoiceAmountPaid,
-            maxFeeSats: effectiveMaxLightningFee,
+            maxFeeSats: cappedMaxLightningFee,
             preferSpark,
           });
         } else {
-          // Check actual wallet balance (pre-existing + swap output) to
-          // tighten the fee budget when the total is slightly below target.
-          const walletBalance = (await this.getBalance()).balance;
-          const invoiceBig = BigInt(quote.invoiceAmountSats);
-          const fullFee = BigInt(effectiveMaxLightningFee);
-          let adjustedMaxFee = effectiveMaxLightningFee;
-
-          if (walletBalance < invoiceBig + fullFee) {
-            const available = walletBalance - invoiceBig;
-            if (available <= 0n) {
-              return {
-                success: false,
-                poolId: quote.poolId,
-                tokenAmountSpent: quote.tokenAmountRequired,
-                btcAmountReceived: btcReceived,
-                swapTransferId: swapResponse.outboundTransferId,
-                ammFeePaid: quote.estimatedAmmFee,
-                sparkTokenTransferId: swapResponse.inboundSparkTransferId,
-                error: `Wallet balance (${walletBalance} sats) does not cover invoice amount (${quote.invoiceAmountSats} sats).`,
-              };
-            }
-            adjustedMaxFee = Number(available);
-          }
-
           lightningPayment = await (this._wallet as any).payLightningInvoice({
             invoice,
-            maxFeeSats: adjustedMaxFee,
+            maxFeeSats: cappedMaxLightningFee,
             preferSpark,
           });
         }
@@ -3396,7 +3387,7 @@ export class FlashnetClient {
           swapTransferId: swapResponse.outboundTransferId,
           lightningPaymentId: lightningPayment.id,
           ammFeePaid: quote.estimatedAmmFee,
-          lightningFeePaid: effectiveMaxLightningFee,
+          lightningFeePaid: cappedMaxLightningFee,
           invoiceAmountPaid,
           sparkTokenTransferId: swapResponse.inboundSparkTransferId,
           sparkLightningTransferId,
