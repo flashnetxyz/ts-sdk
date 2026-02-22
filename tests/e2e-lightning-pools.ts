@@ -1012,17 +1012,13 @@ async function main() {
     }
   }
 
-  // Partial-BTC payer + minAmountOut proof:
-  // A wallet that holds some BTC (but less than the invoice amount) and
-  // tokens attempts to pay a Lightning invoice. This test proves that the
-  // old slippage-based minAmountOut floor was lower than baseBtcNeeded
-  // (invoice + fee), and that the fix correctly floors it.
+  // Wallet with partial BTC (< invoice) + tokens pays via token swap.
+  // Verifies minAmountOut >= invoiceAmount + fee at all slippage levels.
   if (!V3_ONLY && v2PoolId) {
     logSection("17. Partial-BTC payer + minAmountOut vulnerability proof");
 
     const PARTIAL_BTC_SATS = 500;
 
-    // Re-seed V2 pool with BTC if needed
     const pool17 = await typed.getPool(v2PoolId);
     if (BigInt(pool17.assetBReserve) < 5000n) {
       logKV("Re-seeding V2 pool with BTC", "10000 sats");
@@ -1036,7 +1032,6 @@ async function main() {
       });
     }
 
-    // Create wallet D with partial BTC + tokens
     const seedD = randomBytes(32);
     const { wallet: walletD } = await IssuerSparkWallet.initialize({
       mnemonicOrSeed: seedD,
@@ -1045,11 +1040,9 @@ async function main() {
     const userSparkD = await walletD.getSparkAddress();
     logKV("Wallet D Spark address", userSparkD);
 
-    // Fund with partial BTC (less than invoice amount)
     logKV("Funding Wallet D with partial BTC", `${PARTIAL_BTC_SATS} sats (< ${INVOICE_AMOUNT_SATS} invoice)`);
     await fundViaFaucet(walletD, userSparkD, PARTIAL_BTC_SATS);
 
-    // Transfer tokens from wallet A
     const tokensForD = 50000n;
     const walletATokenBal = await getTokenBalanceByHex(walletA, v2TokenIdentifierHex);
     if (walletATokenBal >= tokensForD) {
@@ -1082,7 +1075,6 @@ async function main() {
       });
       await clientD.initialize();
 
-      // Create invoice and get quote
       const invoiceD = await walletB.createLightningInvoice({
         amountSats: INVOICE_AMOUNT_SATS,
         memo: "partial-btc-vuln-proof",
@@ -1101,7 +1093,6 @@ async function main() {
       const baseBtcNeeded = BigInt(quoteD.invoiceAmountSats) + BigInt(quoteD.estimatedLightningFee);
       logKV("baseBtcNeeded (invoice + fee)", baseBtcNeeded.toString());
 
-      // Prove the old code's vulnerability at various slippage levels
       for (const slippageBps of [500, 1000, 5000]) {
         const btcReq = BigInt(quoteD.btcAmountRequired);
         const oldMin = (btcReq * BigInt(10000 - slippageBps)) / 10000n;
@@ -1114,8 +1105,7 @@ async function main() {
         }
       }
 
-      // Pay
-      logSection("17b. Pay Lightning with partial BTC + tokens (fixed SDK)");
+      logSection("17b. Pay Lightning with partial BTC + tokens");
 
       try {
         const payResultD = await clientD.payLightningWithToken({
@@ -1153,14 +1143,10 @@ async function main() {
     }
   }
 
-  // Concurrent pool drain test:
-  // While one wallet pays via payLightningWithToken, another wallet
-  // concurrently drains BTC from the pool to try to trigger the
-  // insufficient-balance race condition.
+  // Concurrent swap while another wallet pays via payLightningWithToken.
   if (!V3_ONLY && v2PoolId) {
     logSection("18. Concurrent pool drain test");
 
-    // Re-seed pool
     const pool18 = await typed.getPool(v2PoolId);
     if (BigInt(pool18.assetBReserve) < 5000n) {
       logKV("Re-seeding V2 pool", "10000 sats");
@@ -1174,7 +1160,6 @@ async function main() {
       });
     }
 
-    // Create wallet E with tokens only (0 BTC)
     const seedE = randomBytes(32);
     const { wallet: walletE } = await IssuerSparkWallet.initialize({
       mnemonicOrSeed: seedE,

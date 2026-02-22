@@ -3240,16 +3240,11 @@ export class FlashnetClient {
         ? pool.assetBAddress
         : pool.assetAAddress;
 
-      // Compute effective lightning fee early so it can be used for the
-      // minAmountOut floor and the post-swap guard.
       const effectiveMaxLightningFee =
         maxLightningFeeSats ?? quote.estimatedLightningFee;
 
-      // Calculate min amount out with slippage protection.
-      // Floor: never accept less BTC than the lightning payment actually
-      // needs (invoice amount + max lightning fee). Without this floor the
-      // percentage-based slippage can drop below baseBtcNeeded, causing the
-      // subsequent lightning payment to fail with "Insufficient balance".
+      // Floor minAmountOut at invoiceAmount + fee so the swap never returns
+      // less BTC than the lightning payment requires.
       const slippageMin = this.calculateMinAmountOut(
         quote.btcAmountRequired,
         maxSlippageBps
@@ -3353,9 +3348,8 @@ export class FlashnetClient {
             preferSpark,
           });
         } else {
-          // Standard invoice: pay the specified amount.
-          // Use the wallet's actual BTC balance (pre-existing + swap output)
-          // rather than just the swap output when deciding the fee budget.
+          // Check actual wallet balance (pre-existing + swap output) to
+          // tighten the fee budget when the total is slightly below target.
           const walletBalance = (await this.getBalance()).balance;
           const invoiceBig = BigInt(quote.invoiceAmountSats);
           const fullFee = BigInt(effectiveMaxLightningFee);
