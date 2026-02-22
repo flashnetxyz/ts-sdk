@@ -3283,172 +3283,180 @@ export class FlashnetClient {
         };
       }
 
-      // Step 5: Wait for transfer (skip useExistingBtcBalance for zero-amount invoices)
-      let canPayImmediately = false;
-      if (!quote.isZeroAmountInvoice && useExistingBtcBalance) {
-        const invoiceAmountSats = await this.decodeInvoiceAmount(invoice);
-        const btcNeededForPayment =
-          invoiceAmountSats + effectiveMaxLightningFee;
-        const balance = await this.getBalance();
-        canPayImmediately = balance.balance >= safeBigInt(btcNeededForPayment);
-      }
+      // Step 5: Claim the swap output and refresh wallet state.
+      // Suppress leaf optimization for the entire claim-to-pay window so
+      // the SSP cannot swap away the leaves we need for lightning payment.
+      const restoreOptimization = this.suppressOptimization();
+      try {
+        let canPayImmediately = false;
+        if (!quote.isZeroAmountInvoice && useExistingBtcBalance) {
+          const invoiceAmountSats = await this.decodeInvoiceAmount(invoice);
+          const btcNeededForPayment =
+            invoiceAmountSats + effectiveMaxLightningFee;
+          const balance = await this.getBalance();
+          canPayImmediately =
+            balance.balance >= safeBigInt(btcNeededForPayment);
+        }
 
-      if (!canPayImmediately) {
-        const transferComplete = await this.waitForTransferCompletion(
-          swapResponse.outboundTransferId,
-          transferTimeoutMs
-        );
+        if (!canPayImmediately) {
+          const claimed = await this.instaClaimTransfer(
+            swapResponse.outboundTransferId,
+            transferTimeoutMs
+          );
 
-        if (!transferComplete) {
+          if (!claimed) {
+            return {
+              success: false,
+              poolId: quote.poolId,
+              tokenAmountSpent: quote.tokenAmountRequired,
+              btcAmountReceived: swapResponse.amountOut || "0",
+              swapTransferId: swapResponse.outboundTransferId,
+              ammFeePaid: quote.estimatedAmmFee,
+              sparkTokenTransferId: swapResponse.inboundSparkTransferId,
+              error: "Transfer did not complete within timeout",
+            };
+          }
+        }
+
+        // Step 6: Calculate payment amount
+        const requestedMaxLightningFee = effectiveMaxLightningFee;
+        const btcReceived = swapResponse.amountOut || quote.btcAmountRequired;
+
+        // Cap the lightning fee budget to what the wallet can actually cover.
+        // The swap output may be slightly less than quoted due to rounding or
+        // price movement between quote and execution. The Spark SDK requires
+        // invoiceAmount + maxFeeSats <= balance, so we adjust maxFeeSats down
+        // when the actual BTC received is less than expected.
+        let cappedMaxLightningFee = requestedMaxLightningFee;
+        if (!quote.isZeroAmountInvoice) {
+          const actualBtc = safeBigInt(btcReceived);
+          const invoiceAmount = safeBigInt(quote.invoiceAmountSats);
+          const available = actualBtc - invoiceAmount;
+          if (available > 0n && available < safeBigInt(cappedMaxLightningFee)) {
+            cappedMaxLightningFee = Number(available);
+          }
+        }
+
+        // Step 7: Pay the Lightning invoice
+        try {
+          let lightningPayment: { id: string };
+          let invoiceAmountPaid: number | undefined;
+
+          if (quote.isZeroAmountInvoice) {
+            const actualBtc = safeBigInt(btcReceived);
+            const lnFee = safeBigInt(cappedMaxLightningFee);
+            const amountToPay = actualBtc - lnFee;
+
+            if (amountToPay <= 0n) {
+              return {
+                success: false,
+                poolId: quote.poolId,
+                tokenAmountSpent: quote.tokenAmountRequired,
+                btcAmountReceived: btcReceived,
+                swapTransferId: swapResponse.outboundTransferId,
+                ammFeePaid: quote.estimatedAmmFee,
+                sparkTokenTransferId: swapResponse.inboundSparkTransferId,
+                error: `BTC received (${btcReceived} sats) is not enough to cover lightning fee (${cappedMaxLightningFee} sats).`,
+              };
+            }
+
+            invoiceAmountPaid = Number(amountToPay);
+            lightningPayment = await (this._wallet as any).payLightningInvoice({
+              invoice,
+              amountSats: invoiceAmountPaid,
+              maxFeeSats: cappedMaxLightningFee,
+              preferSpark,
+            });
+          } else {
+            lightningPayment = await (this._wallet as any).payLightningInvoice({
+              invoice,
+              maxFeeSats: cappedMaxLightningFee,
+              preferSpark,
+            });
+          }
+
+          // Extract the Spark transfer ID from the lightning payment result.
+          // payLightningInvoice returns LightningSendRequest | WalletTransfer:
+          //   - LightningSendRequest has .transfer?.sparkId (the Sparkscan-visible transfer ID)
+          //   - WalletTransfer (Spark-to-Spark) has .id directly as the transfer ID
+          // Note: lightningPayment.id (the SSP request ID) is already returned as lightningPaymentId
+          const sparkLightningTransferId: string | undefined = (
+            lightningPayment as any
+          ).transfer?.sparkId;
+
+          return {
+            success: true,
+            poolId: quote.poolId,
+            tokenAmountSpent: quote.tokenAmountRequired,
+            btcAmountReceived: btcReceived,
+            swapTransferId: swapResponse.outboundTransferId,
+            lightningPaymentId: lightningPayment.id,
+            ammFeePaid: quote.estimatedAmmFee,
+            lightningFeePaid: cappedMaxLightningFee,
+            invoiceAmountPaid,
+            sparkTokenTransferId: swapResponse.inboundSparkTransferId,
+            sparkLightningTransferId,
+          };
+        } catch (lightningError) {
+          // Lightning payment failed after swap succeeded
+          const lightningErrorMessage =
+            lightningError instanceof Error
+              ? lightningError.message
+              : String(lightningError);
+
+          // Attempt rollback if requested
+          if (rollbackOnFailure) {
+            try {
+              const rollbackResult = await this.rollbackSwap(
+                quote.poolId,
+                btcReceived,
+                tokenAddress,
+                maxSlippageBps
+              );
+
+              if (rollbackResult.success) {
+                return {
+                  success: false,
+                  poolId: quote.poolId,
+                  tokenAmountSpent: "0", // Rolled back
+                  btcAmountReceived: "0",
+                  swapTransferId: swapResponse.outboundTransferId,
+                  ammFeePaid: quote.estimatedAmmFee,
+                  sparkTokenTransferId: swapResponse.inboundSparkTransferId,
+                  error: `Lightning payment failed: ${lightningErrorMessage}. Funds rolled back to ${rollbackResult.tokenAmount} tokens.`,
+                };
+              }
+            } catch (rollbackError) {
+              const rollbackErrorMessage =
+                rollbackError instanceof Error
+                  ? rollbackError.message
+                  : String(rollbackError);
+              return {
+                success: false,
+                poolId: quote.poolId,
+                tokenAmountSpent: quote.tokenAmountRequired,
+                btcAmountReceived: btcReceived,
+                swapTransferId: swapResponse.outboundTransferId,
+                ammFeePaid: quote.estimatedAmmFee,
+                sparkTokenTransferId: swapResponse.inboundSparkTransferId,
+                error: `Lightning payment failed: ${lightningErrorMessage}. Rollback also failed: ${rollbackErrorMessage}. BTC remains in wallet.`,
+              };
+            }
+          }
+
           return {
             success: false,
             poolId: quote.poolId,
             tokenAmountSpent: quote.tokenAmountRequired,
-            btcAmountReceived: swapResponse.amountOut || "0",
+            btcAmountReceived: btcReceived,
             swapTransferId: swapResponse.outboundTransferId,
             ammFeePaid: quote.estimatedAmmFee,
             sparkTokenTransferId: swapResponse.inboundSparkTransferId,
-            error: "Transfer did not complete within timeout",
+            error: `Lightning payment failed: ${lightningErrorMessage}. BTC (${btcReceived} sats) remains in wallet.`,
           };
         }
-      }
-
-      // Step 6: Calculate payment amount
-      const requestedMaxLightningFee = effectiveMaxLightningFee;
-      const btcReceived = swapResponse.amountOut || quote.btcAmountRequired;
-
-      // Cap the lightning fee budget to what the wallet can actually cover.
-      // The swap output may be slightly less than quoted due to rounding or
-      // price movement between quote and execution. The Spark SDK requires
-      // invoiceAmount + maxFeeSats as balance, so we adjust maxFeeSats down
-      // to avoid "Insufficient balance" rejections.
-      let cappedMaxLightningFee = requestedMaxLightningFee;
-      if (!quote.isZeroAmountInvoice) {
-        const actualBtc = safeBigInt(btcReceived);
-        const invoiceAmount = safeBigInt(quote.invoiceAmountSats);
-        const available = actualBtc - invoiceAmount;
-        if (available > 0n && available < safeBigInt(cappedMaxLightningFee)) {
-          cappedMaxLightningFee = Number(available);
-        }
-      }
-
-      // Step 7: Pay the Lightning invoice
-      try {
-        let lightningPayment: { id: string };
-        let invoiceAmountPaid: number | undefined;
-
-        if (quote.isZeroAmountInvoice) {
-          const actualBtc = safeBigInt(btcReceived);
-          const lnFee = safeBigInt(cappedMaxLightningFee);
-          const amountToPay = actualBtc - lnFee;
-
-          if (amountToPay <= 0n) {
-            return {
-              success: false,
-              poolId: quote.poolId,
-              tokenAmountSpent: quote.tokenAmountRequired,
-              btcAmountReceived: btcReceived,
-              swapTransferId: swapResponse.outboundTransferId,
-              ammFeePaid: quote.estimatedAmmFee,
-              sparkTokenTransferId: swapResponse.inboundSparkTransferId,
-              error: `BTC received (${btcReceived} sats) is not enough to cover lightning fee (${cappedMaxLightningFee} sats).`,
-            };
-          }
-
-          invoiceAmountPaid = Number(amountToPay);
-          lightningPayment = await (this._wallet as any).payLightningInvoice({
-            invoice,
-            amountSats: invoiceAmountPaid,
-            maxFeeSats: cappedMaxLightningFee,
-            preferSpark,
-          });
-        } else {
-          lightningPayment = await (this._wallet as any).payLightningInvoice({
-            invoice,
-            maxFeeSats: cappedMaxLightningFee,
-            preferSpark,
-          });
-        }
-
-        // Extract the Spark transfer ID from the lightning payment result.
-        // payLightningInvoice returns LightningSendRequest | WalletTransfer:
-        //   - LightningSendRequest has .transfer?.sparkId (the Sparkscan-visible transfer ID)
-        //   - WalletTransfer (Spark-to-Spark) has .id directly as the transfer ID
-        // Note: lightningPayment.id (the SSP request ID) is already returned as lightningPaymentId
-        const sparkLightningTransferId: string | undefined = (
-          lightningPayment as any
-        ).transfer?.sparkId;
-
-        return {
-          success: true,
-          poolId: quote.poolId,
-          tokenAmountSpent: quote.tokenAmountRequired,
-          btcAmountReceived: btcReceived,
-          swapTransferId: swapResponse.outboundTransferId,
-          lightningPaymentId: lightningPayment.id,
-          ammFeePaid: quote.estimatedAmmFee,
-          lightningFeePaid: cappedMaxLightningFee,
-          invoiceAmountPaid,
-          sparkTokenTransferId: swapResponse.inboundSparkTransferId,
-          sparkLightningTransferId,
-        };
-      } catch (lightningError) {
-        // Lightning payment failed after swap succeeded
-        const lightningErrorMessage =
-          lightningError instanceof Error
-            ? lightningError.message
-            : String(lightningError);
-
-        // Attempt rollback if requested
-        if (rollbackOnFailure) {
-          try {
-            const rollbackResult = await this.rollbackSwap(
-              quote.poolId,
-              btcReceived,
-              tokenAddress,
-              maxSlippageBps
-            );
-
-            if (rollbackResult.success) {
-              return {
-                success: false,
-                poolId: quote.poolId,
-                tokenAmountSpent: "0", // Rolled back
-                btcAmountReceived: "0",
-                swapTransferId: swapResponse.outboundTransferId,
-                ammFeePaid: quote.estimatedAmmFee,
-                sparkTokenTransferId: swapResponse.inboundSparkTransferId,
-                error: `Lightning payment failed: ${lightningErrorMessage}. Funds rolled back to ${rollbackResult.tokenAmount} tokens.`,
-              };
-            }
-          } catch (rollbackError) {
-            const rollbackErrorMessage =
-              rollbackError instanceof Error
-                ? rollbackError.message
-                : String(rollbackError);
-            return {
-              success: false,
-              poolId: quote.poolId,
-              tokenAmountSpent: quote.tokenAmountRequired,
-              btcAmountReceived: btcReceived,
-              swapTransferId: swapResponse.outboundTransferId,
-              ammFeePaid: quote.estimatedAmmFee,
-              sparkTokenTransferId: swapResponse.inboundSparkTransferId,
-              error: `Lightning payment failed: ${lightningErrorMessage}. Rollback also failed: ${rollbackErrorMessage}. BTC remains in wallet.`,
-            };
-          }
-        }
-
-        return {
-          success: false,
-          poolId: quote.poolId,
-          tokenAmountSpent: quote.tokenAmountRequired,
-          btcAmountReceived: btcReceived,
-          swapTransferId: swapResponse.outboundTransferId,
-          ammFeePaid: quote.estimatedAmmFee,
-          sparkTokenTransferId: swapResponse.inboundSparkTransferId,
-          error: `Lightning payment failed: ${lightningErrorMessage}. BTC (${btcReceived} sats) remains in wallet.`,
-        };
+      } finally {
+        restoreOptimization();
       }
     } catch (error) {
       const errorMessage =
@@ -4143,6 +4151,82 @@ export class FlashnetClient {
     }
 
     return false;
+  }
+
+  /**
+   * Suppress leaf optimization on the wallet. Sets the internal
+   * optimizationInProgress flag so optimizeLeaves() returns immediately.
+   * Returns a restore function that clears the flag.
+   * @private
+   */
+  private suppressOptimization(): () => void {
+    const w = this._wallet as any;
+    const was = w.optimizationInProgress;
+    w.optimizationInProgress = true;
+    return () => {
+      w.optimizationInProgress = was;
+    };
+  }
+
+  /**
+   * Insta-claim: listen for the wallet's stream event that fires when
+   * the coordinator broadcasts the transfer. The stream auto-claims
+   * incoming transfers, so no polling is needed.
+   *
+   * After claim, refreshes the leaf cache from the coordinator to
+   * ensure the balance is current.
+   *
+   * Caller is responsible for suppressing optimization around this call
+   * if the claimed leaves must not be swapped before spending.
+   * @private
+   */
+  private async instaClaimTransfer(
+    transferId: string,
+    timeoutMs: number
+  ): Promise<boolean> {
+    const w = this._wallet as any;
+
+    const claimed = await new Promise<boolean>((resolve) => {
+      let done = false;
+      const finish = (value: boolean) => {
+        if (done) {
+          return;
+        }
+        done = true;
+        clearTimeout(timer);
+        try {
+          w.removeListener?.("transfer:claimed", handler);
+        } catch {
+          // Ignore
+        }
+        resolve(value);
+      };
+
+      const timer = setTimeout(() => finish(false), timeoutMs);
+
+      const handler = (claimedId: string) => {
+        if (claimedId === transferId) {
+          finish(true);
+        }
+      };
+
+      // The wallet's background gRPC stream auto-claims transfers.
+      // We just listen for the event.
+      if (typeof w.on === "function") {
+        w.on("transfer:claimed", handler);
+      } else {
+        // No event support, fall back to passive polling
+        clearTimeout(timer);
+        this.pollForTransferCompletion(transferId, timeoutMs).then(resolve);
+      }
+    });
+
+    if (claimed) {
+      const leaves = await this._wallet.getLeaves(true);
+      w.leaves = leaves;
+    }
+
+    return claimed;
   }
 
   /**
