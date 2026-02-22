@@ -1,6 +1,6 @@
 {
   "name": "@flashnet/sdk",
-  "version": "0.5.6",
+  "version": "0.5.7",
   "main": "./dist/cjs/index.js",
   "module": "./dist/esm/index.js",
   "types": "./dist/esm/index.d.ts",
@@ -66,8 +66,8 @@
   },
   "devDependencies": {
     "@biomejs/biome": "2.0.5",
-    "@buildonspark/issuer-sdk": "latest",
-    "@buildonspark/spark-sdk": "latest",
+    "@buildonspark/issuer-sdk": "0.1.15",
+    "@buildonspark/spark-sdk": "0.6.5",
     "@rollup/plugin-typescript": "^12.1.4",
     "@types/bun": "latest",
     "@types/jest": "^30.0.0",

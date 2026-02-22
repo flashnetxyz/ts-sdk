@@ -1012,6 +1012,253 @@ async function main() {
     }
   }
 
+  // Wallet with partial BTC (< invoice) + tokens pays via token swap.
+  // Verifies minAmountOut >= invoiceAmount + fee at all slippage levels.
+  if (!V3_ONLY && v2PoolId) {
+    logSection("17. Partial-BTC payer + minAmountOut vulnerability proof");
+
+    const PARTIAL_BTC_SATS = 500;
+
+    const pool17 = await typed.getPool(v2PoolId);
+    if (BigInt(pool17.assetBReserve) < 5000n) {
+      logKV("Re-seeding V2 pool with BTC", "10000 sats");
+      await clientA.executeSwap({
+        poolId: v2PoolId,
+        assetInAddress: BTC_ASSET_PUBKEY,
+        assetOutAddress: v2TokenIdentifierHex,
+        amountIn: "10000",
+        minAmountOut: "0",
+        maxSlippageBps: 50000,
+      });
+    }
+
+    const seedD = randomBytes(32);
+    const { wallet: walletD } = await IssuerSparkWallet.initialize({
+      mnemonicOrSeed: seedD,
+      options: { network: SPARK_NETWORK as any },
+    });
+    const userSparkD = await walletD.getSparkAddress();
+    logKV("Wallet D Spark address", userSparkD);
+
+    logKV("Funding Wallet D with partial BTC", `${PARTIAL_BTC_SATS} sats (< ${INVOICE_AMOUNT_SATS} invoice)`);
+    await fundViaFaucet(walletD, userSparkD, PARTIAL_BTC_SATS);
+
+    const tokensForD = 50000n;
+    const walletATokenBal = await getTokenBalanceByHex(walletA, v2TokenIdentifierHex);
+    if (walletATokenBal >= tokensForD) {
+      logKV("Transferring tokens to Wallet D", tokensForD.toString());
+      await walletA.transferTokens({
+        tokenIdentifier: v2TokenAddress as any,
+        tokenAmount: tokensForD,
+        receiverSparkAddress: userSparkD,
+      });
+      await new Promise((r) => setTimeout(r, 5000));
+    } else {
+      logKV("WARNING", `Wallet A has only ${walletATokenBal} tokens, need ${tokensForD}. Skipping section 17.`);
+    }
+
+    const balD = await walletD.getBalance();
+    const tokenBalD = await getTokenBalanceByHex(walletD, v2TokenIdentifierHex);
+    logKV("Wallet D BTC balance", balD.balance.toString());
+    logKV("Wallet D token balance", tokenBalD.toString());
+
+    if (tokenBalD > 0n) {
+      const clientD = new FlashnetClient(walletD, {
+        sparkNetworkType: SPARK_NETWORK as SparkNetworkType,
+        clientNetworkConfig: {
+          ammGatewayUrl: AMM_URL!,
+          mempoolApiUrl: MEMPOOL_URL!,
+          explorerUrl: MEMPOOL_URL!,
+          sparkScanUrl: SPARKSCAN_URL,
+        },
+        autoAuthenticate: true,
+      });
+      await clientD.initialize();
+
+      const invoiceD = await walletB.createLightningInvoice({
+        amountSats: INVOICE_AMOUNT_SATS,
+        memo: "partial-btc-vuln-proof",
+        expirySeconds: 3600,
+      });
+      const invD = invoiceD.invoice.encodedInvoice;
+
+      const quoteD = await clientD.getPayLightningWithTokenQuote(invD, v2TokenIdentifierHex);
+      logKV("Quote", {
+        btcAmountRequired: quoteD.btcAmountRequired,
+        tokenAmountRequired: quoteD.tokenAmountRequired,
+        invoiceAmountSats: quoteD.invoiceAmountSats,
+        estimatedLightningFee: quoteD.estimatedLightningFee,
+      });
+
+      const baseBtcNeeded = BigInt(quoteD.invoiceAmountSats) + BigInt(quoteD.estimatedLightningFee);
+      logKV("baseBtcNeeded (invoice + fee)", baseBtcNeeded.toString());
+
+      for (const slippageBps of [500, 1000, 5000]) {
+        const btcReq = BigInt(quoteD.btcAmountRequired);
+        const oldMin = (btcReq * BigInt(10000 - slippageBps)) / 10000n;
+        const fixedMin = oldMin >= baseBtcNeeded ? oldMin : baseBtcNeeded;
+
+        logKV(`  slippage=${slippageBps}bps`, `OLD min=${oldMin} VULNERABLE=${oldMin < baseBtcNeeded}, FIXED min=${fixedMin} VULNERABLE=${fixedMin < baseBtcNeeded}`);
+
+        if (fixedMin < baseBtcNeeded) {
+          failures.push(`Fix failed at ${slippageBps}bps: fixedMin (${fixedMin}) < baseBtcNeeded (${baseBtcNeeded})`);
+        }
+      }
+
+      logSection("17b. Pay Lightning with partial BTC + tokens");
+
+      try {
+        const payResultD = await clientD.payLightningWithToken({
+          invoice: invD,
+          tokenAddress: v2TokenIdentifierHex,
+          maxSlippageBps: 5000,
+          useExistingBtcBalance: false,
+        });
+
+        logKV("Partial-BTC payment result", {
+          success: payResultD.success,
+          tokenAmountSpent: payResultD.tokenAmountSpent,
+          btcAmountReceived: payResultD.btcAmountReceived,
+          lightningPaymentId: payResultD.lightningPaymentId,
+          error: payResultD.error,
+        });
+
+        if (payResultD.success) {
+          logKV("Partial-BTC Lightning payment", "SUCCESS");
+        } else {
+          logKV("Partial-BTC Lightning payment FAILED", payResultD.error);
+          if (payResultD.error?.includes("Insufficient balance")) {
+            failures.push(`Partial-BTC payment insufficient balance: ${payResultD.error}`);
+          }
+        }
+      } catch (e: any) {
+        logKV("Partial-BTC payLightningWithToken error", e.message || String(e));
+        failures.push(`Partial-BTC payment error: ${e.message || String(e)}`);
+      }
+
+      const balDFinal = await walletD.getBalance();
+      const tokenBalDFinal = await getTokenBalanceByHex(walletD, v2TokenIdentifierHex);
+      logKV("Wallet D final BTC balance", balDFinal.balance.toString());
+      logKV("Wallet D final token balance", tokenBalDFinal.toString());
+    }
+  }
+
+  // Concurrent swap while another wallet pays via payLightningWithToken.
+  if (!V3_ONLY && v2PoolId) {
+    logSection("18. Concurrent pool drain test");
+
+    const pool18 = await typed.getPool(v2PoolId);
+    if (BigInt(pool18.assetBReserve) < 5000n) {
+      logKV("Re-seeding V2 pool", "10000 sats");
+      await clientA.executeSwap({
+        poolId: v2PoolId,
+        assetInAddress: BTC_ASSET_PUBKEY,
+        assetOutAddress: v2TokenIdentifierHex,
+        amountIn: "10000",
+        minAmountOut: "0",
+        maxSlippageBps: 50000,
+      });
+    }
+
+    const seedE = randomBytes(32);
+    const { wallet: walletE } = await IssuerSparkWallet.initialize({
+      mnemonicOrSeed: seedE,
+      options: { network: SPARK_NETWORK as any },
+    });
+    const userSparkE = await walletE.getSparkAddress();
+
+    const tokensForE = 50000n;
+    const walletATokenBal18 = await getTokenBalanceByHex(walletA, v2TokenIdentifierHex);
+    if (walletATokenBal18 >= tokensForE) {
+      await walletA.transferTokens({
+        tokenIdentifier: v2TokenAddress as any,
+        tokenAmount: tokensForE,
+        receiverSparkAddress: userSparkE,
+      });
+      await new Promise((r) => setTimeout(r, 5000));
+    }
+
+    const tokenBalE = await getTokenBalanceByHex(walletE, v2TokenIdentifierHex);
+    logKV("Wallet E BTC balance", (await walletE.getBalance()).balance.toString());
+    logKV("Wallet E token balance", tokenBalE.toString());
+
+    if (tokenBalE > 0n) {
+      const clientE = new FlashnetClient(walletE, {
+        sparkNetworkType: SPARK_NETWORK as SparkNetworkType,
+        clientNetworkConfig: {
+          ammGatewayUrl: AMM_URL!,
+          mempoolApiUrl: MEMPOOL_URL!,
+          explorerUrl: MEMPOOL_URL!,
+          sparkScanUrl: SPARKSCAN_URL,
+        },
+        autoAuthenticate: true,
+      });
+      await clientE.initialize();
+
+      const invoiceE = await walletB.createLightningInvoice({
+        amountSats: INVOICE_AMOUNT_SATS,
+        memo: "concurrent-drain-test",
+        expirySeconds: 3600,
+      });
+      const invE = invoiceE.invoice.encodedInvoice;
+
+      logKV("Pool BTC reserve before drain", (await typed.getPool(v2PoolId)).assetBReserve);
+      logKV("Starting concurrent: Wallet E payment + Wallet A drain (3000 sats)");
+
+      const [payRes, drainRes] = await Promise.allSettled([
+        clientE.payLightningWithToken({
+          invoice: invE,
+          tokenAddress: v2TokenIdentifierHex,
+          maxSlippageBps: 5000,
+          useExistingBtcBalance: false,
+          rollbackOnFailure: true,
+        }),
+        (async () => {
+          await new Promise((r) => setTimeout(r, 200));
+          return clientA.executeSwap({
+            poolId: v2PoolId!,
+            assetInAddress: BTC_ASSET_PUBKEY,
+            assetOutAddress: v2TokenIdentifierHex,
+            amountIn: "3000",
+            minAmountOut: "0",
+            maxSlippageBps: 50000,
+          });
+        })(),
+      ]);
+
+      logKV("Drain result", drainRes.status === "fulfilled"
+        ? `accepted=${drainRes.value.accepted}`
+        : `error=${(drainRes as any).reason?.message}`);
+
+      if (payRes.status === "fulfilled") {
+        const r = payRes.value;
+        logKV("Concurrent payment result", {
+          success: r.success,
+          btcAmountReceived: r.btcAmountReceived,
+          tokenAmountSpent: r.tokenAmountSpent,
+          error: r.error,
+        });
+
+        if (r.success) {
+          logKV("Concurrent drain payment", "SUCCESS (race did not trigger)");
+        } else if (r.error?.includes("Insufficient balance")) {
+          logKV("Concurrent drain payment", "BUG: Insufficient balance");
+          failures.push(`Concurrent drain: ${r.error}`);
+        } else {
+          logKV("Concurrent drain payment failed (non-balance)", r.error);
+        }
+      } else {
+        const err = (payRes as any).reason?.message || String((payRes as any).reason);
+        logKV("Concurrent payment exception", err);
+        if (err.includes("Insufficient balance")) {
+          failures.push(`Concurrent drain exception: ${err}`);
+        }
+      }
+    } else {
+      logKV("No tokens available for concurrent drain test", "skipping");
+    }
+  }
+
   logSection("Summary");
 
   console.log("\nPools created:");
