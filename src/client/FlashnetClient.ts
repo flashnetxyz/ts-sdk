@@ -3240,11 +3240,27 @@ export class FlashnetClient {
         ? pool.assetBAddress
         : pool.assetAAddress;
 
-      // Calculate min amount out with slippage protection
-      const minBtcOut = this.calculateMinAmountOut(
+      // Compute effective lightning fee early so it can be used for the
+      // minAmountOut floor and the post-swap guard.
+      const effectiveMaxLightningFee =
+        maxLightningFeeSats ?? quote.estimatedLightningFee;
+
+      // Calculate min amount out with slippage protection.
+      // Floor: never accept less BTC than the lightning payment actually
+      // needs (invoice amount + max lightning fee). Without this floor the
+      // percentage-based slippage can drop below baseBtcNeeded, causing the
+      // subsequent lightning payment to fail with "Insufficient balance".
+      const slippageMin = this.calculateMinAmountOut(
         quote.btcAmountRequired,
         maxSlippageBps
       );
+      const baseBtcNeeded = !quote.isZeroAmountInvoice
+        ? BigInt(quote.invoiceAmountSats) + BigInt(effectiveMaxLightningFee)
+        : 0n;
+      const minBtcOut =
+        BigInt(slippageMin) >= baseBtcNeeded
+          ? slippageMin
+          : baseBtcNeeded.toString();
 
       // Execute the swap
       const swapResponse = await this.executeSwap({
@@ -3276,8 +3292,6 @@ export class FlashnetClient {
       let canPayImmediately = false;
       if (!quote.isZeroAmountInvoice && useExistingBtcBalance) {
         const invoiceAmountSats = await this.decodeInvoiceAmount(invoice);
-        const effectiveMaxLightningFee =
-          maxLightningFeeSats ?? quote.estimatedLightningFee;
         const btcNeededForPayment =
           invoiceAmountSats + effectiveMaxLightningFee;
         const balance = await this.getBalance();
@@ -3304,9 +3318,7 @@ export class FlashnetClient {
         }
       }
 
-      // Step 6: Calculate Lightning fee and payment amount
-      const effectiveMaxLightningFee =
-        maxLightningFeeSats ?? quote.estimatedLightningFee;
+      // Step 6: Calculate payment amount
       const btcReceived = swapResponse.amountOut || quote.btcAmountRequired;
 
       // Step 7: Pay the Lightning invoice
@@ -3341,10 +3353,34 @@ export class FlashnetClient {
             preferSpark,
           });
         } else {
-          // Standard invoice: pay the specified amount
+          // Standard invoice: pay the specified amount.
+          // Use the wallet's actual BTC balance (pre-existing + swap output)
+          // rather than just the swap output when deciding the fee budget.
+          const walletBalance = (await this.getBalance()).balance;
+          const invoiceBig = BigInt(quote.invoiceAmountSats);
+          const fullFee = BigInt(effectiveMaxLightningFee);
+          let adjustedMaxFee = effectiveMaxLightningFee;
+
+          if (walletBalance < invoiceBig + fullFee) {
+            const available = walletBalance - invoiceBig;
+            if (available <= 0n) {
+              return {
+                success: false,
+                poolId: quote.poolId,
+                tokenAmountSpent: quote.tokenAmountRequired,
+                btcAmountReceived: btcReceived,
+                swapTransferId: swapResponse.outboundTransferId,
+                ammFeePaid: quote.estimatedAmmFee,
+                sparkTokenTransferId: swapResponse.inboundSparkTransferId,
+                error: `Wallet balance (${walletBalance} sats) does not cover invoice amount (${quote.invoiceAmountSats} sats).`,
+              };
+            }
+            adjustedMaxFee = Number(available);
+          }
+
           lightningPayment = await (this._wallet as any).payLightningInvoice({
             invoice,
-            maxFeeSats: effectiveMaxLightningFee,
+            maxFeeSats: adjustedMaxFee,
             preferSpark,
           });
         }
