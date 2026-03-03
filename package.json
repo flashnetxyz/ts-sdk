@@ -1,6 +1,6 @@
 {
   "name": "@flashnet/sdk",
-  "version": "0.5.6",
+  "version": "0.5.7",
   "main": "./dist/cjs/index.js",
   "module": "./dist/esm/index.js",
   "types": "./dist/esm/index.d.ts",
@@ -80,8 +80,8 @@
     "typescript": "^5.8.3"
   },
   "peerDependencies": {
-    "@buildonspark/issuer-sdk": "^0.1.12",
-    "@buildonspark/spark-sdk": "^0.6.2",
+    "@buildonspark/issuer-sdk": "latest",
+    "@buildonspark/spark-sdk": "latest",
     "typescript": "^5",
     "react-native-get-random-values": ">=1.11.0"
   },
