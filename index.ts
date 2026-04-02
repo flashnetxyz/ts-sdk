@@ -1,7 +1,8 @@
 // Export all types
 
 // Export execution layer client (new — talks to flashnet-execution gateway)
-export { ExecutionClient } from "./src/execution";
+export { ExecutionClient, Conductor } from "./src/execution";
+export type { SwapParams, SwapBTCParams } from "./src/execution";
 export type {
   CanonicalIntentAction,
   CanonicalIntentMessage,
