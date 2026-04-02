@@ -64,6 +64,7 @@
     "test:e2e:v3": "npx tsx tests/e2e-concentrated-liquidity-sdk.ts",
     "test:e2e:all": "npm run test:e2e && npm run test:e2e:v3 && npm run test:e2e:lightning",
     "test:e2e:lightning": "npx tsx tests/e2e-lightning-pools.ts",
+    "test:e2e:execution": "bun run tests/e2e-execution.ts",
     "lint": "biome check .",
     "lint:fix": "biome check --write .",
     "format": "biome format --write .",

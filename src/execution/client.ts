@@ -168,7 +168,8 @@ export class ExecutionClient {
     const transfers: CanonicalTransferEntry[] = deposits.map((d) => {
       const entry: CanonicalTransferEntry = {
         transferId: d.sparkTransferId,
-        amountSats: Number(d.amount),
+        amountSats:
+          typeof d.amount === "bigint" ? Number(d.amount) : d.amount,
         assetType: d.asset.type === "btc" ? "NativeSats" : "BridgedToken",
       };
       if (d.asset.type === "token") {
@@ -192,7 +193,8 @@ export class ExecutionClient {
       deposits: deposits.map((d) => ({
         sparkTransferId: d.sparkTransferId,
         asset: d.asset,
-        amount: Number(d.amount),
+        amount:
+          typeof d.amount === "bigint" ? d.amount.toString() : d.amount,
       })),
       signature,
       nonce,
@@ -282,6 +284,9 @@ function hexToBytes(hex: string): Uint8Array {
     throw new Error(
       `hexToBytes: input has odd length (${clean.length} hex chars)`
     );
+  }
+  if (clean.length > 0 && !/^[0-9a-fA-F]+$/.test(clean)) {
+    throw new Error("hexToBytes: input contains invalid hex characters");
   }
   const bytes = new Uint8Array(clean.length / 2);
   for (let i = 0; i < bytes.length; i++) {
