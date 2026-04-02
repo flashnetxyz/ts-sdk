@@ -119,7 +119,9 @@ export class ExecutionClient {
     params: ExecuteIntentParams & { signedTxHash?: string }
   ): Promise<ExecuteResponse> {
     this.requireAuth();
-    validateDeposits(params.deposits);
+    if (params.deposits.length > 0) {
+      validateDeposits(params.deposits);
+    }
 
     const txHash =
       params.signedTxHash ?? keccak256Hex(hexToBytes(params.signedTx));
