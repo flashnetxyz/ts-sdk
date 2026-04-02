@@ -102,7 +102,7 @@ export class ExecutionClient {
     };
 
     return this.submitIntent(params.chainId, params.deposits, action, {
-      recipient: params.recipient,
+      recipient: params.recipient.toLowerCase(),
     });
   }
 
@@ -168,7 +168,7 @@ export class ExecutionClient {
     const transfers: CanonicalTransferEntry[] = deposits.map((d) => {
       const entry: CanonicalTransferEntry = {
         transferId: d.sparkTransferId,
-        amountSats: d.amount,
+        amountSats: Number(d.amount),
         assetType: d.asset.type === "btc" ? "NativeSats" : "BridgedToken",
       };
       if (d.asset.type === "token") {
@@ -192,7 +192,7 @@ export class ExecutionClient {
       deposits: deposits.map((d) => ({
         sparkTransferId: d.sparkTransferId,
         asset: d.asset,
-        amount: d.amount,
+        amount: Number(d.amount),
       })),
       signature,
       nonce,
@@ -260,7 +260,7 @@ function validateDeposits(deposits: Deposit[]): void {
     if (!d.sparkTransferId || d.sparkTransferId.trim() === "") {
       throw new Error(`deposits[${i}].sparkTransferId is required`);
     }
-    if (d.amount <= 0) {
+    if (typeof d.amount === "bigint" ? d.amount <= 0n : d.amount <= 0) {
       throw new Error(`deposits[${i}].amount must be greater than zero`);
     }
     if (
@@ -278,6 +278,11 @@ function validateDeposits(deposits: Deposit[]): void {
 function hexToBytes(hex: string): Uint8Array {
   const clean =
     hex.startsWith("0x") || hex.startsWith("0X") ? hex.slice(2) : hex;
+  if (clean.length % 2 !== 0) {
+    throw new Error(
+      `hexToBytes: input has odd length (${clean.length} hex chars)`
+    );
+  }
   const bytes = new Uint8Array(clean.length / 2);
   for (let i = 0; i < bytes.length; i++) {
     bytes[i] = Number.parseInt(clean.substring(i * 2, i * 2 + 2), 16);
