@@ -12,6 +12,7 @@
  */
 
 export { ExecutionClient } from "./client";
+export { Conductor, type SwapParams, type SwapBTCParams } from "./conductor";
 export type {
   CanonicalIntentAction,
   CanonicalIntentMessage,
