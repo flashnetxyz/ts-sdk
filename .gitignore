@@ -63,3 +63,6 @@ tsconfig.tsbuildinfo
 
 # Bun
 bun.lockb
+
+# Claude Code hooks (stubs for cross-repo hook compatibility)
+.claude/

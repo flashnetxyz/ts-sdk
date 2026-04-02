@@ -1,5 +1,20 @@
 // Export all types
 
+// Export execution layer client (new — talks to flashnet-execution gateway)
+export { ExecutionClient } from "./src/execution";
+export type {
+  CanonicalIntentAction,
+  CanonicalIntentMessage,
+  CanonicalTransferEntry,
+  Deposit,
+  DepositAsset,
+  DepositIntentParams,
+  ExecuteIntentParams,
+  ExecuteResponse,
+  ExecutionClientConfig,
+  ExecutionSigner,
+} from "./src/execution";
+
 export type { RequestOptions } from "./src/api/client";
 // Export API client and typed endpoints
 export { ApiClient } from "./src/api/client";

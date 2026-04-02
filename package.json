@@ -39,6 +39,11 @@
       "types": "./dist/esm/src/client/FlashnetClient.d.ts",
       "import": "./dist/esm/src/client/FlashnetClient.js",
       "require": "./dist/cjs/src/client/FlashnetClient.js"
+    },
+    "./execution": {
+      "types": "./dist/esm/src/execution/index.d.ts",
+      "import": "./dist/esm/src/execution/index.js",
+      "require": "./dist/cjs/src/execution/index.js"
     }
   },
   "files": [
