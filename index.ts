@@ -1,8 +1,37 @@
 // Export all types
 
 // Export execution layer client (new — talks to flashnet-execution gateway)
-export { ExecutionClient, Conductor } from "./src/execution";
-export type { SwapParams, SwapBTCParams } from "./src/execution";
+export { ExecutionClient, Conductor, swap, swapBTC } from "./src/execution";
+export {
+  fetchTokenInfo,
+  fetchTokenBalance,
+  fetchNativeBalance,
+  fetchAllowance,
+  fetchNonce,
+} from "./src/execution";
+export { getPoolAddress, fetchPoolInfo, sortTokens } from "./src/execution";
+export {
+  priceToSqrtPriceX96,
+  sqrtPriceX96ToPrice,
+  fullRangeTicks,
+  FEE_TIERS,
+} from "./src/execution";
+export { encodeCreateBTCPool, encodeCreatePoolParams } from "./src/execution";
+export type {
+  SwapParams,
+  SwapBTCParams,
+  ConductorConfig,
+  EvmTransactionSigner,
+  UnsignedTransaction,
+  SwapResult,
+  SwapRequest,
+  SwapBTCRequest,
+  TokenInfo,
+  PoolInfo,
+  CreateBTCPoolParams,
+  CreatePoolParams,
+  PermitSignature,
+} from "./src/execution";
 export type {
   CanonicalIntentAction,
   CanonicalIntentMessage,
