@@ -115,6 +115,12 @@ function abiEncodeAddress(addr: string): string {
   return clean.toLowerCase().padStart(64, "0");
 }
 
-function abiEncodeUint(value: bigint, _bits: number): string {
+function abiEncodeUint(value: bigint, bits: number): string {
+  const max = (1n << BigInt(bits)) - 1n;
+  if (value < 0n || value > max) {
+    throw new Error(
+      `abiEncodeUint: value ${value} out of range for uint${bits}`
+    );
+  }
   return value.toString(16).padStart(64, "0");
 }

@@ -16,8 +16,8 @@ export interface Deposit {
   sparkTransferId: string;
   /** The asset being deposited. */
   asset: DepositAsset;
-  /** Amount in base units (sats for BTC, smallest unit for tokens). */
-  amount: number;
+  /** Amount in base units (sats for BTC, smallest unit for tokens). Use bigint for precision with large token amounts. */
+  amount: number | bigint;
 }
 
 /** Request to submit a deposit-only intent (credit recipient without executing). */
@@ -80,7 +80,7 @@ export interface ExecutionSigner {
  */
 export interface CanonicalTransferEntry {
   transferId: string;
-  amountSats: number;
+  amountSats: number | bigint;
   assetType: "NativeSats" | "BridgedToken";
   tokenId?: string;
 }
