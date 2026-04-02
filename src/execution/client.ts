@@ -186,6 +186,7 @@ export class ExecutionClient {
     };
 
     const messageJson = JSON.stringify(canonicalMessage);
+    console.warn("[ExecutionClient] canonical JSON:", messageJson);
     const signature = await this.signer.signMessage(messageJson);
 
     const body: Record<string, unknown> = {
