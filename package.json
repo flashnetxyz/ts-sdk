@@ -50,6 +50,7 @@
     "dist"
   ],
   "scripts": {
+    "prepare": "npm run build",
     "prebuild": "rm -rf dist",
     "build": "npm run type-check && rollup -c",
     "dev": "rollup -c -w",
