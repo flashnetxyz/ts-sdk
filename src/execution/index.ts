@@ -73,6 +73,18 @@ export {
   type PermitSignature,
 } from "./pool-creation";
 
+// Spark Bridge: withdrawals + token resolution
+export {
+  encodeWithdrawSats,
+  encodeWithdrawToken,
+  queryBridgedTokenAddress,
+  waitForBridgedTokenAddress,
+  withdrawSats,
+  withdrawToken,
+  type BridgeConfig,
+  type WithdrawResult,
+} from "./bridge";
+
 // Price math
 export {
   priceToSqrtPriceX96,
