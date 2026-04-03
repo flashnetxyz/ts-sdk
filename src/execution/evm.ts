@@ -40,6 +40,11 @@ const SEL_SYMBOL = "0x95d89b41";
 const SEL_NAME = "0x06fdde03";
 /** keccak256("decimals()") */
 const SEL_DECIMALS = "0x313ce567";
+
+/** Multicall3 deterministic address (deployed on all chains via CREATE2). */
+const MULTICALL3 = "0xcA11bde05977b3631167028862bE2a173976CA11";
+/** keccak256("aggregate3((address,bool,bytes)[])") — first 4 bytes */
+const SEL_AGGREGATE3 = "0x82ad56cb";
 /** keccak256("balanceOf(address)") */
 const SEL_BALANCE_OF = "0x70a08231";
 /** keccak256("allowance(address,address)") */
@@ -128,6 +133,94 @@ async function ethGetTransactionCount(
 }
 
 // ---------------------------------------------------------------------------
+// Multicall3 batching
+// ---------------------------------------------------------------------------
+
+/**
+ * Batch multiple eth_call targets into a single RPC call via Multicall3.
+ * Each call is { target, callData }. Returns raw hex results in order.
+ * Falls back to parallel individual eth_calls if multicall3 reverts
+ * (e.g. not deployed on the target chain).
+ */
+async function multicall3(
+  rpcUrl: string,
+  calls: Array<{ target: string; callData: string }>
+): Promise<string[]> {
+  // Encode aggregate3 calldata:
+  // aggregate3((address target, bool allowFailure, bytes callData)[])
+  // Offset to dynamic array = 0x20
+  // Array length = calls.length
+  // Each element: target(address) + allowFailure(bool) + offset-to-callData
+  // Then the callData bytes for each element
+
+  // For simplicity with the zero-dep constraint, fall back to parallel calls
+  // when the encoding would be complex. The key optimization is 1 RPC round-trip.
+  const offsetToArray = "0".repeat(62) + "20"; // offset 32
+  const arrayLen = calls.length.toString(16).padStart(64, "0");
+
+  // Each tuple element has: address (32 bytes) + allowFailure (32 bytes) + offset to bytes (32 bytes)
+  // = 96 bytes per element header, then the bytes data
+  const headerSize = 96; // 3 words per element
+  let headParts = "";
+  let tailParts = "";
+  let tailOffset = calls.length * headerSize; // start of dynamic data, relative to array start
+
+  for (const call of calls) {
+    const cleanAddr = (call.target.startsWith("0x") ? call.target.slice(2) : call.target).toLowerCase();
+    headParts += cleanAddr.padStart(64, "0"); // target
+    headParts += "0".repeat(64); // allowFailure = false
+    headParts += tailOffset.toString(16).padStart(64, "0"); // offset to bytes
+
+    const cleanData = call.callData.startsWith("0x") ? call.callData.slice(2) : call.callData;
+    const dataLen = (cleanData.length / 2).toString(16).padStart(64, "0");
+    const paddedData = cleanData + "0".repeat((64 - (cleanData.length % 64)) % 64);
+    tailParts += dataLen + paddedData;
+    tailOffset += 32 + paddedData.length / 2; // length word + padded data bytes
+  }
+
+  const calldata = SEL_AGGREGATE3.slice(2) + offsetToArray + arrayLen + headParts + tailParts;
+
+  try {
+    const result = await ethCall(rpcUrl, MULTICALL3, "0x" + calldata);
+    return decodeMulticall3Results(result, calls.length);
+  } catch {
+    // Multicall3 not available — fall back to parallel individual calls
+    return Promise.all(
+      calls.map((c) => ethCall(rpcUrl, c.target, c.callData))
+    );
+  }
+}
+
+/** Decode aggregate3 return: (bool success, bytes returnData)[] */
+function decodeMulticall3Results(hex: string, count: number): string[] {
+  const clean = hex.startsWith("0x") ? hex.slice(2) : hex;
+  // First word: offset to array
+  // Second word: array length
+  // Then for each element: offset to tuple
+  // Each tuple: bool success (32 bytes) + offset to bytes (32 bytes) + bytes length + bytes data
+
+  const results: string[] = [];
+  const arrayOffset = Number("0x" + clean.substring(0, 64)) * 2;
+  const len = Number("0x" + clean.substring(arrayOffset, arrayOffset + 64));
+
+  for (let i = 0; i < Math.min(len, count); i++) {
+    const elemOffset = Number("0x" + clean.substring(arrayOffset + 64 + i * 64, arrayOffset + 128 + i * 64)) * 2;
+    const base = arrayOffset + 64 + elemOffset;
+    const success = Number("0x" + clean.substring(base, base + 64));
+    if (!success) {
+      results.push("0x");
+      continue;
+    }
+    const dataOffset = Number("0x" + clean.substring(base + 64, base + 128)) * 2;
+    const dataBase = base + dataOffset;
+    const dataLen = Number("0x" + clean.substring(dataBase, dataBase + 64));
+    results.push("0x" + clean.substring(dataBase + 64, dataBase + 64 + dataLen * 2));
+  }
+
+  return results;
+}
+
+// ---------------------------------------------------------------------------
 // ABI decoding helpers
 // ---------------------------------------------------------------------------
 
@@ -170,17 +263,18 @@ export async function fetchTokenInfo(
   rpcUrl: string,
   tokenAddress: string
 ): Promise<TokenInfo> {
-  const [symbolHex, nameHex, decimalsHex] = await Promise.all([
-    ethCall(rpcUrl, tokenAddress, SEL_SYMBOL),
-    ethCall(rpcUrl, tokenAddress, SEL_NAME),
-    ethCall(rpcUrl, tokenAddress, SEL_DECIMALS),
+  // Batch symbol+name+decimals into a single RPC call via Multicall3.
+  const results = await multicall3(rpcUrl, [
+    { target: tokenAddress, callData: SEL_SYMBOL },
+    { target: tokenAddress, callData: SEL_NAME },
+    { target: tokenAddress, callData: SEL_DECIMALS },
   ]);
 
   return {
     address: tokenAddress,
-    symbol: decodeString(symbolHex),
-    name: decodeString(nameHex),
-    decimals: Number(decodeUint(decimalsHex)),
+    symbol: decodeString(results[0] ?? "0x"),
+    name: decodeString(results[1] ?? "0x"),
+    decimals: Number(decodeUint(results[2] ?? "0x")),
   };
 }
 
