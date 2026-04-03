@@ -152,7 +152,7 @@ function decodeString(hex: string): string {
 function decodeUint(hex: string): bigint {
   const clean = hex.startsWith("0x") ? hex.slice(2) : hex;
   if (clean.length === 0) return 0n;
-  return BigInt("0x" + clean.replace(/^0+/, "") || "0");
+  return BigInt("0x" + (clean.replace(/^0+/, "") || "0"));
 }
 
 // ---------------------------------------------------------------------------

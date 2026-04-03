@@ -168,10 +168,16 @@ export class ExecutionClient {
     const nonce = crypto.randomUUID();
 
     const transfers: CanonicalTransferEntry[] = deposits.map((d) => {
+      const amount =
+        typeof d.amount === "bigint" ? Number(d.amount) : d.amount;
+      if (!Number.isSafeInteger(amount)) {
+        throw new Error(
+          `deposit amount ${d.amount} exceeds safe integer range (max ${Number.MAX_SAFE_INTEGER})`
+        );
+      }
       const entry: CanonicalTransferEntry = {
         transferId: d.sparkTransferId,
-        amountSats:
-          typeof d.amount === "bigint" ? Number(d.amount) : d.amount,
+        amountSats: amount,
         assetType: d.asset.type === "btc" ? "NativeSats" : "BridgedToken",
       };
       if (d.asset.type === "token") {
