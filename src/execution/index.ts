@@ -34,6 +34,8 @@ export {
   Conductor,
   swap,
   swapBTC,
+  approveToken,
+  swapWithApproval,
   type SwapParams,
   type SwapBTCParams,
   type ConductorConfig,
