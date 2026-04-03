@@ -23,7 +23,7 @@
 
 import type { ExecutionClient } from "./client";
 import type { Deposit, ExecuteResponse } from "./types";
-import { fetchNonce } from "./evm";
+import { fetchAllowance, fetchNonce } from "./evm";
 
 /** Parameters for Conductor.swap() — ERC20 to ERC20. */
 export interface SwapParams {
@@ -54,12 +54,17 @@ export interface SwapBTCParams {
 }
 
 const ZERO_ADDRESS = "0x0000000000000000000000000000000000000000";
+const MAX_UINT256 = (1n << 256n) - 1n;
+const DEFAULT_SWAP_GAS_LIMIT = 1_000_000n;
+const DEFAULT_APPROVE_GAS_LIMIT = 100_000n;
 
 // Function selectors (keccak256 of canonical signature, first 4 bytes)
 // cast sig "swap(address,address,uint24,uint256,uint256,address)" → 0xfb408d07
 const SWAP_SELECTOR = "fb408d07";
 // cast sig "swapBTC(address,uint24,uint256,address)" → 0xad78c51c
 const SWAP_BTC_SELECTOR = "ad78c51c";
+// cast sig "approve(address,uint256)" → 0x095ea7b3
+const APPROVE_SELECTOR = "095ea7b3";
 
 /**
  * Conductor contract ABI encoding helpers.
@@ -111,6 +116,19 @@ export const Conductor = {
 
   /** The function selector for swapBTC(address,uint24,uint256,address). */
   SWAP_BTC_SELECTOR: `0x${SWAP_BTC_SELECTOR}` as const,
+
+  /**
+   * Encode calldata for ERC20 approve(spender, amount).
+   * Used internally by swapWithApproval but exposed for low-level usage.
+   */
+  encodeApprove(spender: string, amount: bigint): string {
+    return (
+      "0x" +
+      APPROVE_SELECTOR +
+      abiEncodeAddress(spender) +
+      abiEncodeUint(amount, 256)
+    );
+  },
 };
 
 // ---------------------------------------------------------------------------
@@ -268,7 +286,7 @@ export async function swap(
     value: 0n,
     chainId: config.chainId,
     nonce,
-    gasLimit: 500_000n,
+    gasLimit: DEFAULT_SWAP_GAS_LIMIT,
     maxFeePerGas: 0n,
     maxPriorityFeePerGas: 0n,
   });
@@ -322,7 +340,7 @@ export async function swapBTC(
     value: request.amountIn,
     chainId: config.chainId,
     nonce,
-    gasLimit: 500_000n,
+    gasLimit: DEFAULT_SWAP_GAS_LIMIT,
     maxFeePerGas: 0n,
     maxPriorityFeePerGas: 0n,
   });
@@ -338,4 +356,87 @@ export async function swapBTC(
     intentId: response.intentId,
     status: response.status,
   };
+}
+
+// ---------------------------------------------------------------------------
+// Approve + swap helpers
+// ---------------------------------------------------------------------------
+
+/**
+ * Submit an ERC20 approve transaction via an execute intent.
+ *
+ * Grants `spender` an unlimited allowance for `token` from the signer's address.
+ * Used internally by swapWithApproval but exposed for manual flows.
+ */
+export async function approveToken(
+  client: ExecutionClient,
+  config: ConductorConfig,
+  token: string,
+  spender: string,
+  evmSigner: EvmTransactionSigner,
+  amount: bigint = MAX_UINT256
+): Promise<SwapResult> {
+  const calldata = Conductor.encodeApprove(spender, amount);
+  const senderAddress = await evmSigner.getAddress();
+  const nonce = await fetchNonce(config.rpcUrl, senderAddress);
+
+  const signedTx = await evmSigner.signTransaction({
+    to: token,
+    data: calldata,
+    value: 0n,
+    chainId: config.chainId,
+    nonce,
+    gasLimit: DEFAULT_APPROVE_GAS_LIMIT,
+    maxFeePerGas: 0n,
+    maxPriorityFeePerGas: 0n,
+  });
+
+  const response: ExecuteResponse = await client.submitExecute({
+    chainId: config.chainId,
+    deposits: [],
+    signedTx,
+  });
+
+  return {
+    submissionId: response.submissionId,
+    intentId: response.intentId,
+    status: response.status,
+  };
+}
+
+/**
+ * Execute an ERC20-to-ERC20 swap with automatic approval handling.
+ *
+ * Checks the current allowance for tokenIn on the Conductor. If insufficient,
+ * submits an approve intent first, waits for it to land, then swaps.
+ * This is the highest-level swap API — one call does everything.
+ */
+export async function swapWithApproval(
+  client: ExecutionClient,
+  config: ConductorConfig,
+  request: SwapRequest,
+  deposits: Deposit[],
+  evmSigner: EvmTransactionSigner,
+  approvalWaitMs: number = 3000
+): Promise<SwapResult> {
+  const senderAddress = await evmSigner.getAddress();
+  const allowance = await fetchAllowance(
+    config.rpcUrl,
+    request.tokenIn,
+    senderAddress,
+    config.conductorAddress
+  );
+
+  if (allowance < request.amountIn) {
+    await approveToken(
+      client,
+      config,
+      request.tokenIn,
+      config.conductorAddress,
+      evmSigner
+    );
+    await new Promise((resolve) => setTimeout(resolve, approvalWaitMs));
+  }
+
+  return swap(client, config, request, deposits, evmSigner);
 }
