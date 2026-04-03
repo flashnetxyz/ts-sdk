@@ -24,9 +24,7 @@ import {
 } from "viem";
 import { uniswapV3FactoryAbi, uniswapV3PoolAbi } from "./abis/uniswapV3";
 
-// ---------------------------------------------------------------------------
 // Types
-// ---------------------------------------------------------------------------
 
 export interface PoolInfo {
   address: string;
@@ -37,9 +35,7 @@ export interface PoolInfo {
   liquidity: bigint;
 }
 
-// ---------------------------------------------------------------------------
 // Client cache
-// ---------------------------------------------------------------------------
 
 const clientCache = new Map<string, PublicClient<Transport, Chain | undefined>>();
 
@@ -52,9 +48,7 @@ function getClient(rpcUrl: string): PublicClient<Transport, Chain | undefined> {
   return client;
 }
 
-// ---------------------------------------------------------------------------
 // Public API
-// ---------------------------------------------------------------------------
 
 /** Canonical token sorting (lower address first). */
 export function sortTokens(a: string, b: string): [string, string] {

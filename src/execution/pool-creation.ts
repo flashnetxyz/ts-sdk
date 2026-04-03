@@ -22,9 +22,7 @@ import { conductorPoolCreationAbi } from "./abis/conductorPoolCreation";
 import { sortTokens } from "./pool";
 import { fullRangeTicks } from "./price-math";
 
-// ---------------------------------------------------------------------------
 // Types
-// ---------------------------------------------------------------------------
 
 /** EIP-2612 permit signature data for Conductor pool creation. */
 export interface PermitSignature {
@@ -62,9 +60,7 @@ export interface CreatePoolParams {
   feeRecipient: string;
 }
 
-// ---------------------------------------------------------------------------
 // Public API
-// ---------------------------------------------------------------------------
 
 /**
  * Encode calldata for Conductor.createBTCPool().
