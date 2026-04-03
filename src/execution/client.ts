@@ -270,6 +270,9 @@ function validateDeposits(deposits: Deposit[]): void {
     if (!d.sparkTransferId || d.sparkTransferId.trim() === "") {
       throw new Error(`deposits[${i}].sparkTransferId is required`);
     }
+    if (typeof d.amount === "number" && (Number.isNaN(d.amount) || !Number.isFinite(d.amount))) {
+      throw new Error(`deposits[${i}].amount is not a valid number`);
+    }
     if (typeof d.amount === "bigint" ? d.amount <= 0n : d.amount <= 0) {
       throw new Error(`deposits[${i}].amount must be greater than zero`);
     }
