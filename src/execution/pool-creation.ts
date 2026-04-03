@@ -130,7 +130,7 @@ function abiEncodeUint8(value: number): string {
 
 function abiEncodeBytes32(hex: string): string {
   const clean = hex.startsWith("0x") ? hex.slice(2) : hex;
-  return clean.padEnd(64, "0");
+  return clean.padStart(64, "0");
 }
 
 // ---------------------------------------------------------------------------
@@ -191,12 +191,8 @@ export function encodeCreateBTCPool(params: CreateBTCPoolParams): {
     abiEncodeBytes32(params.permit.r) +
     abiEncodeBytes32(params.permit.s);
 
-  // ABI encoding with tuple offsets
-  const paramsOffset = abiEncodeUint256(64n); // offset to first tuple (2 * 32 bytes)
-  const permitOffset = abiEncodeUint256(BigInt(64 + poolParams.length / 2)); // offset to second tuple
-
-  const calldata =
-    SEL_CREATE_BTC_POOL + paramsOffset + permitOffset + poolParams + permitData;
+  // Both tuples contain only static types — encode inline without offset words.
+  const calldata = SEL_CREATE_BTC_POOL + poolParams + permitData;
 
   return { calldata: "0x" + calldata.replace(/^0x/, ""), wbtcAmountWei: params.wbtcAmount };
 }
