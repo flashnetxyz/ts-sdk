@@ -13,16 +13,9 @@
  * ```
  */
 
-import {
-  createPublicClient,
-  http,
-  zeroAddress,
-  type Address,
-  type PublicClient,
-  type Transport,
-  type Chain,
-} from "viem";
+import { zeroAddress, type Address } from "viem";
 import { uniswapV3FactoryAbi, uniswapV3PoolAbi } from "./abis/uniswapV3";
+import { getClient } from "./rpc";
 
 // Types
 
@@ -33,19 +26,6 @@ export interface PoolInfo {
   sqrtPriceX96: bigint;
   tick: number;
   liquidity: bigint;
-}
-
-// Client cache
-
-const clientCache = new Map<string, PublicClient<Transport, Chain | undefined>>();
-
-function getClient(rpcUrl: string): PublicClient<Transport, Chain | undefined> {
-  let client = clientCache.get(rpcUrl);
-  if (!client) {
-    client = createPublicClient({ transport: http(rpcUrl) });
-    clientCache.set(rpcUrl, client);
-  }
-  return client;
 }
 
 // Public API
