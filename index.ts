@@ -1,7 +1,20 @@
 // Export all types
 
 // Export execution layer client (new — talks to flashnet-execution gateway)
-export { ExecutionClient, Conductor, swap, swapBTC } from "./src/execution";
+export {
+  ExecutionClient,
+  Conductor,
+  swap,
+  swapBTC,
+  approveToken,
+  swapWithApproval,
+  encodeWithdrawSats,
+  encodeWithdrawToken,
+  queryBridgedTokenAddress,
+  waitForBridgedTokenAddress,
+  withdrawSats,
+  withdrawToken,
+} from "./src/execution";
 export {
   fetchTokenInfo,
   fetchTokenBalance,
@@ -31,6 +44,8 @@ export type {
   CreateBTCPoolParams,
   CreatePoolParams,
   PermitSignature,
+  BridgeConfig,
+  WithdrawResult,
 } from "./src/execution";
 export type {
   CanonicalIntentAction,
