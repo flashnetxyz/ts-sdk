@@ -12,15 +12,9 @@
  * ```
  */
 
-import {
-  createPublicClient,
-  http,
-  type Address,
-  type PublicClient,
-  type Transport,
-  type Chain,
-} from "viem";
+import { type Address } from "viem";
 import { erc20Abi } from "./abis/erc20";
+import { getClient } from "./rpc";
 
 // Types
 
@@ -34,19 +28,6 @@ export interface TokenInfo {
   name: string;
   /** Number of decimal places (e.g. 18). */
   decimals: number;
-}
-
-// Client cache
-
-const clientCache = new Map<string, PublicClient<Transport, Chain | undefined>>();
-
-function getClient(rpcUrl: string): PublicClient<Transport, Chain | undefined> {
-  let client = clientCache.get(rpcUrl);
-  if (!client) {
-    client = createPublicClient({ transport: http(rpcUrl) });
-    clientCache.set(rpcUrl, client);
-  }
-  return client;
 }
 
 // Public API

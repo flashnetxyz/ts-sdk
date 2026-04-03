@@ -14,33 +14,16 @@
  */
 
 import {
-  createPublicClient,
-  http,
   encodeFunctionData,
   zeroAddress,
   type Address,
-  type PublicClient,
-  type Transport,
-  type Chain,
 } from "viem";
 import { sparkBridgeAbi } from "./abis/sparkBridge";
 import type { ExecutionClient } from "./client";
 import type { ExecuteResponse } from "./types";
 import type { EvmTransactionSigner } from "./conductor";
 import { fetchNonce } from "./evm";
-
-// Client cache
-
-const clientCache = new Map<string, PublicClient<Transport, Chain | undefined>>();
-
-function getClient(rpcUrl: string): PublicClient<Transport, Chain | undefined> {
-  let client = clientCache.get(rpcUrl);
-  if (!client) {
-    client = createPublicClient({ transport: http(rpcUrl) });
-    clientCache.set(rpcUrl, client);
-  }
-  return client;
-}
+import { getClient } from "./rpc";
 
 // Calldata encoding
 
