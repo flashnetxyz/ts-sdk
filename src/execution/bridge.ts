@@ -29,9 +29,7 @@ import type { ExecuteResponse } from "./types";
 import type { EvmTransactionSigner } from "./conductor";
 import { fetchNonce } from "./evm";
 
-// ---------------------------------------------------------------------------
 // Client cache
-// ---------------------------------------------------------------------------
 
 const clientCache = new Map<string, PublicClient<Transport, Chain | undefined>>();
 
@@ -44,9 +42,7 @@ function getClient(rpcUrl: string): PublicClient<Transport, Chain | undefined> {
   return client;
 }
 
-// ---------------------------------------------------------------------------
 // Calldata encoding
-// ---------------------------------------------------------------------------
 
 /**
  * Encode calldata for SparkBridge.withdrawSats(sparkRecipient).
@@ -83,9 +79,7 @@ export function encodeWithdrawToken(
   });
 }
 
-// ---------------------------------------------------------------------------
 // Bridge queries
-// ---------------------------------------------------------------------------
 
 /**
  * Query the EVM token address for a bridged Spark token.
@@ -135,9 +129,7 @@ export async function waitForBridgedTokenAddress(
   return null;
 }
 
-// ---------------------------------------------------------------------------
 // High-level withdraw functions
-// ---------------------------------------------------------------------------
 
 export interface BridgeConfig {
   bridgeAddress: string;

@@ -22,9 +22,7 @@ import {
 } from "viem";
 import { erc20Abi } from "./abis/erc20";
 
-// ---------------------------------------------------------------------------
 // Types
-// ---------------------------------------------------------------------------
 
 /** ERC-20 token metadata. */
 export interface TokenInfo {
@@ -38,9 +36,7 @@ export interface TokenInfo {
   decimals: number;
 }
 
-// ---------------------------------------------------------------------------
 // Client cache
-// ---------------------------------------------------------------------------
 
 const clientCache = new Map<string, PublicClient<Transport, Chain | undefined>>();
 
@@ -53,9 +49,7 @@ function getClient(rpcUrl: string): PublicClient<Transport, Chain | undefined> {
   return client;
 }
 
-// ---------------------------------------------------------------------------
 // Public API
-// ---------------------------------------------------------------------------
 
 /**
  * Fetch ERC-20 token metadata (symbol, name, decimals) in a single multicall.

@@ -159,9 +159,7 @@ export class ExecutionClient {
     return this.accessToken;
   }
 
-  // ---------------------------------------------------------------------------
   // Private
-  // ---------------------------------------------------------------------------
 
   private async submitIntent(
     chainId: number,
@@ -261,9 +259,7 @@ export class ExecutionClient {
   }
 }
 
-// ---------------------------------------------------------------------------
 // Utilities
-// ---------------------------------------------------------------------------
 
 function validateDeposits(deposits: Deposit[]): void {
   if (deposits.length === 0) {

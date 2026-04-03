@@ -92,9 +92,7 @@ export const Conductor = {
   },
 };
 
-// ---------------------------------------------------------------------------
 // High-level types
-// ---------------------------------------------------------------------------
 
 export interface ConductorConfig {
   conductorAddress: string;
@@ -143,9 +141,7 @@ export interface SwapBTCRequest {
   integrator?: string;
 }
 
-// ---------------------------------------------------------------------------
 // High-level swap functions
-// ---------------------------------------------------------------------------
 
 /** Execute an ERC20-to-ERC20 swap through the Conductor contract. */
 export async function swap(
@@ -219,9 +215,7 @@ export async function swapBTC(
   };
 }
 
-// ---------------------------------------------------------------------------
 // Approve + swap helpers
-// ---------------------------------------------------------------------------
 
 /** Submit an ERC20 approve transaction via an execute intent. */
 export async function approveToken(
