@@ -101,7 +101,7 @@ async function testHealthCheck(): Promise<void> {
 
   try {
     const health = await client.health();
-    assert(health !== undefined, "Health endpoint responds");
+    assert(health === true, "Health endpoint returns true");
     console.log(`  Health response:`, health);
   } catch (e) {
     failed++;

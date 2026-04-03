@@ -125,6 +125,9 @@ function abiEncodeInt24(value: number): string {
 }
 
 function abiEncodeUint8(value: number): string {
+  if (value < 0 || value > 255 || !Number.isInteger(value)) {
+    throw new Error(`abiEncodeUint8: value ${value} out of range [0, 255]`);
+  }
   return value.toString(16).padStart(64, "0");
 }
 
