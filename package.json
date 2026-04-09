@@ -39,12 +39,18 @@
       "types": "./dist/esm/src/client/FlashnetClient.d.ts",
       "import": "./dist/esm/src/client/FlashnetClient.js",
       "require": "./dist/cjs/src/client/FlashnetClient.js"
+    },
+    "./execution": {
+      "types": "./dist/esm/src/execution/index.d.ts",
+      "import": "./dist/esm/src/execution/index.js",
+      "require": "./dist/cjs/src/execution/index.js"
     }
   },
   "files": [
     "dist"
   ],
   "scripts": {
+    "prepare": "npm run build",
     "prebuild": "rm -rf dist",
     "build": "npm run type-check && rollup -c",
     "dev": "rollup -c -w",
@@ -58,6 +64,7 @@
     "test:e2e:v3": "npx tsx tests/e2e-concentrated-liquidity-sdk.ts",
     "test:e2e:all": "npm run test:e2e && npm run test:e2e:v3 && npm run test:e2e:lightning",
     "test:e2e:lightning": "npx tsx tests/e2e-lightning-pools.ts",
+    "test:e2e:execution": "bun run tests/e2e-execution.ts",
     "lint": "biome check .",
     "lint:fix": "biome check --write .",
     "format": "biome format --write .",
@@ -82,8 +89,8 @@
   "peerDependencies": {
     "@buildonspark/issuer-sdk": "latest",
     "@buildonspark/spark-sdk": "latest",
-    "typescript": "^5",
-    "react-native-get-random-values": ">=1.11.0"
+    "react-native-get-random-values": ">=1.11.0",
+    "typescript": "^5"
   },
   "peerDependenciesMeta": {
     "@buildonspark/spark-sdk": {
@@ -99,7 +106,8 @@
   "dependencies": {
     "bech32": "^2.0.0",
     "fast-sha256": "1.3.0",
-    "light-bolt11-decoder": "^3.2.0"
+    "light-bolt11-decoder": "^3.2.0",
+    "viem": "^2.47.6"
   },
   "repository": {
     "type": "git",
