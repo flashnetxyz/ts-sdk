@@ -25,6 +25,21 @@ import type { EvmTransactionSigner } from "./conductor";
 import { fetchNonce } from "./evm";
 import { getClient } from "./rpc";
 
+/**
+ * Conversion factor from satoshis to wei on Flashnet's EVM.
+ *
+ * On Flashnet, BTC is the native EVM currency (i.e. BTC ≡ ETH), so
+ * 1 sat = 10^-8 BTC and 1 wei = 10^-18 BTC, giving 1 sat = 10^10 wei.
+ *
+ * The SparkBridge contract interprets `msg.value` in wei, so any amount
+ * denominated in sats must be multiplied by this constant before being
+ * set as the transaction value.
+ *
+ * Mirrors `WEI_PER_SAT` in the Rust bridge implementation
+ * (`crates/flashnet-revm/src/bridge.rs`).
+ */
+const WEI_PER_SAT = 10_000_000_000n; // 10^10
+
 // Calldata encoding
 
 /**
@@ -127,7 +142,13 @@ export interface WithdrawResult {
 }
 
 /**
- * Withdraw native BTC from EVM back to Spark.
+ * Withdraw native BTC (sats) from EVM back to Spark.
+ *
+ * @param amount - Amount in **satoshis**. Internally converted to wei
+ *   (× {@link WEI_PER_SAT}) because the SparkBridge contract reads
+ *   `msg.value` in wei. Without this conversion the contract would see
+ *   a near-zero value — e.g. 1 000 sats sent as 1 000 wei instead of
+ *   the correct 10 000 000 000 000 wei (10^13).
  */
 export async function withdrawSats(
   client: ExecutionClient,
@@ -143,7 +164,7 @@ export async function withdrawSats(
   const signedTx = await evmSigner.signTransaction({
     to: config.bridgeAddress,
     data: calldata,
-    value: amount,
+    value: amount * WEI_PER_SAT,
     chainId: config.chainId,
     nonce,
     gasLimit: 200_000n,
