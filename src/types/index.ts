@@ -2047,7 +2047,8 @@ export interface LockPositionRequest {
 export interface LockPositionResponse {
   requestId: string;
   accepted: boolean;
-  lockInfo?: LpLockInfo;
+  lockUntilTimestamp?: string;
+  isIndefinite?: boolean;
   error?: string;
 }
 
