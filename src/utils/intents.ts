@@ -586,8 +586,8 @@ export function generateLockPositionIntentMessage(params: {
     userPublicKey: params.userPublicKey,
     lpIdentityPublicKey: params.lpIdentityPublicKey,
     lockUntilTimestamp: params.lockUntilTimestamp,
-    tickLower: params.tickLower,
-    tickUpper: params.tickUpper,
+    tickLower: params.tickLower ?? null,
+    tickUpper: params.tickUpper ?? null,
     nonce: params.nonce,
   };
 
@@ -612,9 +612,9 @@ export function generateTransferPositionIntentMessage(params: {
     userPublicKey: params.userPublicKey,
     lpIdentityPublicKey: params.lpIdentityPublicKey,
     newOwnerPublicKey: params.newOwnerPublicKey,
-    tickLower: params.tickLower,
-    tickUpper: params.tickUpper,
-    lpTokensToTransfer: params.lpTokensToTransfer,
+    tickLower: params.tickLower ?? null,
+    tickUpper: params.tickUpper ?? null,
+    lpTokensToTransfer: params.lpTokensToTransfer ?? null,
     nonce: params.nonce,
   };
 

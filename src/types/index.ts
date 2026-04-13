@@ -2076,8 +2076,8 @@ export interface ValidateLpLockPositionData {
   userPublicKey: string;
   lpIdentityPublicKey: string;
   lockUntilTimestamp: string;
-  tickLower?: number;
-  tickUpper?: number;
+  tickLower: number | null;
+  tickUpper: number | null;
   nonce: string;
 }
 
@@ -2085,9 +2085,9 @@ export interface ValidateLpTransferPositionData {
   userPublicKey: string;
   lpIdentityPublicKey: string;
   newOwnerPublicKey: string;
-  tickLower?: number;
-  tickUpper?: number;
-  lpTokensToTransfer?: string;
+  tickLower: number | null;
+  tickUpper: number | null;
+  lpTokensToTransfer: string | null;
   nonce: string;
 }
 
