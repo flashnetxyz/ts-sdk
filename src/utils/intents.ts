@@ -578,7 +578,6 @@ export function generateLockPositionIntentMessage(params: {
   userPublicKey: string;
   lpIdentityPublicKey: string;
   lockUntilTimestamp: string;
-  lockUntilBlockheight?: string;
   tickLower?: number;
   tickUpper?: number;
   nonce: string;
@@ -587,7 +586,6 @@ export function generateLockPositionIntentMessage(params: {
     userPublicKey: params.userPublicKey,
     lpIdentityPublicKey: params.lpIdentityPublicKey,
     lockUntilTimestamp: params.lockUntilTimestamp,
-    lockUntilBlockheight: params.lockUntilBlockheight,
     tickLower: params.tickLower,
     tickUpper: params.tickUpper,
     nonce: params.nonce,

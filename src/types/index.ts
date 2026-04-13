@@ -2029,7 +2029,6 @@ export interface LpLockInfo {
   poolId: string;
   ownerPublicKey: string;
   lockUntilTimestamp: string;
-  lockUntilBlockheight: string;
   tickLower?: number;
   tickUpper?: number;
   isIndefinite: boolean;
@@ -2039,7 +2038,6 @@ export interface LockPositionRequest {
   userPublicKey: string;
   poolId: string;
   lockUntilTimestamp: string;
-  lockUntilBlockheight?: string;
   tickLower?: number;
   tickUpper?: number;
   nonce: string;
@@ -2078,7 +2076,6 @@ export interface ValidateLpLockPositionData {
   userPublicKey: string;
   lpIdentityPublicKey: string;
   lockUntilTimestamp: string;
-  lockUntilBlockheight?: string;
   tickLower?: number;
   tickUpper?: number;
   nonce: string;

@@ -749,11 +749,9 @@ export class TypedAmmApi {
     poolId: string,
     ownerPublicKey?: string
   ): Promise<Types.GetPositionLocksResponse> {
-    const params = ownerPublicKey
-      ? `?ownerPublicKey=${ownerPublicKey}`
-      : "";
     return this.client.ammGet<Types.GetPositionLocksResponse>(
-      `/v1/liquidity/locks/${poolId}${params}`
+      `/v1/liquidity/locks/${poolId}`,
+      ownerPublicKey ? { params: { ownerPublicKey } } : undefined
     );
   }
 }
