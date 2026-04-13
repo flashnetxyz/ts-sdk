@@ -2023,6 +2023,77 @@ export interface ValidateDepositBalanceData {
   nonce: string;
 }
 
+// LP Lock & Transfer Types
+
+export interface LpLockInfo {
+  poolId: string;
+  ownerPublicKey: string;
+  lockUntilTimestamp: string;
+  lockUntilBlockheight: string;
+  tickLower?: number;
+  tickUpper?: number;
+  isIndefinite: boolean;
+}
+
+export interface LockPositionRequest {
+  userPublicKey: string;
+  poolId: string;
+  lockUntilTimestamp: string;
+  lockUntilBlockheight?: string;
+  tickLower?: number;
+  tickUpper?: number;
+  nonce: string;
+  signature: string;
+}
+
+export interface LockPositionResponse {
+  requestId: string;
+  accepted: boolean;
+  lockInfo?: LpLockInfo;
+  error?: string;
+}
+
+export interface TransferPositionRequest {
+  userPublicKey: string;
+  poolId: string;
+  newOwnerPublicKey: string;
+  tickLower?: number;
+  tickUpper?: number;
+  lpTokensToTransfer?: string;
+  nonce: string;
+  signature: string;
+}
+
+export interface TransferPositionResponse {
+  requestId: string;
+  accepted: boolean;
+  error?: string;
+}
+
+export interface GetPositionLocksResponse {
+  locks: LpLockInfo[];
+}
+
+export interface ValidateLpLockPositionData {
+  userPublicKey: string;
+  lpIdentityPublicKey: string;
+  lockUntilTimestamp: string;
+  lockUntilBlockheight?: string;
+  tickLower?: number;
+  tickUpper?: number;
+  nonce: string;
+}
+
+export interface ValidateLpTransferPositionData {
+  userPublicKey: string;
+  lpIdentityPublicKey: string;
+  newOwnerPublicKey: string;
+  tickLower?: number;
+  tickUpper?: number;
+  lpTokensToTransfer?: string;
+  nonce: string;
+}
+
 // Error Types
 // Re-export all error types from errors module
 export * from "./errors";
