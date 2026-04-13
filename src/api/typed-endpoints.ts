@@ -712,6 +712,50 @@ export class TypedAmmApi {
       request
     );
   }
+
+  /**
+   * Lock an LP position to prevent withdrawal until expiry
+   * @POST /v1/liquidity/lock
+   * @requires Bearer token
+   */
+  async lockPosition(
+    request: Types.LockPositionRequest
+  ): Promise<Types.LockPositionResponse> {
+    return this.client.ammPost<Types.LockPositionResponse>(
+      "/v1/liquidity/lock",
+      request
+    );
+  }
+
+  /**
+   * Transfer LP ownership to another public key
+   * @POST /v1/liquidity/transfer
+   * @requires Bearer token
+   */
+  async transferPosition(
+    request: Types.TransferPositionRequest
+  ): Promise<Types.TransferPositionResponse> {
+    return this.client.ammPost<Types.TransferPositionResponse>(
+      "/v1/liquidity/transfer",
+      request
+    );
+  }
+
+  /**
+   * List LP position locks for a pool
+   * @GET /v1/liquidity/locks/:poolId
+   */
+  async getPositionLocks(
+    poolId: string,
+    ownerPublicKey?: string
+  ): Promise<Types.GetPositionLocksResponse> {
+    const params = ownerPublicKey
+      ? `?ownerPublicKey=${ownerPublicKey}`
+      : "";
+    return this.client.ammGet<Types.GetPositionLocksResponse>(
+      `/v1/liquidity/locks/${poolId}${params}`
+    );
+  }
 }
 
 /**
