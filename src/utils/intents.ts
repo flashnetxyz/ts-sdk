@@ -18,6 +18,8 @@ import type {
   ValidateEscrowCreateData,
   ValidateEscrowFundData,
   ValidateIncreaseLiquidityData,
+  ValidateLpLockPositionData,
+  ValidateLpTransferPositionData,
   ValidateRebalancePositionData,
   ValidateRouteSwapData,
   ValidateWithdrawBalanceData,
@@ -561,6 +563,60 @@ export function generateDepositBalanceIntentMessage(params: {
     assetBSparkTransferId: params.assetBSparkTransferId,
     amountA: params.amountA,
     amountB: params.amountB,
+    nonce: params.nonce,
+  };
+
+  return new TextEncoder().encode(JSON.stringify(intentMessage));
+}
+
+/**
+ * Generate the intent message for locking an LP position
+ * @param params Parameters for locking a position
+ * @returns The serialized intent message as Uint8Array
+ */
+export function generateLockPositionIntentMessage(params: {
+  userPublicKey: string;
+  lpIdentityPublicKey: string;
+  lockUntilTimestamp: string;
+  lockUntilBlockheight?: string;
+  tickLower?: number;
+  tickUpper?: number;
+  nonce: string;
+}): Uint8Array {
+  const intentMessage: ValidateLpLockPositionData = {
+    userPublicKey: params.userPublicKey,
+    lpIdentityPublicKey: params.lpIdentityPublicKey,
+    lockUntilTimestamp: params.lockUntilTimestamp,
+    lockUntilBlockheight: params.lockUntilBlockheight,
+    tickLower: params.tickLower,
+    tickUpper: params.tickUpper,
+    nonce: params.nonce,
+  };
+
+  return new TextEncoder().encode(JSON.stringify(intentMessage));
+}
+
+/**
+ * Generate the intent message for transferring LP ownership
+ * @param params Parameters for transferring a position
+ * @returns The serialized intent message as Uint8Array
+ */
+export function generateTransferPositionIntentMessage(params: {
+  userPublicKey: string;
+  lpIdentityPublicKey: string;
+  newOwnerPublicKey: string;
+  tickLower?: number;
+  tickUpper?: number;
+  lpTokensToTransfer?: string;
+  nonce: string;
+}): Uint8Array {
+  const intentMessage: ValidateLpTransferPositionData = {
+    userPublicKey: params.userPublicKey,
+    lpIdentityPublicKey: params.lpIdentityPublicKey,
+    newOwnerPublicKey: params.newOwnerPublicKey,
+    tickLower: params.tickLower,
+    tickUpper: params.tickUpper,
+    lpTokensToTransfer: params.lpTokensToTransfer,
     nonce: params.nonce,
   };
 
