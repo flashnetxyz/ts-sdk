@@ -2059,7 +2059,7 @@ export interface GetPositionLocksResponse {
 export interface ValidateLpLockPositionData {
   userPublicKey: string;
   lpIdentityPublicKey: string;
-  lockUntilTimestamp: string;
+  lockUntilTimestamp: number;
   tickLower: number | null;
   tickUpper: number | null;
   nonce: string;

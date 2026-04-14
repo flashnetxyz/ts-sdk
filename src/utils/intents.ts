@@ -18,7 +18,6 @@ import type {
   ValidateEscrowCreateData,
   ValidateEscrowFundData,
   ValidateIncreaseLiquidityData,
-  ValidateLpLockPositionData,
   ValidateRebalancePositionData,
   ValidateRouteSwapData,
   ValidateWithdrawBalanceData,
@@ -581,10 +580,10 @@ export function generateLockPositionIntentMessage(params: {
   tickUpper?: number;
   nonce: string;
 }): Uint8Array {
-  const intentMessage: ValidateLpLockPositionData = {
+  const intentMessage = {
     userPublicKey: params.userPublicKey,
     lpIdentityPublicKey: params.lpIdentityPublicKey,
-    lockUntilTimestamp: params.lockUntilTimestamp,
+    lockUntilTimestamp: parseInt(params.lockUntilTimestamp, 10),
     tickLower: params.tickLower ?? null,
     tickUpper: params.tickUpper ?? null,
     nonce: params.nonce,
