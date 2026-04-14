@@ -1,49 +1,59 @@
 /**
  * Flashnet Execution Layer Module
  *
- * Complete SDK for interacting with the Flashnet execution gateway,
- * Conductor contract (AMM aggregator), and on-chain EVM state.
+ * Core client for interacting with the Flashnet execution gateway.
+ * Handles deposit, withdrawal, and raw execute intents.
  *
- * @example High-level swap (SDK does everything):
+ * For AMM operations (swap, quote, createPool), use the AMMClient
+ * from "@flashnet/sdk/amm" which wraps ExecutionClient.
+ *
+ * @example
  * ```typescript
- * import { ExecutionClient, swap } from "@flashnet/sdk/execution";
+ * import { ExecutionClient } from "@flashnet/sdk";
  *
- * const client = new ExecutionClient({ gatewayUrl }, signer);
+ * const client = new ExecutionClient(sparkWallet, {
+ *   gatewayUrl: "http://localhost:8080",
+ *   rpcUrl: "http://localhost:8545",
+ *   chainId: 21022,
+ *   bridgeAddress: "0x...",
+ * });
  * await client.authenticate();
- *
- * const result = await swap(client, conductorConfig, {
- *   tokenIn: USDB, tokenOut: WBTC, fee: 3000,
- *   amountIn: 1000000n, minAmountOut: 900000n,
- * }, deposits, evmSigner);
- * ```
- *
- * @example Low-level (calldata encoding only):
- * ```typescript
- * import { Conductor, fetchTokenBalance } from "@flashnet/sdk/execution";
- *
- * const calldata = Conductor.encodeSwap({ tokenIn, tokenOut, fee, amountIn, minAmountOut });
- * const balance = await fetchTokenBalance(rpcUrl, tokenAddress, myAddress);
+ * await client.deposit({ deposits: [...] });
+ * await client.withdraw({ amount: 1000n });
  * ```
  */
 
 // Core client
-export { ExecutionClient } from "./client";
+export {
+  ExecutionClient,
+  type ExecutionNetwork,
+  type ExecutionClientConfig,
+  type DepositParams,
+  type WithdrawParams,
+  type WithdrawTokenParams,
+  type ExecuteParams,
+} from "./client";
 
-// Conductor: low-level encoding + high-level swap functions
+// SparkWallet → EVM account adapter
+export {
+  sparkWalletToEvmAccount,
+  type SparkWalletInput,
+} from "./spark-evm-account";
+
+// Bridge calldata encoding and queries
+export {
+  encodeWithdrawSats,
+  encodeWithdrawToken,
+  queryBridgedTokenAddress,
+  waitForBridgedTokenAddress,
+} from "./bridge";
+
+// Conductor calldata encoding (used by AMMClient)
 export {
   Conductor,
-  swap,
-  swapBTC,
-  approveToken,
-  swapWithApproval,
-  type SwapParams,
-  type SwapBTCParams,
   type ConductorConfig,
-  type EvmTransactionSigner,
-  type UnsignedTransaction,
-  type SwapResult,
-  type SwapRequest,
-  type SwapBTCRequest,
+  type SwapParams as ConductorSwapParams,
+  type SwapBTCParams,
 } from "./conductor";
 
 // EVM read helpers
@@ -73,18 +83,6 @@ export {
   type PermitSignature,
 } from "./pool-creation";
 
-// Spark Bridge: withdrawals + token resolution
-export {
-  encodeWithdrawSats,
-  encodeWithdrawToken,
-  queryBridgedTokenAddress,
-  waitForBridgedTokenAddress,
-  withdrawSats,
-  withdrawToken,
-  type BridgeConfig,
-  type WithdrawResult,
-} from "./bridge";
-
 // Price math
 export {
   priceToSqrtPriceX96,
@@ -100,9 +98,6 @@ export type {
   CanonicalTransferEntry,
   Deposit,
   DepositAsset,
-  DepositIntentParams,
-  ExecuteIntentParams,
   ExecuteResponse,
-  ExecutionClientConfig,
   ExecutionSigner,
 } from "./types";
