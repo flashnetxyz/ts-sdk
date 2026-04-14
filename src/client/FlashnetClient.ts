@@ -117,8 +117,6 @@ import {
   type WithdrawIntegratorFeesResponse,
   type LockPositionRequest,
   type LockPositionResponse,
-  type TransferPositionRequest,
-  type TransferPositionResponse,
   type LpLockInfo,
 } from "../types";
 import { compareDecimalStrings, generateNonce, safeBigInt } from "../utils";
@@ -147,7 +145,6 @@ import {
   generateWithdrawHostFeesIntentMessage,
   generateWithdrawIntegratorFeesIntentMessage,
   generateLockPositionIntentMessage,
-  generateTransferPositionIntentMessage,
 } from "../utils/intents";
 import {
   encodeSparkAddressNew,
@@ -1842,62 +1839,6 @@ export class FlashnetClient {
     if (!response.accepted) {
       const errorMessage =
         response.error || "Lock position rejected by the AMM";
-      throw new Error(errorMessage);
-    }
-
-    return response;
-  }
-
-  /**
-   * Transfer LP ownership to another public key.
-   * If the position is locked, the lock transfers with it.
-   * @param poolId Pool ID (LP identity public key)
-   * @param newOwnerPublicKey Public key of the new owner
-   * @param opts Optional V3 tick range or V2 partial transfer amount
-   */
-  async transferPosition(
-    poolId: string,
-    newOwnerPublicKey: string,
-    opts?: {
-      tickLower?: number;
-      tickUpper?: number;
-      lpTokensToTransfer?: string;
-    }
-  ): Promise<TransferPositionResponse> {
-    await this.ensureInitialized();
-
-    const nonce = generateNonce();
-    const intentMessage = generateTransferPositionIntentMessage({
-      userPublicKey: this.publicKey,
-      lpIdentityPublicKey: poolId,
-      newOwnerPublicKey,
-      tickLower: opts?.tickLower,
-      tickUpper: opts?.tickUpper,
-      lpTokensToTransfer: opts?.lpTokensToTransfer,
-      nonce,
-    });
-
-    const messageHash = sha256(intentMessage);
-    const signature = await (
-      this._wallet as any
-    ).config.signer.signMessageWithIdentityKey(messageHash, true);
-
-    const request: TransferPositionRequest = {
-      userPublicKey: this.publicKey,
-      poolId,
-      newOwnerPublicKey,
-      tickLower: opts?.tickLower,
-      tickUpper: opts?.tickUpper,
-      lpTokensToTransfer: opts?.lpTokensToTransfer,
-      nonce,
-      signature: getHexFromUint8Array(signature),
-    };
-
-    const response = await this.typedApi.transferPosition(request);
-
-    if (!response.accepted) {
-      const errorMessage =
-        response.error || "Transfer position rejected by the AMM";
       throw new Error(errorMessage);
     }
 

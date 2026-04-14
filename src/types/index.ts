@@ -2052,23 +2052,6 @@ export interface LockPositionResponse {
   error?: string;
 }
 
-export interface TransferPositionRequest {
-  userPublicKey: string;
-  poolId: string;
-  newOwnerPublicKey: string;
-  tickLower?: number;
-  tickUpper?: number;
-  lpTokensToTransfer?: string;
-  nonce: string;
-  signature: string;
-}
-
-export interface TransferPositionResponse {
-  requestId: string;
-  accepted: boolean;
-  error?: string;
-}
-
 export interface GetPositionLocksResponse {
   locks: LpLockInfo[];
 }
@@ -2079,16 +2062,6 @@ export interface ValidateLpLockPositionData {
   lockUntilTimestamp: string;
   tickLower: number | null;
   tickUpper: number | null;
-  nonce: string;
-}
-
-export interface ValidateLpTransferPositionData {
-  userPublicKey: string;
-  lpIdentityPublicKey: string;
-  newOwnerPublicKey: string;
-  tickLower: number | null;
-  tickUpper: number | null;
-  lpTokensToTransfer: string | null;
   nonce: string;
 }
 

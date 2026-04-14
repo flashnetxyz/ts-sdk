@@ -19,7 +19,6 @@ import type {
   ValidateEscrowFundData,
   ValidateIncreaseLiquidityData,
   ValidateLpLockPositionData,
-  ValidateLpTransferPositionData,
   ValidateRebalancePositionData,
   ValidateRouteSwapData,
   ValidateWithdrawBalanceData,
@@ -594,29 +593,3 @@ export function generateLockPositionIntentMessage(params: {
   return new TextEncoder().encode(JSON.stringify(intentMessage));
 }
 
-/**
- * Generate the intent message for transferring LP ownership
- * @param params Parameters for transferring a position
- * @returns The serialized intent message as Uint8Array
- */
-export function generateTransferPositionIntentMessage(params: {
-  userPublicKey: string;
-  lpIdentityPublicKey: string;
-  newOwnerPublicKey: string;
-  tickLower?: number;
-  tickUpper?: number;
-  lpTokensToTransfer?: string;
-  nonce: string;
-}): Uint8Array {
-  const intentMessage: ValidateLpTransferPositionData = {
-    userPublicKey: params.userPublicKey,
-    lpIdentityPublicKey: params.lpIdentityPublicKey,
-    newOwnerPublicKey: params.newOwnerPublicKey,
-    tickLower: params.tickLower ?? null,
-    tickUpper: params.tickUpper ?? null,
-    lpTokensToTransfer: params.lpTokensToTransfer ?? null,
-    nonce: params.nonce,
-  };
-
-  return new TextEncoder().encode(JSON.stringify(intentMessage));
-}
