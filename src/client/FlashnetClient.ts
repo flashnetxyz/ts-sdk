@@ -1808,6 +1808,7 @@ export class FlashnetClient {
     }
   ): Promise<LockPositionResponse> {
     await this.ensureInitialized();
+    await this.ensurePingOk();
 
     const nonce = generateNonce();
     const intentMessage = generateLockPositionIntentMessage({
