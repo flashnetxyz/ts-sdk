@@ -2,58 +2,173 @@
  * Flashnet Execution Client
  *
  * Client for interacting with the Flashnet execution gateway.
- * Handles authentication, intent construction, signing, and submission.
+ * Handles authentication, intent construction, signing, deposit, and withdrawal.
  *
- * This is the new execution-layer client, separate from the legacy AMM client
- * (FlashnetClient). The legacy client talks to flashnet-services/settlement;
- * this client talks to flashnet-execution's gateway.
+ * Takes a SparkWallet — the identity key is used for both gateway
+ * authentication and EVM transaction signing.
+ *
+ * @example
+ * ```typescript
+ * import { ExecutionClient } from "@flashnet/sdk";
+ *
+ * const client = new ExecutionClient(sparkWallet, {
+ *   gatewayUrl: "http://localhost:8080",
+ *   rpcUrl: "http://localhost:8545",
+ *   chainId: 21022,
+ *   bridgeAddress: "0x...",
+ * });
+ *
+ * await client.authenticate();
+ *
+ * await client.deposit({
+ *   deposits: [
+ *     { sparkTransferId: "aabb...", amount: 100000, asset: { type: "btc" } },
+ *   ],
+ * });
+ *
+ * await client.withdraw({ amount: 50000 });
+ * ```
  */
 
 import { keccak256 as viemKeccak256 } from "viem";
+import { sha256 } from "@noble/hashes/sha2";
+import { bytesToHex } from "@noble/curves/abstract/utils";
+import { sparkWalletToEvmAccount, getWalletSigner, type SparkWalletInput } from "./spark-evm-account";
+import type { LocalAccount } from "viem/accounts";
+import { encodeWithdrawSats, encodeWithdrawToken } from "./bridge";
+import { fetchNonce } from "./evm";
 import type {
   CanonicalIntentAction,
   CanonicalIntentMessage,
   CanonicalTransferEntry,
   Deposit,
-  DepositIntentParams,
-  ExecuteIntentParams,
   ExecuteResponse,
-  ExecutionClientConfig,
   ExecutionSigner,
 } from "./types";
+
+/** Conversion factor: 1 sat = 10^10 wei on Flashnet's EVM. */
+const WEI_PER_SAT = 10_000_000_000n;
+
+/** Default gas limit for withdrawal transactions. */
+const DEFAULT_WITHDRAW_GAS_LIMIT = 200_000n;
+
+/** Execution layer network type. */
+export type ExecutionNetwork = "mainnet" | "regtest";
+
+/**
+ * Built-in network configurations for the execution layer.
+ * For local development, pass a full ExecutionClientConfig instead.
+ */
+const EXECUTION_NETWORK_CONFIGS: Record<ExecutionNetwork, ExecutionClientConfig> = {
+  mainnet: {
+    gatewayUrl: "https://gateway.flashnet.xyz",
+    rpcUrl: "https://rpc.flashnet.xyz",
+    chainId: 21022,
+    bridgeAddress: "0x1e2861ce58eaa89260226b5704416b9a20589d47",
+  },
+  regtest: {
+    gatewayUrl: "https://gateway.regtest.flashnet.xyz",
+    rpcUrl: "https://rpc.regtest.flashnet.xyz",
+    chainId: 21022,
+    bridgeAddress: "0x1e2861ce58eaa89260226b5704416b9a20589d47",
+  },
+};
+
+/**
+ * Configuration for the execution client.
+ */
+export interface ExecutionClientConfig {
+  /** Base URL of the execution gateway (e.g. "http://localhost:8080"). */
+  gatewayUrl: string;
+  /** JSON-RPC URL of the sequencer (e.g. "http://localhost:8545"). */
+  rpcUrl: string;
+  /** Chain ID of the Flashnet EVM network. */
+  chainId: number;
+  /** SparkBridge contract address (0x-prefixed). */
+  bridgeAddress: string;
+}
+
+/** Parameters for a deposit intent. */
+export interface DepositParams {
+  /** Spark transfers funding this deposit. */
+  deposits: Deposit[];
+  /** EVM address to credit. If omitted, credits the identity key's EVM address. */
+  recipient?: string;
+}
+
+/** Parameters for a BTC withdrawal. */
+export interface WithdrawParams {
+  /** Amount in satoshis to withdraw. */
+  amount: bigint;
+}
+
+/** Parameters for a token withdrawal. */
+export interface WithdrawTokenParams {
+  /** ERC20 token contract address. */
+  tokenAddress: string;
+  /** Amount in token base units. */
+  amount: bigint;
+}
+
+/** Parameters for a raw execute intent (advanced). */
+export interface ExecuteParams {
+  /** Spark transfers to credit before executing. */
+  deposits?: Deposit[];
+  /** Hex-encoded signed EVM transaction (RLP-serialized, 0x-prefixed). */
+  signedTx: string;
+}
 
 /**
  * Client for the Flashnet execution gateway.
  *
- * Supports multi-deposit intents (deposit-only and deposit-and-execute).
- *
- * @example
- * ```typescript
- * import { ExecutionClient } from "@flashnet/sdk/execution";
- *
- * const client = new ExecutionClient({
- *   gatewayUrl: "http://localhost:8080",
- * }, signer);
- *
- * await client.authenticate();
- *
- * const response = await client.submitDeposit({
- *   chainId: 1337,
- *   deposits: [
- *     { sparkTransferId: "aabb...", amount: 100000, asset: { type: "btc" } },
- *   ],
- *   recipient: "0x742d35Cc6634C0532925a3b844Bc9e7595f2bD18",
- * });
- * ```
+ * Owns the SparkWallet, gateway auth, EVM signing, and RPC configuration.
+ * Exposes deposit/withdraw/execute as methods — no loose function args.
  */
 export class ExecutionClient {
-  private readonly gatewayUrl: string;
+  private readonly config: ExecutionClientConfig;
+  private readonly wallet: SparkWalletInput;
   private readonly signer: ExecutionSigner;
+  private evmAccount: LocalAccount | null = null;
   private accessToken: string | null = null;
 
-  constructor(config: ExecutionClientConfig, signer: ExecutionSigner) {
-    this.gatewayUrl = config.gatewayUrl.replace(/\/+$/, "");
-    this.signer = signer;
+  /**
+   * @param wallet - SparkWallet instance (identity key used for auth + EVM signing).
+   * @param networkOrConfig - Network name ("mainnet", "testnet", "regtest", "local")
+   *   or a full ExecutionClientConfig for custom endpoints.
+   */
+  constructor(
+    wallet: SparkWalletInput,
+    networkOrConfig: ExecutionNetwork | ExecutionClientConfig
+  ) {
+    const config =
+      typeof networkOrConfig === "string"
+        ? EXECUTION_NETWORK_CONFIGS[networkOrConfig]
+        : networkOrConfig;
+    this.config = {
+      ...config,
+      gatewayUrl: config.gatewayUrl.replace(/\/+$/, ""),
+    };
+    this.wallet = wallet;
+    this.signer = sparkWalletToExecutionSigner(wallet);
+  }
+
+  /**
+   * The EVM address derived from the SparkWallet's identity key.
+   * Available after calling `authenticate()` or `getEvmAccount()`.
+   */
+  async getEvmAddress(): Promise<string> {
+    const account = await this.getEvmAccount();
+    return account.address;
+  }
+
+  /**
+   * Get or create the viem LocalAccount derived from the identity key.
+   */
+  async getEvmAccount(): Promise<LocalAccount> {
+    if (!this.evmAccount) {
+      this.evmAccount = await sparkWalletToEvmAccount(this.wallet);
+    }
+    return this.evmAccount;
   }
 
   /**
@@ -90,54 +205,108 @@ export class ExecutionClient {
   }
 
   /**
-   * Submit a deposit-only intent.
-   * Credits the deposited funds to the specified recipient address.
+   * Submit a deposit intent.
+   * Credits the deposited funds to the specified recipient or the identity key's EVM address.
    */
-  async submitDeposit(params: DepositIntentParams): Promise<ExecuteResponse> {
+  async deposit(params: DepositParams): Promise<ExecuteResponse> {
     this.requireAuth();
     validateDeposits(params.deposits);
 
+    const recipient = params.recipient ?? (await this.getEvmAddress());
+
     const action: CanonicalIntentAction = {
       type: "deposit",
-      recipient: params.recipient.toLowerCase(),
+      recipient: recipient.toLowerCase(),
     };
 
-    return this.submitIntent(params.chainId, params.deposits, action, {
-      recipient: params.recipient.toLowerCase(),
+    return this.submitIntent(params.deposits, action, {
+      recipient: recipient.toLowerCase(),
     });
   }
 
   /**
-   * Submit a deposit-and-execute intent.
-   * Deposits are credited to the recovered signer of the EVM transaction,
-   * and the transaction is executed atomically in the same block.
+   * Withdraw native BTC (sats) from EVM back to Spark.
+   * Signs a SparkBridge.withdrawSats transaction with the identity key.
    *
-   * @param params.signedTxHash - Pre-computed keccak256 hash of the signed tx
-   *   (0x-prefixed hex). If not provided, the client computes it from signedTx
-   *   using the built-in keccak256 implementation.
+   * @param params.amount - Amount in satoshis.
    */
-  async submitExecute(
-    params: ExecuteIntentParams & { signedTxHash?: string }
-  ): Promise<ExecuteResponse> {
+  async withdraw(params: WithdrawParams): Promise<ExecuteResponse> {
     this.requireAuth();
-    if (params.deposits.length > 0) {
-      validateDeposits(params.deposits);
+    const account = await this.getEvmAccount();
+    const sparkRecipient = await this.getSparkRecipientHex();
+    const calldata = encodeWithdrawSats(sparkRecipient);
+    const nonce = await fetchNonce(this.config.rpcUrl, account.address);
+
+    const signedTx = await account.signTransaction({
+      to: this.config.bridgeAddress as `0x${string}`,
+      data: calldata as `0x${string}`,
+      value: params.amount * WEI_PER_SAT,
+      chainId: this.config.chainId,
+      nonce,
+      gas: DEFAULT_WITHDRAW_GAS_LIMIT,
+      maxFeePerGas: 0n,
+      maxPriorityFeePerGas: 0n,
+      type: "eip1559" as const,
+    });
+
+    return this.submitIntent([], { type: "execute", signedTxHash: viemKeccak256(signedTx) }, {
+      evmTransaction: signedTx,
+    });
+  }
+
+  /**
+   * Withdraw an ERC20 token from EVM back to Spark.
+   * Signs a SparkBridge.withdrawBtkn transaction with the identity key.
+   */
+  async withdrawToken(params: WithdrawTokenParams): Promise<ExecuteResponse> {
+    this.requireAuth();
+    const account = await this.getEvmAccount();
+    const sparkRecipient = await this.getSparkRecipientHex();
+    const calldata = encodeWithdrawToken(
+      params.tokenAddress,
+      params.amount,
+      sparkRecipient
+    );
+    const nonce = await fetchNonce(this.config.rpcUrl, account.address);
+
+    const signedTx = await account.signTransaction({
+      to: this.config.bridgeAddress as `0x${string}`,
+      data: calldata as `0x${string}`,
+      value: 0n,
+      chainId: this.config.chainId,
+      nonce,
+      gas: DEFAULT_WITHDRAW_GAS_LIMIT,
+      maxFeePerGas: 0n,
+      maxPriorityFeePerGas: 0n,
+      type: "eip1559" as const,
+    });
+
+    return this.submitIntent([], { type: "execute", signedTxHash: viemKeccak256(signedTx) }, {
+      evmTransaction: signedTx,
+    });
+  }
+
+  /**
+   * Submit a raw execute intent with a pre-signed EVM transaction.
+   * For advanced use — prefer `withdraw()` or AMMClient methods.
+   */
+  async execute(params: ExecuteParams): Promise<ExecuteResponse> {
+    this.requireAuth();
+    const deposits = params.deposits ?? [];
+    if (deposits.length > 0) {
+      validateDeposits(deposits);
     }
 
     const txHex = params.signedTx.startsWith("0x")
       ? params.signedTx
       : `0x${params.signedTx}`;
-    const txHash =
-      params.signedTxHash ?? viemKeccak256(txHex as `0x${string}`);
+    const txHash = viemKeccak256(txHex as `0x${string}`);
 
-    const action: CanonicalIntentAction = {
-      type: "execute",
-      signedTxHash: txHash,
-    };
-
-    return this.submitIntent(params.chainId, params.deposits, action, {
-      evmTransaction: params.signedTx,
-    });
+    return this.submitIntent(
+      deposits,
+      { type: "execute", signedTxHash: txHash },
+      { evmTransaction: params.signedTx }
+    );
   }
 
   /**
@@ -145,7 +314,7 @@ export class ExecutionClient {
    */
   async health(): Promise<boolean> {
     try {
-      const resp = await fetch(`${this.gatewayUrl}/api/v1/health`);
+      const resp = await fetch(`${this.config.gatewayUrl}/api/v1/health`);
       if (!resp.ok) return false;
       const body = (await resp.json()) as { status?: string };
       return body.status === "ok";
@@ -159,10 +328,24 @@ export class ExecutionClient {
     return this.accessToken;
   }
 
-  // Private
+  /** Returns the client configuration. */
+  getConfig(): Readonly<ExecutionClientConfig> {
+    return this.config;
+  }
+
+  // ── Private ────────────────────────────────────────────────
+
+  /**
+   * Get the Spark identity public key as a 0x-prefixed hex string
+   * for use as the sparkRecipient in withdrawal calls.
+   */
+  private async getSparkRecipientHex(): Promise<string> {
+    const pubkey = await getWalletSigner(this.wallet).getIdentityPublicKey();
+    const hex = bytesToHex(pubkey);
+    return hex.startsWith("0x") ? hex : `0x${hex}`;
+  }
 
   private async submitIntent(
-    chainId: number,
     deposits: Deposit[],
     action: CanonicalIntentAction,
     requestAction: { recipient?: string; evmTransaction?: string }
@@ -189,7 +372,7 @@ export class ExecutionClient {
     });
 
     const canonicalMessage: CanonicalIntentMessage = {
-      chainId,
+      chainId: this.config.chainId,
       transfers,
       action,
       nonce,
@@ -199,7 +382,7 @@ export class ExecutionClient {
     const signature = await this.signer.signMessage(messageJson);
 
     const body: Record<string, unknown> = {
-      chainId,
+      chainId: this.config.chainId,
       deposits: deposits.map((d) => ({
         sparkTransferId: d.sparkTransferId,
         asset: d.asset,
@@ -235,7 +418,7 @@ export class ExecutionClient {
     body: unknown,
     headers: Record<string, string> = {}
   ): Promise<T> {
-    const resp = await fetch(`${this.gatewayUrl}${path}`, {
+    const resp = await fetch(`${this.config.gatewayUrl}${path}`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -259,7 +442,28 @@ export class ExecutionClient {
   }
 }
 
-// Utilities
+// ── Utilities ────────────────────────────────────────────────
+
+/**
+ * Build an ExecutionSigner from a SparkWallet's identity key.
+ */
+function sparkWalletToExecutionSigner(wallet: SparkWalletInput): ExecutionSigner {
+  const signer = getWalletSigner(wallet);
+
+  return {
+    async getPublicKey(): Promise<string> {
+      const pubkey = await signer.getIdentityPublicKey();
+      return bytesToHex(pubkey);
+    },
+
+    async signMessage(message: string): Promise<string> {
+      const encoded = new TextEncoder().encode(message);
+      const hash = sha256(encoded);
+      const signature = await signer.signMessageWithIdentityKey(hash);
+      return bytesToHex(signature);
+    },
+  };
+}
 
 function validateDeposits(deposits: Deposit[]): void {
   if (deposits.length === 0) {

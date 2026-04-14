@@ -1,64 +1,54 @@
 // Export all types
 
-// Export execution layer client (new — talks to flashnet-execution gateway)
+// Execution layer client (talks to flashnet-execution gateway)
 export {
   ExecutionClient,
+  sparkWalletToEvmAccount,
   Conductor,
-  swap,
-  swapBTC,
-  approveToken,
-  swapWithApproval,
   encodeWithdrawSats,
   encodeWithdrawToken,
   queryBridgedTokenAddress,
   waitForBridgedTokenAddress,
-  withdrawSats,
-  withdrawToken,
-} from "./src/execution";
-export {
+  encodeCreateBTCPool,
+  encodeCreatePoolParams,
   fetchTokenInfo,
   fetchTokenBalance,
   fetchNativeBalance,
   fetchAllowance,
   fetchNonce,
-} from "./src/execution";
-export { getPoolAddress, fetchPoolInfo, sortTokens } from "./src/execution";
-export {
+  getPoolAddress,
+  fetchPoolInfo,
+  sortTokens,
   priceToSqrtPriceX96,
   sqrtPriceX96ToPrice,
   fullRangeTicks,
   FEE_TIERS,
 } from "./src/execution";
-export { encodeCreateBTCPool, encodeCreatePoolParams } from "./src/execution";
 export type {
-  SwapParams,
-  SwapBTCParams,
+  ExecutionNetwork,
+  ExecutionClientConfig,
+  DepositParams,
+  WithdrawParams,
+  WithdrawTokenParams,
+  ExecuteParams,
+  SparkWalletInput,
   ConductorConfig,
-  EvmTransactionSigner,
-  UnsignedTransaction,
-  SwapResult,
-  SwapRequest,
-  SwapBTCRequest,
   TokenInfo,
   PoolInfo,
   CreateBTCPoolParams,
   CreatePoolParams,
   PermitSignature,
-  BridgeConfig,
-  WithdrawResult,
 } from "./src/execution";
 export type {
-  CanonicalIntentAction,
-  CanonicalIntentMessage,
-  CanonicalTransferEntry,
   Deposit,
   DepositAsset,
-  DepositIntentParams,
-  ExecuteIntentParams,
   ExecuteResponse,
-  ExecutionClientConfig,
   ExecutionSigner,
 } from "./src/execution";
+
+// AMM client (wraps ExecutionClient for DEX operations)
+export { AMMClient } from "./src/amm";
+export type { AMMConfig, SwapParams as AMMSwapParams, SwapResult as AMMSwapResult } from "./src/amm";
 
 export type { RequestOptions } from "./src/api/client";
 // Export API client and typed endpoints
