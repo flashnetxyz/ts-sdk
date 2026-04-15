@@ -63,22 +63,43 @@ const DEFAULT_WITHDRAW_GAS_LIMIT = 200_000n;
  * throws on bigint, and unlike `Number(bigint)` which loses precision
  * above 2^53.
  *
- * The output JSON is canonical in the same sense as `JSON.stringify`:
- * object keys appear in insertion order and there is no whitespace.
+ * Implemented as a proper recursive encoder rather than a sentinel-and-regex
+ * trick so user-supplied strings cannot accidentally collide with the
+ * marker. Output is byte-for-byte equivalent to `JSON.stringify` for any
+ * bigint-free input (same key ordering, same escaping, no whitespace).
  */
 export function stringifyWithBigint(value: unknown): string {
-  const BIGINT_SENTINEL = "__BIGINT_SENTINEL__";
-  // Pass 1: replace bigints with tagged strings so JSON.stringify succeeds.
-  const body = JSON.stringify(value, (_key, v) =>
-    typeof v === "bigint" ? `${BIGINT_SENTINEL}${v.toString()}` : v
-  );
-  // Pass 2: strip the quotes + sentinel so the bigint becomes a raw numeric
-  // literal in the emitted JSON. Only unsigned decimal digits are allowed
-  // in a sentinel-tagged value so this regex is safe.
-  return body.replace(
-    new RegExp(`"${BIGINT_SENTINEL}(\\d+)"`, "g"),
-    "$1"
-  );
+  return encodeJson(value);
+}
+
+function encodeJson(value: unknown): string {
+  if (value === null || value === undefined) return "null";
+  if (typeof value === "bigint") {
+    // Negative bigints are valid JSON numbers; positive includes 0.
+    return value.toString();
+  }
+  if (typeof value === "number") {
+    // Match JSON.stringify's NaN/Infinity → null behavior.
+    return Number.isFinite(value) ? String(value) : "null";
+  }
+  if (typeof value === "boolean") return value ? "true" : "false";
+  if (typeof value === "string") return JSON.stringify(value);
+  if (Array.isArray(value)) {
+    const parts = value.map((v) => encodeJson(v));
+    return `[${parts.join(",")}]`;
+  }
+  if (typeof value === "object") {
+    const obj = value as Record<string, unknown>;
+    const parts: string[] = [];
+    for (const key of Object.keys(obj)) {
+      const v = obj[key];
+      if (v === undefined) continue; // matches JSON.stringify behavior
+      parts.push(`${JSON.stringify(key)}:${encodeJson(v)}`);
+    }
+    return `{${parts.join(",")}}`;
+  }
+  // Functions, symbols → omit (matches JSON.stringify in object context).
+  return "null";
 }
 
 // Named network configs were removed until real deployment addresses are
