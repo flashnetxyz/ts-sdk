@@ -329,10 +329,15 @@ export class ExecutionClient {
       : `0x${params.signedTx}`;
     const txHash = viemKeccak256(txHex as `0x${string}`);
 
+    // Pass the normalized txHex to the gateway, not the raw input. If the
+    // server recomputes the hash from evmTransaction (it does, for
+    // signature verification) the hashes must match — passing the
+    // unnormalized form would cause verification to fail for any caller
+    // that omits the 0x prefix.
     return this.submitIntent(
       deposits,
       { type: "execute", signedTxHash: txHash },
-      { evmTransaction: params.signedTx }
+      { evmTransaction: txHex }
     );
   }
 
