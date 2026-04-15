@@ -24,7 +24,9 @@ import {
   type Address,
   type Hex,
   type SignableMessage,
+  type TypedDataDefinition,
   hashMessage,
+  hashTypedData,
   keccak256,
   recoverAddress,
   serializeTransaction,
@@ -47,11 +49,29 @@ interface SparkSigner {
 
 /**
  * Extract the signer from a SparkWallet.
- * SparkWallet.config is protected, so we cast through any
+ *
+ * `SparkWallet.config` is protected in the upstream Spark SDK, so we reach
+ * through `as any` and validate the shape at runtime. If the SparkWallet
+ * is ever refactored to rename `config.signer`, this guard turns a silent
+ * runtime failure ("getIdentityPublicKey is not a function") into an
+ * actionable error at the entry point.
  */
 export function getWalletSigner(wallet: SparkWalletInput): SparkSigner {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  return (wallet as any).config.signer;
+  const maybeSigner = (wallet as any)?.config?.signer;
+  if (
+    !maybeSigner ||
+    typeof maybeSigner.getIdentityPublicKey !== "function" ||
+    typeof maybeSigner.signMessageWithIdentityKey !== "function"
+  ) {
+    throw new Error(
+      "SparkWallet does not expose the expected `config.signer` shape " +
+        "(getIdentityPublicKey, signMessageWithIdentityKey). Likely the " +
+        "upstream SparkWallet internals were refactored — update the SDK " +
+        "or pin to a compatible @buildonspark/spark-sdk version."
+    );
+  }
+  return maybeSigner as SparkSigner;
 }
 
 /**
@@ -88,20 +108,43 @@ async function signHash(
   const r = toHex(compact.slice(0, 32));
   const s = toHex(compact.slice(32, 64));
 
-  // Try yParity=0, check if it recovers to our address
+  const expectedLower = expectedAddress.toLowerCase();
+
+  // Try yParity=0
   try {
     const recovered = await recoverAddress({
       hash,
       signature: { r, s, yParity: 0 },
     });
-    if (recovered.toLowerCase() === expectedAddress.toLowerCase()) {
+    if (recovered.toLowerCase() === expectedLower) {
       return { r, s, yParity: 0 };
     }
   } catch {
-    // yParity=0 didn't work
+    // yParity=0 failed to recover at all — fall through to try yParity=1
   }
 
-  return { r, s, yParity: 1 };
+  // Try yParity=1
+  try {
+    const recovered = await recoverAddress({
+      hash,
+      signature: { r, s, yParity: 1 },
+    });
+    if (recovered.toLowerCase() === expectedLower) {
+      return { r, s, yParity: 1 };
+    }
+  } catch {
+    // yParity=1 also failed — malformed signature or wrong key
+  }
+
+  // Neither yParity value produced a recovery matching the expected
+  // address. Returning a bogus signature here would fail signer recovery
+  // on the node and surface as an opaque flagged-tx decode error;
+  // throwing here makes the cause debuggable.
+  throw new Error(
+    `sparkWalletToEvmAccount: signature does not recover to ${expectedAddress} ` +
+      `with either yParity. Likely the SparkWallet signed with a key that ` +
+      `does not match the identity pubkey, or the signature is malformed.`
+  );
 }
 
 /**
@@ -142,10 +185,14 @@ export async function sparkWalletToEvmAccount(
       } as any) as Hex;
     },
 
-    async signTypedData(): Promise<Hex> {
-      throw new Error(
-        "signTypedData not yet implemented for SparkWallet EVM accounts"
-      );
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    async signTypedData(typedData: any): Promise<Hex> {
+      // Hash the EIP-712 typed data and sign the digest with the identity
+      // key. Used primarily for Permit2 signatures in swap flows.
+      const hash = hashTypedData(typedData as TypedDataDefinition);
+      const { r, s, yParity } = await signHash(signer, hash, address);
+      const v = yParity === 0 ? "1b" : "1c";
+      return `0x${r.slice(2)}${s.slice(2)}${v}` as Hex;
     },
   });
 

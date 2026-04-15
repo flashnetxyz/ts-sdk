@@ -118,3 +118,28 @@ export async function fetchNonce(
   const client = getClient(rpcUrl);
   return client.getTransactionCount({ address: account as Address });
 }
+
+/**
+ * Fetch current EIP-1559 fee parameters (maxFeePerGas, maxPriorityFeePerGas).
+ *
+ * On Flashnet both are effectively 0 today, but a partner running their own
+ * chain or a future base-fee activation would make hardcoded 0s incorrect.
+ * This queries the node and returns the values to use for tx construction.
+ *
+ * Falls back to 0/0 if the node doesn't support `eth_feeHistory` or returns
+ * an empty response — correct for today's Flashnet.
+ */
+export async function fetchEip1559Fees(
+  rpcUrl: string
+): Promise<{ maxFeePerGas: bigint; maxPriorityFeePerGas: bigint }> {
+  const client = getClient(rpcUrl);
+  try {
+    const est = await client.estimateFeesPerGas();
+    return {
+      maxFeePerGas: est.maxFeePerGas ?? 0n,
+      maxPriorityFeePerGas: est.maxPriorityFeePerGas ?? 0n,
+    };
+  } catch {
+    return { maxFeePerGas: 0n, maxPriorityFeePerGas: 0n };
+  }
+}

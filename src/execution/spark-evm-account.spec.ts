@@ -185,3 +185,72 @@ describe("ExecutionClient constructor signer derivation", () => {
     expect(pubkeyHex.length).toBe(66); // 33 bytes * 2 hex chars
   });
 });
+
+describe("yParity recovery failure", () => {
+  it("throws when the signer returns a signature that recovers to neither yParity", async () => {
+    // Construct a wallet whose identity pubkey is derived from key A, but
+    // whose sign method signs with key B — so no yParity produces a
+    // signature recovering to the expected address.
+    const keyA = new Uint8Array(32);
+    keyA[31] = 1;
+    const keyB = new Uint8Array(32);
+    keyB[31] = 2;
+
+    const pubkeyA = secp256k1.getPublicKey(keyA, true);
+    const malicious: SparkWalletInput = {
+      config: {
+        signer: {
+          async getIdentityPublicKey() {
+            return pubkeyA; // claim to be key A
+          },
+          async signMessageWithIdentityKey(message: Uint8Array, compact?: boolean) {
+            // but sign with key B — signature won't recover to A's address
+            const sig = secp256k1.sign(message, keyB);
+            return compact ? sig.toCompactRawBytes() : sig.toDERRawBytes();
+          },
+        },
+      },
+    } as unknown as SparkWalletInput;
+
+    const account = await sparkWalletToEvmAccount(malicious);
+    await expect(
+      account.signTransaction({
+        to: "0x70997970C51812dc3A010C7d01b50e0d17dc79C8" as `0x${string}`,
+        value: 0n,
+        chainId: 21022,
+        nonce: 0,
+        gas: 21000n,
+        maxFeePerGas: 0n,
+        maxPriorityFeePerGas: 0n,
+        type: "eip1559" as const,
+      })
+    ).rejects.toThrow(/does not recover/);
+  });
+});
+
+describe("getWalletSigner runtime guard", () => {
+  it("throws a helpful error when config.signer is missing", () => {
+    const broken = {} as unknown as SparkWalletInput;
+    expect(() => getWalletSigner(broken)).toThrow(
+      /does not expose the expected `config.signer` shape/
+    );
+  });
+
+  it("throws when config.signer lacks getIdentityPublicKey", () => {
+    const broken = {
+      config: { signer: { signMessageWithIdentityKey: async () => new Uint8Array() } },
+    } as unknown as SparkWalletInput;
+    expect(() => getWalletSigner(broken)).toThrow(
+      /does not expose the expected `config.signer` shape/
+    );
+  });
+
+  it("throws when config.signer lacks signMessageWithIdentityKey", () => {
+    const broken = {
+      config: { signer: { getIdentityPublicKey: async () => new Uint8Array(33) } },
+    } as unknown as SparkWalletInput;
+    expect(() => getWalletSigner(broken)).toThrow(
+      /does not expose the expected `config.signer` shape/
+    );
+  });
+});

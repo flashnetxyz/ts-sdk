@@ -36,7 +36,7 @@ import { bytesToHex } from "@noble/curves/abstract/utils";
 import { sparkWalletToEvmAccount, getWalletSigner, type SparkWalletInput } from "./spark-evm-account";
 import type { LocalAccount } from "viem/accounts";
 import { encodeWithdrawSats, encodeWithdrawToken } from "./bridge";
-import { fetchNonce } from "./evm";
+import { fetchNonce, fetchEip1559Fees } from "./evm";
 import type {
   CanonicalIntentAction,
   CanonicalIntentMessage,
@@ -49,30 +49,42 @@ import type {
 /** Conversion factor: 1 sat = 10^10 wei on Flashnet's EVM. */
 const WEI_PER_SAT = 10_000_000_000n;
 
+/** Maximum value representable as u64 on the Rust side. */
+const U64_MAX = (1n << 64n) - 1n;
+
 /** Default gas limit for withdrawal transactions. */
 const DEFAULT_WITHDRAW_GAS_LIMIT = 200_000n;
 
-/** Execution layer network type. */
-export type ExecutionNetwork = "mainnet" | "regtest";
-
 /**
- * Built-in network configurations for the execution layer.
- * For local development, pass a full ExecutionClientConfig instead.
+ * JSON-stringify a value that may contain `bigint` fields, emitting each
+ * bigint as a JSON numeric literal (not a string). Rust's serde_json
+ * parses unquoted numeric literals up to u64 range, so this preserves
+ * full u64 precision across languages — unlike `JSON.stringify` which
+ * throws on bigint, and unlike `Number(bigint)` which loses precision
+ * above 2^53.
+ *
+ * The output JSON is canonical in the same sense as `JSON.stringify`:
+ * object keys appear in insertion order and there is no whitespace.
  */
-const EXECUTION_NETWORK_CONFIGS: Record<ExecutionNetwork, ExecutionClientConfig> = {
-  mainnet: {
-    gatewayUrl: "https://gateway.flashnet.xyz",
-    rpcUrl: "https://rpc.flashnet.xyz",
-    chainId: 21022,
-    bridgeAddress: "0x1e2861ce58eaa89260226b5704416b9a20589d47",
-  },
-  regtest: {
-    gatewayUrl: "https://gateway.regtest.flashnet.xyz",
-    rpcUrl: "https://rpc.regtest.flashnet.xyz",
-    chainId: 21022,
-    bridgeAddress: "0x1e2861ce58eaa89260226b5704416b9a20589d47",
-  },
-};
+export function stringifyWithBigint(value: unknown): string {
+  const BIGINT_SENTINEL = "__BIGINT_SENTINEL__";
+  // Pass 1: replace bigints with tagged strings so JSON.stringify succeeds.
+  const body = JSON.stringify(value, (_key, v) =>
+    typeof v === "bigint" ? `${BIGINT_SENTINEL}${v.toString()}` : v
+  );
+  // Pass 2: strip the quotes + sentinel so the bigint becomes a raw numeric
+  // literal in the emitted JSON. Only unsigned decimal digits are allowed
+  // in a sentinel-tagged value so this regex is safe.
+  return body.replace(
+    new RegExp(`"${BIGINT_SENTINEL}(\\d+)"`, "g"),
+    "$1"
+  );
+}
+
+// Named network configs were removed until real deployment addresses are
+// available. Callers must pass an explicit ExecutionClientConfig. Once the
+// mainnet/testnet/regtest endpoints are finalized, add them here with the
+// correct bridge addresses (which WILL differ per network).
 
 /**
  * Configuration for the execution client.
@@ -133,17 +145,11 @@ export class ExecutionClient {
 
   /**
    * @param wallet - SparkWallet instance (identity key used for auth + EVM signing).
-   * @param networkOrConfig - Network name ("mainnet", "testnet", "regtest", "local")
-   *   or a full ExecutionClientConfig for custom endpoints.
+   * @param config - Explicit endpoint configuration: gatewayUrl, rpcUrl,
+   *   chainId, bridgeAddress. Named network shortcuts will be re-added
+   *   once real deployments exist.
    */
-  constructor(
-    wallet: SparkWalletInput,
-    networkOrConfig: ExecutionNetwork | ExecutionClientConfig
-  ) {
-    const config =
-      typeof networkOrConfig === "string"
-        ? EXECUTION_NETWORK_CONFIGS[networkOrConfig]
-        : networkOrConfig;
+  constructor(wallet: SparkWalletInput, config: ExecutionClientConfig) {
     this.config = {
       ...config,
       gatewayUrl: config.gatewayUrl.replace(/\/+$/, ""),
@@ -236,6 +242,7 @@ export class ExecutionClient {
     const sparkRecipient = await this.getSparkRecipientHex();
     const calldata = encodeWithdrawSats(sparkRecipient);
     const nonce = await fetchNonce(this.config.rpcUrl, account.address);
+    const fees = await fetchEip1559Fees(this.config.rpcUrl);
 
     const signedTx = await account.signTransaction({
       to: this.config.bridgeAddress as `0x${string}`,
@@ -244,8 +251,7 @@ export class ExecutionClient {
       chainId: this.config.chainId,
       nonce,
       gas: DEFAULT_WITHDRAW_GAS_LIMIT,
-      maxFeePerGas: 0n,
-      maxPriorityFeePerGas: 0n,
+      ...fees,
       type: "eip1559" as const,
     });
 
@@ -268,6 +274,7 @@ export class ExecutionClient {
       sparkRecipient
     );
     const nonce = await fetchNonce(this.config.rpcUrl, account.address);
+    const fees = await fetchEip1559Fees(this.config.rpcUrl);
 
     const signedTx = await account.signTransaction({
       to: this.config.bridgeAddress as `0x${string}`,
@@ -276,8 +283,7 @@ export class ExecutionClient {
       chainId: this.config.chainId,
       nonce,
       gas: DEFAULT_WITHDRAW_GAS_LIMIT,
-      maxFeePerGas: 0n,
-      maxPriorityFeePerGas: 0n,
+      ...fees,
       type: "eip1559" as const,
     });
 
@@ -353,16 +359,23 @@ export class ExecutionClient {
     const nonce = crypto.randomUUID();
 
     const transfers: CanonicalTransferEntry[] = deposits.map((d) => {
-      const amount =
-        typeof d.amount === "bigint" ? Number(d.amount) : d.amount;
-      if (!Number.isSafeInteger(amount)) {
+      // Preserve full u64 precision by carrying bigint all the way to the
+      // canonical JSON. Number() casting would lose precision for any
+      // 18-decimal token amount (1e18 > 2^53). We validate the amount fits
+      // in u64 here; the custom serializer below emits bigints as JSON
+      // numeric literals (which Rust's serde_json parses to u64).
+      const amountBig =
+        typeof d.amount === "bigint" ? d.amount : BigInt(d.amount);
+      if (amountBig < 0n || amountBig > U64_MAX) {
         throw new Error(
-          `deposit amount ${d.amount} exceeds safe integer range (max ${Number.MAX_SAFE_INTEGER})`
+          `deposit amount ${d.amount} out of u64 range [0, ${U64_MAX}]`
         );
       }
       const entry: CanonicalTransferEntry = {
         transferId: d.sparkTransferId,
-        amountSats: amount,
+        // Store as bigint so the custom serializer emits it as a numeric
+        // literal preserving full precision.
+        amountSats: amountBig,
         assetType: d.asset.type === "btc" ? "NativeSats" : "BridgedToken",
       };
       if (d.asset.type === "token") {
@@ -378,16 +391,18 @@ export class ExecutionClient {
       nonce,
     };
 
-    const messageJson = JSON.stringify(canonicalMessage);
+    const messageJson = stringifyWithBigint(canonicalMessage);
     const signature = await this.signer.signMessage(messageJson);
 
+    // Body mirrors the Rust `ExecuteRequest` struct. `amount` is u64 on
+    // the Rust side; we emit bigints as numeric literals (not strings)
+    // so serde_json parses them as u64 without any serde override.
     const body: Record<string, unknown> = {
       chainId: this.config.chainId,
       deposits: deposits.map((d) => ({
         sparkTransferId: d.sparkTransferId,
         asset: d.asset,
-        amount:
-          typeof d.amount === "bigint" ? d.amount.toString() : d.amount,
+        amount: typeof d.amount === "bigint" ? d.amount : d.amount,
       })),
       signature,
       nonce,
@@ -424,7 +439,9 @@ export class ExecutionClient {
         "Content-Type": "application/json",
         ...headers,
       },
-      body: JSON.stringify(body),
+      // Use stringifyWithBigint so u64 amounts above 2^53 survive as JSON
+      // numeric literals that the Rust gateway (serde u64) parses directly.
+      body: stringifyWithBigint(body),
     });
 
     const text = await resp.text();

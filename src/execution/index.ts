@@ -26,7 +26,6 @@
 // Core client
 export {
   ExecutionClient,
-  type ExecutionNetwork,
   type ExecutionClientConfig,
   type DepositParams,
   type WithdrawParams,
