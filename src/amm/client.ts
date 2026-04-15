@@ -138,6 +138,16 @@ export class AMMClient {
     const isBtcOut = params.assetOutAddress.toLowerCase() === "btc";
     const withdraw = params.withdraw ?? true;
 
+    // BTC → BTC is a no-op the Conductor can't express. Reject explicitly
+    // so callers don't get a downstream "invalid address" error from
+    // viem when the SDK tries to ABI-encode "btc" as a 20-byte address.
+    if (isBtcIn && isBtcOut) {
+      throw new Error(
+        'swap: BTC → BTC is not a valid swap. Both assetInAddress and ' +
+          'assetOutAddress are "btc".'
+      );
+    }
+
     // Token → BTC with withdraw:false has no clean semantics: the SDK
     // cannot mint native BTC to the caller's EVM address (only wrapped
     // WBTC). Rather than silently returning WBTC (surprising), reject
