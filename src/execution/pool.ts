@@ -77,18 +77,31 @@ export async function fetchPoolInfo(
     ],
   });
 
+  // All four multicall results must succeed. Falling back to "" or 0n on
+  // failure would mask RPC errors behind values that look like a real
+  // zero-liquidity / uninitialized pool, and empty-string addresses feed
+  // invalid data into downstream swap routing.
   if (results[0].status !== "success") {
     throw new Error(`Failed to read slot0 from pool ${poolAddress}`);
+  }
+  if (results[1].status !== "success") {
+    throw new Error(`Failed to read liquidity from pool ${poolAddress}`);
+  }
+  if (results[2].status !== "success") {
+    throw new Error(`Failed to read token0 from pool ${poolAddress}`);
+  }
+  if (results[3].status !== "success") {
+    throw new Error(`Failed to read token1 from pool ${poolAddress}`);
   }
 
   const [sqrtPriceX96, tick] = results[0].result;
 
   return {
     address: poolAddress,
-    token0: results[2].status === "success" ? results[2].result : "",
-    token1: results[3].status === "success" ? results[3].result : "",
+    token0: results[2].result,
+    token1: results[3].result,
     sqrtPriceX96,
     tick,
-    liquidity: results[1].status === "success" ? results[1].result : 0n,
+    liquidity: results[1].result,
   };
 }

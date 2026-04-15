@@ -295,9 +295,22 @@ async function testPoolHelpers(): Promise<void> {
       pool === null || typeof pool === "string",
       `getPoolAddress returns null or address (${pool})`
     );
-  } catch {
-    passed++;
-    console.log("  ✓ getPoolAddress handles non-contract gracefully");
+  } catch (e: any) {
+    // Only accept the specific contract-not-found revert, not network
+    // errors or RPC timeouts which would mask real infrastructure bugs.
+    const msg = e?.message ?? String(e);
+    const acceptable =
+      e?.name === "ContractFunctionRevertedError" ||
+      msg.includes("returned no data") ||
+      msg.includes("invalid opcode") ||
+      msg.includes("revert");
+    if (acceptable) {
+      passed++;
+      console.log("  ✓ getPoolAddress handles non-contract gracefully");
+    } else {
+      // Re-raise network/timeout/parse errors so CI flags them.
+      throw e;
+    }
   }
 }
 

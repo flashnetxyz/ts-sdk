@@ -22,8 +22,10 @@
  *   assetInAddress: "btc",
  *   assetOutAddress: "0x...",
  *   amountIn: "1000",
- *   maxSlippageBps: 500,
- *   minAmountOut: "0",
+ *   // Compute minAmountOut from your own quote + slippage tolerance.
+ *   // The SDK does not provide slippage protection automatically.
+ *   minAmountOut: "950000",
+ *   fee: 3000,
  * });
  * ```
  */
@@ -90,9 +92,14 @@ export interface SwapParams {
   assetOutAddress: string;
   /** Amount in (sats if BTC, base units if token). String to match FlashnetClient convention. */
   amountIn: string;
-  /** Maximum slippage in basis points. */
-  maxSlippageBps: number;
-  /** Minimum acceptable output amount (base units). String. */
+  /**
+   * Minimum acceptable output amount (base units). String.
+   *
+   * The caller is responsible for computing this from their own quote
+   * and slippage tolerance — the SDK does not fetch quotes on your
+   * behalf. `"0"` disables slippage protection and exposes you to
+   * sandwich attacks; set a realistic bound for any non-test code.
+   */
   minAmountOut: string;
   /** Uniswap V3 fee tier (500, 3000, 10000). */
   fee: number;
