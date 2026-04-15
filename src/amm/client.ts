@@ -114,6 +114,10 @@ export class AMMClient {
     const minAmountOut = BigInt(params.minAmountOut);
     const execConfig = this.execClient.getConfig();
     const account = await this.execClient.getEvmAccount();
+    // sparkRecipient is only needed for *AndWithdraw variants.
+    const sparkRecipient = withdraw
+      ? await this.execClient.getSparkRecipientHex()
+      : "";
 
     if (isBtcIn) {
       // Native BTC → Token
@@ -122,7 +126,8 @@ export class AMMClient {
         params.fee,
         minAmountOut,
         integrator,
-        withdraw
+        withdraw,
+        sparkRecipient
       );
       const nonce = await fetchNonce(execConfig.rpcUrl, account.address);
       const signedTx = await account.signTransaction({
@@ -151,7 +156,8 @@ export class AMMClient {
         amountIn,
         minAmountOut,
         integrator,
-        withdraw
+        withdraw,
+        sparkRecipient
       );
       const nonce = await fetchNonce(execConfig.rpcUrl, account.address);
       const signedTx = await account.signTransaction({
@@ -177,7 +183,8 @@ export class AMMClient {
       amountIn,
       minAmountOut,
       integrator,
-      withdraw
+      withdraw,
+      sparkRecipient
     );
     const nonce = await fetchNonce(execConfig.rpcUrl, account.address);
     const signedTx = await account.signTransaction({
@@ -274,17 +281,18 @@ export class AMMClient {
     fee: number,
     minAmountOut: bigint,
     integrator: string,
-    withdraw: boolean
+    withdraw: boolean,
+    sparkRecipient: string
   ): string {
     if (withdraw) {
-      // TODO: Use swapBTCAndWithdraw once Conductor ABI is updated
       return encodeFunctionData({
         abi: conductorAbi,
-        functionName: "swapBTC",
+        functionName: "swapBTCAndWithdraw",
         args: [
           tokenOut as `0x${string}`,
           fee,
           minAmountOut,
+          sparkRecipient as `0x${string}`,
           integrator as `0x${string}`,
         ],
       });
@@ -307,11 +315,25 @@ export class AMMClient {
     amountIn: bigint,
     minAmountOut: bigint,
     integrator: string,
-    withdraw: boolean
+    withdraw: boolean,
+    sparkRecipient: string
   ): string {
-    // Token → BTC uses the regular swap with WBTC as output,
-    // or swapAndWithdrawBTC when withdraw is true.
-    // TODO: Use swapAndWithdrawBTC once Conductor ABI is updated
+    if (withdraw) {
+      return encodeFunctionData({
+        abi: conductorAbi,
+        functionName: "swapAndWithdrawBTC",
+        args: [
+          tokenIn as `0x${string}`,
+          fee,
+          amountIn,
+          minAmountOut,
+          sparkRecipient as `0x${string}`,
+          integrator as `0x${string}`,
+        ],
+      });
+    }
+    // When not withdrawing, swap tokenIn → WBTC and leave the WBTC in the
+    // user's account on the EVM side.
     return encodeFunctionData({
       abi: conductorAbi,
       functionName: "swap",
@@ -333,9 +355,24 @@ export class AMMClient {
     amountIn: bigint,
     minAmountOut: bigint,
     integrator: string,
-    withdraw: boolean
+    withdraw: boolean,
+    sparkRecipient: string
   ): string {
-    // TODO: Use swapAndWithdraw once Conductor ABI is updated
+    if (withdraw) {
+      return encodeFunctionData({
+        abi: conductorAbi,
+        functionName: "swapAndWithdraw",
+        args: [
+          tokenIn as `0x${string}`,
+          tokenOut as `0x${string}`,
+          fee,
+          amountIn,
+          minAmountOut,
+          sparkRecipient as `0x${string}`,
+          integrator as `0x${string}`,
+        ],
+      });
+    }
     return encodeFunctionData({
       abi: conductorAbi,
       functionName: "swap",
