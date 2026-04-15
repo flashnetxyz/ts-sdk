@@ -339,7 +339,7 @@ export class ExecutionClient {
    * Get the Spark identity public key as a 0x-prefixed hex string
    * for use as the sparkRecipient in withdrawal calls.
    */
-  private async getSparkRecipientHex(): Promise<string> {
+  async getSparkRecipientHex(): Promise<string> {
     const pubkey = await getWalletSigner(this.wallet).getIdentityPublicKey();
     const hex = bytesToHex(pubkey);
     return hex.startsWith("0x") ? hex : `0x${hex}`;

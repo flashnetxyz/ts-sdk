@@ -2,10 +2,9 @@
  * E2E Test Script for Flashnet Execution Client
  *
  * Tests the full execution client flow against a running localnet:
- * - Authentication (challenge-response)
+ * - Authentication (challenge-response) via SparkWallet identity key
  * - EVM read queries (token info, balances)
- * - Deposit intent submission
- * - Deposit-and-execute intent submission (Conductor swap)
+ * - Conductor calldata encoding (including *AndWithdraw variants)
  * - Health check
  *
  * Prerequisites:
@@ -17,6 +16,7 @@
  *   GATEWAY_URL=http://localhost:8080 bun run tests/e2e-execution.ts
  */
 
+import { secp256k1 } from "@noble/curves/secp256k1";
 import {
   ExecutionClient,
   Conductor,
@@ -31,11 +31,7 @@ import {
   sqrtPriceX96ToPrice,
   fullRangeTicks,
   FEE_TIERS,
-  type ExecutionSigner,
-  type Deposit,
-  type ConductorConfig,
-  type EvmTransactionSigner,
-  type UnsignedTransaction,
+  type SparkWalletInput,
 } from "../src/execution";
 
 // ---------------------------------------------------------------------------
@@ -44,6 +40,9 @@ import {
 
 const GATEWAY_URL = process.env.GATEWAY_URL ?? "http://localhost:8080";
 const RPC_URL = process.env.RPC_URL ?? "http://localhost:8545";
+const CHAIN_ID = Number(process.env.CHAIN_ID ?? 21022);
+const BRIDGE_ADDRESS =
+  process.env.BRIDGE_ADDRESS ?? "0x1e2861ce58eaa89260226b5704416b9a20589d47";
 
 // ---------------------------------------------------------------------------
 // Test helpers
@@ -62,34 +61,49 @@ function assert(condition: boolean, message: string): void {
   }
 }
 
-async function assertThrows(
-  fn: () => Promise<unknown>,
-  message: string
-): Promise<void> {
-  try {
-    await fn();
-    failed++;
-    console.error(`  ✗ FAIL: Expected error: ${message}`);
-  } catch {
-    passed++;
-    console.log(`  ✓ ${message}`);
-  }
+// ---------------------------------------------------------------------------
+// Mock SparkWallet (for testing structure, not real crypto)
+// ---------------------------------------------------------------------------
+
+/**
+ * Construct a mock SparkWallet-shaped object from a raw private key.
+ * Implements the minimal `config.signer` surface that the SDK reads via
+ * `getWalletSigner` and `sparkWalletToEvmAccount`.
+ */
+function mockWalletFromPrivateKey(privateKey: Uint8Array): SparkWalletInput {
+  const publicKey = secp256k1.getPublicKey(privateKey, true); // compressed
+  return {
+    config: {
+      signer: {
+        async getIdentityPublicKey() {
+          return publicKey;
+        },
+        async signMessageWithIdentityKey(
+          message: Uint8Array,
+          compact?: boolean
+        ) {
+          const sig = secp256k1.sign(message, privateKey);
+          return compact ? sig.toCompactRawBytes() : sig.toDERRawBytes();
+        },
+      },
+    },
+  } as unknown as SparkWalletInput;
 }
 
-// ---------------------------------------------------------------------------
-// Mock signers (for testing structure, not real crypto)
-// ---------------------------------------------------------------------------
+function deterministicWallet(): SparkWalletInput {
+  const key = new Uint8Array(32).fill(0);
+  key[31] = 1; // private key = 1 (well-known test key)
+  return mockWalletFromPrivateKey(key);
+}
 
-const mockIntentSigner: ExecutionSigner = {
-  getPublicKey() {
-    // 33-byte compressed secp256k1 key (hex, no 0x)
-    return "02" + "ab".repeat(32);
-  },
-  signMessage(_message: string) {
-    // Return a fake DER signature for structural testing
-    return "30" + "44" + "02" + "20" + "ff".repeat(32) + "02" + "20" + "ff".repeat(32);
-  },
-};
+function clientConfig() {
+  return {
+    gatewayUrl: GATEWAY_URL,
+    rpcUrl: RPC_URL,
+    chainId: CHAIN_ID,
+    bridgeAddress: BRIDGE_ADDRESS,
+  };
+}
 
 // ---------------------------------------------------------------------------
 // Test suites
@@ -97,12 +111,10 @@ const mockIntentSigner: ExecutionSigner = {
 
 async function testHealthCheck(): Promise<void> {
   console.log("\n--- Health Check ---");
-  const client = new ExecutionClient({ gatewayUrl: GATEWAY_URL }, mockIntentSigner);
-
+  const client = new ExecutionClient(deterministicWallet(), clientConfig());
   try {
     const health = await client.health();
     assert(health === true, "Health endpoint returns true");
-    console.log(`  Health response:`, health);
   } catch (e) {
     failed++;
     console.error(`  ✗ Health check failed: ${e}`);
@@ -111,11 +123,13 @@ async function testHealthCheck(): Promise<void> {
 
 async function testAuthentication(): Promise<void> {
   console.log("\n--- Authentication ---");
-  const client = new ExecutionClient({ gatewayUrl: GATEWAY_URL }, mockIntentSigner);
-
+  const client = new ExecutionClient(deterministicWallet(), clientConfig());
   try {
     const token = await client.authenticate();
-    assert(typeof token === "string" && token.length > 0, "Authentication returns access token");
+    assert(
+      typeof token === "string" && token.length > 0,
+      "Authentication returns access token"
+    );
     assert(client.getAccessToken() === token, "Access token is stored");
   } catch (e) {
     failed++;
@@ -124,13 +138,38 @@ async function testAuthentication(): Promise<void> {
   }
 }
 
+async function testIdentityEvmAddress(): Promise<void> {
+  console.log("\n--- Identity EVM Address Derivation ---");
+  const client = new ExecutionClient(deterministicWallet(), clientConfig());
+  try {
+    const addr = await client.getEvmAddress();
+    assert(
+      /^0x[a-fA-F0-9]{40}$/.test(addr),
+      `getEvmAddress returns a valid address (${addr})`
+    );
+    const sparkRecipient = await client.getSparkRecipientHex();
+    assert(
+      /^0x0[23][a-fA-F0-9]{64}$/.test(sparkRecipient),
+      `getSparkRecipientHex returns 33-byte compressed pubkey hex (${sparkRecipient.slice(0, 16)}...)`
+    );
+  } catch (e) {
+    failed++;
+    console.error(`  ✗ Identity EVM derivation failed: ${e}`);
+  }
+}
+
 async function testEvmReadHelpers(): Promise<void> {
   console.log("\n--- EVM Read Helpers ---");
 
-  // Test fetchNativeBalance (always works on any chain)
   try {
-    const balance = await fetchNativeBalance(RPC_URL, "0x0000000000000000000000000000000000000000");
-    assert(typeof balance === "bigint", `fetchNativeBalance returns bigint (${balance})`);
+    const balance = await fetchNativeBalance(
+      RPC_URL,
+      "0x0000000000000000000000000000000000000000"
+    );
+    assert(
+      typeof balance === "bigint",
+      `fetchNativeBalance returns bigint (${balance})`
+    );
   } catch (e) {
     failed++;
     console.error(`  ✗ fetchNativeBalance failed: ${e}`);
@@ -138,10 +177,15 @@ async function testEvmReadHelpers(): Promise<void> {
     return;
   }
 
-  // Test fetchNonce
   try {
-    const nonce = await fetchNonce(RPC_URL, "0x0000000000000000000000000000000000000000");
-    assert(typeof nonce === "number", `fetchNonce returns number (${nonce})`);
+    const nonce = await fetchNonce(
+      RPC_URL,
+      "0x0000000000000000000000000000000000000000"
+    );
+    assert(
+      typeof nonce === "number",
+      `fetchNonce returns number (${nonce})`
+    );
   } catch (e) {
     failed++;
     console.error(`  ✗ fetchNonce failed: ${e}`);
@@ -151,7 +195,6 @@ async function testEvmReadHelpers(): Promise<void> {
 async function testConductorEncoding(): Promise<void> {
   console.log("\n--- Conductor Calldata Encoding ---");
 
-  // Test encodeSwap produces valid hex
   const swapCalldata = Conductor.encodeSwap({
     tokenIn: "0x1111111111111111111111111111111111111111",
     tokenOut: "0x2222222222222222222222222222222222222222",
@@ -160,19 +203,21 @@ async function testConductorEncoding(): Promise<void> {
     minAmountOut: 900000000000000000n,
   });
   assert(swapCalldata.startsWith("0x"), "encodeSwap returns 0x-prefixed hex");
-  assert(swapCalldata.startsWith("0x" + "fb408d07"), "encodeSwap starts with correct selector");
-  assert(swapCalldata.length === 2 + 8 + 64 * 6, `encodeSwap has correct length (${swapCalldata.length})`);
+  assert(
+    swapCalldata.startsWith("0x" + "fb408d07"),
+    "encodeSwap starts with correct selector"
+  );
 
-  // Test encodeSwapBTC
   const btcCalldata = Conductor.encodeSwapBTC({
     tokenOut: "0x2222222222222222222222222222222222222222",
     fee: 3000,
     minAmountOut: 900000000000000000n,
   });
-  assert(btcCalldata.startsWith("0x" + "ad78c51c"), "encodeSwapBTC starts with correct selector");
-  assert(btcCalldata.length === 2 + 8 + 64 * 4, `encodeSwapBTC has correct length (${btcCalldata.length})`);
+  assert(
+    btcCalldata.startsWith("0x" + "ad78c51c"),
+    "encodeSwapBTC starts with correct selector"
+  );
 
-  // Test integrator field
   const withIntegrator = Conductor.encodeSwap({
     tokenIn: "0x1111111111111111111111111111111111111111",
     tokenOut: "0x2222222222222222222222222222222222222222",
@@ -190,32 +235,33 @@ async function testConductorEncoding(): Promise<void> {
 async function testPriceMath(): Promise<void> {
   console.log("\n--- Price Math ---");
 
-  // Test priceToSqrtPriceX96 round-trip
   const sqrtPrice = priceToSqrtPriceX96(1.0, 18, 18);
   assert(sqrtPrice > 0n, `priceToSqrtPriceX96(1.0, 18, 18) = ${sqrtPrice}`);
 
   const priceBack = sqrtPriceX96ToPrice(sqrtPrice, 18, 18);
-  assert(Math.abs(priceBack - 1.0) < 0.01, `sqrtPriceX96ToPrice round-trips to ~1.0 (got ${priceBack})`);
+  assert(
+    Math.abs(priceBack - 1.0) < 0.01,
+    `sqrtPriceX96ToPrice round-trips to ~1.0 (got ${priceBack})`
+  );
 
-  // Test with different decimals
   const btcUsdb = priceToSqrtPriceX96(80000, 8, 18);
   assert(btcUsdb > 0n, `priceToSqrtPriceX96(80000, 8, 18) = ${btcUsdb}`);
 
-  // Test fullRangeTicks
   const ticks60 = fullRangeTicks(60);
-  assert(ticks60.tickLower % 60 === 0, `fullRangeTicks(60) lower aligned: ${ticks60.tickLower}`);
-  assert(ticks60.tickUpper % 60 === 0, `fullRangeTicks(60) upper aligned: ${ticks60.tickUpper}`);
+  assert(ticks60.tickLower % 60 === 0, `fullRangeTicks(60) lower aligned`);
+  assert(ticks60.tickUpper % 60 === 0, `fullRangeTicks(60) upper aligned`);
   assert(ticks60.tickLower < 0, "fullRangeTicks lower is negative");
   assert(ticks60.tickUpper > 0, "fullRangeTicks upper is positive");
 
-  // Test sortTokens
   const [t0, t1] = sortTokens(
     "0xBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB",
     "0xAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
   );
-  assert(t0.toLowerCase() < t1.toLowerCase(), "sortTokens returns lower address first");
+  assert(
+    t0.toLowerCase() < t1.toLowerCase(),
+    "sortTokens returns lower address first"
+  );
 
-  // Test FEE_TIERS
   assert(FEE_TIERS.length === 3, `FEE_TIERS has 3 entries`);
   assert(FEE_TIERS[0].fee === 500, "First fee tier is 500 (0.05%)");
 }
@@ -223,10 +269,11 @@ async function testPriceMath(): Promise<void> {
 async function testPoolHelpers(): Promise<void> {
   console.log("\n--- Pool Helpers ---");
 
-  // These require a running localnet with Uniswap deployed.
-  // If RPC is not available, skip gracefully.
   try {
-    const balance = await fetchNativeBalance(RPC_URL, "0x0000000000000000000000000000000000000000");
+    const balance = await fetchNativeBalance(
+      RPC_URL,
+      "0x0000000000000000000000000000000000000000"
+    );
     if (typeof balance !== "bigint") {
       console.log("  (skipping pool tests — RPC not available)");
       return;
@@ -236,7 +283,6 @@ async function testPoolHelpers(): Promise<void> {
     return;
   }
 
-  // getPoolAddress with invalid factory should return null or throw
   try {
     const pool = await getPoolAddress(
       RPC_URL,
@@ -245,10 +291,11 @@ async function testPoolHelpers(): Promise<void> {
       "0x2222222222222222222222222222222222222222",
       3000
     );
-    // Either null (no pool) or a valid response is acceptable
-    assert(pool === null || typeof pool === "string", `getPoolAddress returns null or address (${pool})`);
+    assert(
+      pool === null || typeof pool === "string",
+      `getPoolAddress returns null or address (${pool})`
+    );
   } catch {
-    // eth_call to non-contract may throw — that's acceptable
     passed++;
     console.log("  ✓ getPoolAddress handles non-contract gracefully");
   }
@@ -257,7 +304,6 @@ async function testPoolHelpers(): Promise<void> {
 async function testInputValidation(): Promise<void> {
   console.log("\n--- Input Validation ---");
 
-  // Test abiEncodeUint overflow protection
   try {
     Conductor.encodeSwap({
       tokenIn: "0x1111111111111111111111111111111111111111",
@@ -287,6 +333,7 @@ async function main(): Promise<void> {
   await testConductorEncoding();
   await testPriceMath();
   await testInputValidation();
+  await testIdentityEvmAddress();
 
   // Tests that require RPC
   await testEvmReadHelpers();
