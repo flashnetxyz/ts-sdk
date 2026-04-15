@@ -25,7 +25,6 @@ export {
   FEE_TIERS,
 } from "./src/execution";
 export type {
-  ExecutionNetwork,
   ExecutionClientConfig,
   DepositParams,
   WithdrawParams,
