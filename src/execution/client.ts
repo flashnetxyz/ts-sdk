@@ -410,6 +410,13 @@ export class ExecutionClient {
       return entry;
     });
 
+    // IMPORTANT: Field order here MUST match the declaration order of
+    // `CanonicalIntentMessage` on the Rust side. `stringifyWithBigint`
+    // preserves JS object insertion order, and the validator signature
+    // check hashes the resulting JSON byte-for-byte. Reordering these
+    // keys (or the Rust struct) silently breaks auth — the signed
+    // bytes diverge but no type-level error surfaces. A golden-vector
+    // test in stringify-bigint.spec.ts locks in the current ordering.
     const canonicalMessage: CanonicalIntentMessage = {
       chainId: this.config.chainId,
       transfers,
@@ -428,7 +435,7 @@ export class ExecutionClient {
       deposits: deposits.map((d) => ({
         sparkTransferId: d.sparkTransferId,
         asset: d.asset,
-        amount: typeof d.amount === "bigint" ? d.amount : d.amount,
+        amount: d.amount,
       })),
       signature,
       nonce,
@@ -519,6 +526,16 @@ function validateDeposits(deposits: Deposit[]): void {
     }
     if (typeof d.amount === "number" && (Number.isNaN(d.amount) || !Number.isFinite(d.amount))) {
       throw new Error(`deposits[${i}].amount is not a valid number`);
+    }
+    // Reject number inputs above Number.MAX_SAFE_INTEGER (2^53 - 1).
+    // u64 amounts larger than that silently round at the JS number layer
+    // before BigInt() can observe the true value, and the canonical
+    // signature would cover the rounded amount — not what the caller
+    // intended. Require callers to pass a bigint in that range.
+    if (typeof d.amount === "number" && !Number.isSafeInteger(d.amount)) {
+      throw new Error(
+        `deposits[${i}].amount (${d.amount}) exceeds Number.MAX_SAFE_INTEGER; pass a bigint to preserve precision`
+      );
     }
     if (typeof d.amount === "bigint" ? d.amount <= 0n : d.amount <= 0) {
       throw new Error(`deposits[${i}].amount must be greater than zero`);

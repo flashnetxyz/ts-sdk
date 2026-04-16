@@ -54,11 +54,26 @@ export async function fetchTokenInfo(
     ],
   });
 
+  // All three multicall results must succeed. Matches the strictness of
+  // fetchPoolInfo: silent fallbacks ("", 0) look like a valid token with
+  // no decimals and feed dangerous values into downstream scaling
+  // (decimals: 0 → amount math off by up to 10^18), so surface the RPC
+  // error instead.
+  if (results[0].status !== "success") {
+    throw new Error(`Failed to read symbol from token ${tokenAddress}`);
+  }
+  if (results[1].status !== "success") {
+    throw new Error(`Failed to read name from token ${tokenAddress}`);
+  }
+  if (results[2].status !== "success") {
+    throw new Error(`Failed to read decimals from token ${tokenAddress}`);
+  }
+
   return {
     address: tokenAddress,
-    symbol: results[0].status === "success" ? results[0].result : "",
-    name: results[1].status === "success" ? results[1].result : "",
-    decimals: results[2].status === "success" ? results[2].result : 0,
+    symbol: results[0].result,
+    name: results[1].result,
+    decimals: results[2].result,
   };
 }
 

@@ -1,4 +1,8 @@
 import { stringifyWithBigint } from "./client";
+import type {
+  CanonicalIntentMessage,
+  CanonicalTransferEntry,
+} from "./types";
 
 describe("stringifyWithBigint", () => {
   it("matches JSON.stringify for bigint-free input", () => {
@@ -87,5 +91,45 @@ describe("stringifyWithBigint", () => {
     obj.a = 2n;
     obj.m = 3;
     expect(stringifyWithBigint(obj)).toEqual('{"z":1,"a":2,"m":3}');
+  });
+
+  // Golden-vector regression guarding the field ordering on the signed
+  // canonical intent message. The validator hashes the JSON output
+  // byte-for-byte and the signed bytes must match the Rust
+  // CanonicalIntentMessage struct (chainId, transfers, action, nonce),
+  // with each CanonicalTransferEntry in the order
+  // (transferId, amountSats, assetType, tokenId?). If someone reorders
+  // the TS interface, the Rust struct, or the object literal in
+  // ExecutionClient.submitIntent, this test will fail loudly instead of
+  // breaking signature verification at runtime.
+  it("canonical intent message matches the Rust struct field order", () => {
+    const transfers: CanonicalTransferEntry[] = [
+      {
+        transferId: "transfer-1",
+        amountSats: 1000n,
+        assetType: "NativeSats",
+      },
+      {
+        transferId: "transfer-2",
+        amountSats: 2500n,
+        assetType: "BridgedToken",
+        tokenId: "btkn1foo",
+      },
+    ];
+    const message: CanonicalIntentMessage = {
+      chainId: 21022,
+      transfers,
+      action: { type: "deposit", recipient: "0xabc" },
+      nonce: "nonce-xyz",
+    };
+    expect(stringifyWithBigint(message)).toEqual(
+      '{"chainId":21022,' +
+        '"transfers":[' +
+        '{"transferId":"transfer-1","amountSats":1000,"assetType":"NativeSats"},' +
+        '{"transferId":"transfer-2","amountSats":2500,"assetType":"BridgedToken","tokenId":"btkn1foo"}' +
+        "]," +
+        '"action":{"type":"deposit","recipient":"0xabc"},' +
+        '"nonce":"nonce-xyz"}'
+    );
   });
 });

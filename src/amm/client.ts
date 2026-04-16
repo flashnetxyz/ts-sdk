@@ -30,7 +30,7 @@
  * ```
  */
 
-import { encodeFunctionData, type Hex } from "viem";
+import { encodeFunctionData, bytesToHex, hexToBigInt, type Hex } from "viem";
 import type { ExecutionClient } from "../execution/client";
 import type { ExecuteResponse } from "../execution/types";
 import { conductorAbi } from "../execution/abis/conductor";
@@ -258,9 +258,11 @@ export class AMMClient {
    * authorizes the Conductor to pull `amountIn` of `tokenAddress` from the
    * identity-derived EVM address.
    *
-   * Nonce is sourced from the low bits of the deadline to avoid needing a
-   * dedicated nonce oracle — Permit2 treats nonces as a 256-bit bitmap,
-   * so collisions are vanishingly unlikely at human timescales.
+   * Nonce is a 256-bit CSPRNG value so same-millisecond calls can't
+   * collide and an attacker can't predict a future nonce to pre-burn
+   * it with a cheap reverting swap. Permit2 treats nonces as a 256-bit
+   * bitmap keyed on the owner, so random selection from the full space
+   * has negligible collision probability.
    */
   private async buildPermit2Signature(
     tokenAddress: string,
@@ -283,9 +285,10 @@ export class AMMClient {
     const account = await this.execClient.getEvmAccount();
 
     const deadline = BigInt(Math.floor(Date.now() / 1000) + 60 * 30); // 30 min
-    // Use a time-derived nonce: Permit2 nonces are a 256-bit bitmap keyed
-    // on the owner, so uniqueness within 1ms is sufficient.
-    const nonce = BigInt(Date.now());
+    // 256-bit CSPRNG nonce — unpredictable and non-colliding across
+    // concurrent calls. Time-derived nonces collide within 1ms and let
+    // attackers pre-burn the next nonce word with a cheap revert.
+    const nonce = hexToBigInt(bytesToHex(crypto.getRandomValues(new Uint8Array(32))));
 
     const permitted = {
       token: tokenAddress as `0x${string}`,
