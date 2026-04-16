@@ -100,3 +100,24 @@ export type {
   ExecuteResponse,
   ExecutionSigner,
 } from "./types";
+
+// Revert reason decoding
+export {
+  decodeRevertReason,
+  DEFAULT_REVERT_ERRORS,
+  CONDUCTOR_REVERT_ERRORS,
+  SPARK_BRIDGE_REVERT_ERRORS,
+  SOLIDITY_BUILTIN_REVERT_ERRORS,
+  type DecodedRevertReason,
+  type DecodeRevertReasonOptions,
+} from "./revert-reason";
+export {
+  traceInnermostRevert,
+  extractTxHashFromStatusMessage,
+  type InnermostRevertFrame,
+  type TraceFrame,
+} from "./trace-revert";
+export {
+  fetchAbiErrorsFromBlockscout,
+  errorSelector,
+} from "./blockscout-abi";

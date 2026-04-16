@@ -30,11 +30,86 @@
  * ```
  */
 
-import { encodeFunctionData, bytesToHex, hexToBigInt, type Hex } from "viem";
+import {
+  encodeFunctionData,
+  bytesToHex,
+  hexToBigInt,
+  keccak256,
+  type Address,
+  type Hex,
+} from "viem";
 import type { ExecutionClient } from "../execution/client";
-import type { ExecuteResponse } from "../execution/types";
+import type { Deposit, ExecuteResponse } from "../execution/types";
 import { conductorAbi } from "../execution/abis/conductor";
 import { fetchNonce, fetchAllowance, fetchEip1559Fees } from "../execution/evm";
+import {
+  decodeSparkHumanReadableTokenIdentifier,
+  type SparkHumanReadableTokenIdentifier,
+} from "../utils/tokenAddress";
+import type { SparkNetworkType } from "../types";
+
+/**
+ * Normalize a Spark token identifier into its two required forms.
+ *
+ * The Spark SDK's `wallet.transferTokens` takes the human-readable
+ * bech32m form (`btknrt1...` / `btkn1...`), while the execution
+ * gateway's `/execute` endpoint validates the `tokenId` in the deposit
+ * payload as a 64-char lowercase hex string (32 bytes, no `0x` prefix).
+ *
+ * We require the bech32m form as input: given a hex string we could
+ * re-encode to bech32m only if we knew the Spark network, and the AMM
+ * client intentionally doesn't carry that. The bech32m prefix
+ * (`btkn`/`btknt`/`btkns`/`btknrt`) tells us the network unambiguously.
+ */
+function normalizeSparkTokenIdentifier(
+  input: string
+): { bech32m: SparkHumanReadableTokenIdentifier; hex: string } {
+  const trimmed = input.trim();
+  if (!trimmed.startsWith("btkn")) {
+    throw new Error(
+      `assetInSparkTokenId must be the bech32m form (btkn...). ` +
+        `Got "${trimmed.slice(0, 10)}...". If you only have the hex ` +
+        `token id, re-encode to bech32m with ` +
+        `encodeSparkHumanReadableTokenIdentifier(hex, sparkNetwork).`
+    );
+  }
+  // Detect network from the prefix. Longer prefixes must match first —
+  // otherwise `btknrt` would match `btkn` too early.
+  const network: SparkNetworkType = trimmed.startsWith("btknrt")
+    ? "REGTEST"
+    : trimmed.startsWith("btkns")
+      ? "SIGNET"
+      : trimmed.startsWith("btknt")
+        ? "TESTNET"
+        : "MAINNET";
+  const decoded = decodeSparkHumanReadableTokenIdentifier(
+    trimmed as SparkHumanReadableTokenIdentifier,
+    network
+  );
+  return {
+    bech32m: trimmed as SparkHumanReadableTokenIdentifier,
+    hex: decoded.tokenIdentifier,
+  };
+}
+import { getClient } from "../execution/rpc";
+
+/** Minimal ERC-2612 ABI surface needed to build a Permit signature. */
+const ERC20_PERMIT_READ_ABI = [
+  {
+    type: "function",
+    name: "name",
+    stateMutability: "view",
+    inputs: [],
+    outputs: [{ name: "", type: "string" }],
+  },
+  {
+    type: "function",
+    name: "nonces",
+    stateMutability: "view",
+    inputs: [{ name: "owner", type: "address" }],
+    outputs: [{ name: "", type: "uint256" }],
+  },
+] as const;
 
 const ZERO_ADDRESS = "0x0000000000000000000000000000000000000000";
 const DEFAULT_SWAP_GAS_LIMIT = 1_000_000n;
@@ -60,6 +135,12 @@ export interface AMMConfig {
    * own so callers must supply it.
    */
   permit2Address?: string;
+  /**
+   * Spark address of the bridge custody. Required when a caller uses
+   * `useAvailableBalance: true` so AMMClient can make the Spark transfer
+   * that funds the bundled deposit.
+   */
+  bridgeCustodySparkAddress?: string;
   /**
    * How to authorize the Conductor to pull input tokens for ERC-20 swaps.
    *
@@ -109,6 +190,31 @@ export interface SwapParams {
   integratorPublicKey?: string;
   /** Whether to withdraw output back to Spark. Default true. */
   withdraw?: boolean;
+  /**
+   * When true, AMMClient sources `amountIn` from the caller's Spark
+   * balance: it makes the Spark transfer to `bridgeCustodySparkAddress`
+   * and bundles the resulting `transferId` into the execute intent as a
+   * `deposit`. This is the single-intent "round-trip" path — nothing is
+   * expected to sit on the caller's EVM address before or after.
+   *
+   * For `assetInAddress: "btc"` this uses `swapBTCAndWithdraw` (no
+   * allowance needed). For ERC-20 inputs it uses the EIP-2612 variants
+   * (`swapAndWithdrawWithEIP2612` / `swapAndWithdrawBTCWithEIP2612`), so
+   * `assetInAddress` must point to a token that implements ERC20Permit —
+   * BridgedSparkToken does. No prior on-chain approve is required.
+   *
+   * Requires `withdraw` to be true (the default) and
+   * `config.bridgeCustodySparkAddress` to be set. Ignored by the legacy
+   * no-deposit swap paths.
+   */
+  useAvailableBalance?: boolean;
+  /**
+   * Spark token identifier (issuer-sdk `tokenIdentifier`) corresponding
+   * to `assetInAddress` on the EVM side. Required when
+   * `useAvailableBalance` is true and the input is a token; ignored for
+   * BTC inputs.
+   */
+  assetInSparkTokenId?: string;
 }
 
 /** Result of a swap operation. */
@@ -116,6 +222,19 @@ export interface SwapResult {
   submissionId: string;
   intentId: string;
   status: string;
+  /**
+   * Keccak-256 hash of the signed EVM transaction, for linking to a
+   * block explorer. Deterministic — recoverable from the RLP-encoded
+   * signed tx — but returning it here saves callers the re-derivation.
+   */
+  evmTxHash: string;
+  /**
+   * Spark transfer id of the inbound (caller → bridge custody) transfer
+   * that funded the bundled deposit. Set only when
+   * `useAvailableBalance` was true on the originating call; undefined
+   * for the legacy no-deposit paths.
+   */
+  inboundSparkTransferId?: string;
 }
 
 /**
@@ -167,6 +286,13 @@ export class AMMClient {
           "the WBTC contract address explicitly if you want wrapped BTC " +
           "to stay on EVM."
       );
+    }
+
+    // Round-trip path: AMMClient owns the full Spark→EVM→Spark dance in
+    // one intent. Dispatch to the dedicated helper so the classic paths
+    // below stay readable.
+    if (params.useAvailableBalance) {
+      return this.swapWithSparkDeposit(params, isBtcIn, isBtcOut);
     }
 
     const integrator = params.integratorPublicKey ?? ZERO_ADDRESS;
@@ -351,16 +477,296 @@ export class AMMClient {
 
   // ── Private helpers ────────────────────────────────────────
 
-  private async submitSwapIntent(signedTx: string): Promise<SwapResult> {
-    const result = await this.execClient.execute({
-      deposits: [],
-      signedTx,
-    });
+  private async submitSwapIntent(
+    signedTx: string,
+    deposits: Deposit[] = [],
+    inboundSparkTransferId?: string
+  ): Promise<SwapResult> {
+    const result = await this.execClient.execute({ deposits, signedTx });
     return {
       submissionId: result.submissionId,
       intentId: result.intentId,
       status: result.status,
+      evmTxHash: keccak256(signedTx as `0x${string}`),
+      inboundSparkTransferId,
     };
+  }
+
+  /**
+   * Bundle a Spark-side deposit with the swap+withdraw in ONE execute
+   * intent.
+   *
+   * Flow:
+   *   1. Make a Spark transfer from the caller to
+   *      `bridgeCustodySparkAddress`. This produces a `transferId` that
+   *      authorizes the gateway to apply the deposit to the caller's
+   *      EVM identity address before the signed tx runs.
+   *   2. Build the swap calldata. For BTC in we use `swapBTCAndWithdraw`
+   *      (msg.value funded by the deposit, no allowance needed). For
+   *      ERC-20 in we use the `*WithEIP2612` variants and sign an
+   *      EIP-2612 permit so the Conductor can pull the freshly-minted
+   *      bridged tokens in the same tx — no standing allowance required.
+   *   3. Sign the EVM tx with the identity key and submit a single
+   *      execute intent containing both the deposit and the signed tx.
+   */
+  private async swapWithSparkDeposit(
+    params: SwapParams,
+    isBtcIn: boolean,
+    isBtcOut: boolean
+  ): Promise<SwapResult> {
+    const withdraw = params.withdraw ?? true;
+    if (!withdraw) {
+      throw new Error(
+        "swap: useAvailableBalance requires withdraw=true — the " +
+          "round-trip path always sends output back to Spark."
+      );
+    }
+    if (!this.config.bridgeCustodySparkAddress) {
+      throw new Error(
+        "swap: useAvailableBalance requires config.bridgeCustodySparkAddress " +
+          "so AMMClient knows where to send the Spark transfer that funds " +
+          "the bundled deposit."
+      );
+    }
+    if (!isBtcIn && !params.assetInSparkTokenId) {
+      throw new Error(
+        "swap: useAvailableBalance with an ERC-20 input requires " +
+          "assetInSparkTokenId (the Spark-side tokenIdentifier matching " +
+          "assetInAddress)."
+      );
+    }
+
+    const integrator = params.integratorPublicKey ?? ZERO_ADDRESS;
+    const amountIn = BigInt(params.amountIn);
+    const minAmountOut = BigInt(params.minAmountOut);
+    const sparkRecipient = await this.execClient.getSparkRecipientHex();
+    const custody = this.config.bridgeCustodySparkAddress;
+
+    // For ERC-20 inputs, normalize the Spark token id into both forms:
+    // bech32m for the Spark SDK's transferTokens call, hex for the
+    // deposit payload the gateway validates.
+    const tokenIdForms = isBtcIn
+      ? null
+      : normalizeSparkTokenIdentifier(params.assetInSparkTokenId!);
+
+    // Step 1: Spark transfer → bridge custody.
+    const transferId = await this.sparkTransferForDeposit(
+      isBtcIn,
+      amountIn,
+      tokenIdForms?.bech32m,
+      custody
+    );
+
+    const deposits: Deposit[] = isBtcIn
+      ? [{ sparkTransferId: transferId, amount: amountIn, asset: { type: "btc" } }]
+      : [
+          {
+            sparkTransferId: transferId,
+            amount: amountIn,
+            asset: { type: "token", tokenId: tokenIdForms!.hex },
+          },
+        ];
+
+    // Step 2: build calldata.
+    let calldata: string;
+    let value: bigint = 0n;
+    if (isBtcIn) {
+      // BTC in: the gateway credits native BTC to our EVM address via the
+      // deposit, then swapBTCAndWithdraw consumes it as msg.value. No
+      // permit needed.
+      calldata = encodeFunctionData({
+        abi: conductorAbi,
+        functionName: "swapBTCAndWithdraw",
+        args: [
+          params.assetOutAddress as `0x${string}`,
+          params.fee,
+          minAmountOut,
+          sparkRecipient as `0x${string}`,
+          integrator as `0x${string}`,
+        ],
+      });
+      value = amountIn * WEI_PER_SAT;
+    } else {
+      // ERC-20 in: sign an EIP-2612 permit against the freshly-minted
+      // bridged token and use the *WithEIP2612 Conductor variants so
+      // no standing allowance is required.
+      const permit = await this.signEip2612Permit(
+        params.assetInAddress,
+        amountIn
+      );
+      if (isBtcOut) {
+        calldata = encodeFunctionData({
+          abi: conductorAbi,
+          functionName: "swapAndWithdrawBTCWithEIP2612",
+          args: [
+            params.assetInAddress as `0x${string}`,
+            params.fee,
+            amountIn,
+            minAmountOut,
+            sparkRecipient as `0x${string}`,
+            integrator as `0x${string}`,
+            permit,
+          ],
+        });
+      } else {
+        calldata = encodeFunctionData({
+          abi: conductorAbi,
+          functionName: "swapAndWithdrawWithEIP2612",
+          args: [
+            params.assetInAddress as `0x${string}`,
+            params.assetOutAddress as `0x${string}`,
+            params.fee,
+            amountIn,
+            minAmountOut,
+            sparkRecipient as `0x${string}`,
+            integrator as `0x${string}`,
+            permit,
+          ],
+        });
+      }
+    }
+
+    // Step 3: sign + submit bundled intent.
+    const signedTx = await this.signConductorTx(calldata, value);
+    return this.submitSwapIntent(signedTx, deposits, transferId);
+  }
+
+  /**
+   * Make the Spark-side transfer that funds a bundled deposit, returning
+   * the transferId. Accepts both BTC (sats) and Spark-issued tokens.
+   *
+   * The Spark SDK's `wallet.transfer` / `wallet.transferTokens` return
+   * UUID-style ids for BTC transfers (e.g. `019d97f2-c32b-99c5-...`). The
+   * execution gateway's `/api/v1/execute` endpoint only accepts pure-hex
+   * transfer ids, so we normalize (strip dashes and a possible `0x`
+   * prefix) before bundling into the deposit payload. Matches the
+   * behavior of the localnet-ui's `normalizeTransferId` helper.
+   */
+  private async sparkTransferForDeposit(
+    isBtcIn: boolean,
+    amountIn: bigint,
+    assetInSparkTokenId: string | undefined,
+    receiverSparkAddress: string
+  ): Promise<string> {
+    const wallet = this.execClient.getSparkWallet() as unknown as {
+      transfer: (args: {
+        amountSats: number;
+        receiverSparkAddress: string;
+      }) => Promise<{ id: string }>;
+      transferTokens: (args: {
+        tokenIdentifier: string;
+        tokenAmount: bigint;
+        receiverSparkAddress: string;
+      }) => Promise<string>;
+    };
+
+    let rawId: string;
+    if (isBtcIn) {
+      // SparkWallet.transfer expects `amountSats: number`. The Spark SDK's
+      // own signature caps this at Number.MAX_SAFE_INTEGER (2^53-1). That
+      // ceiling is >> 21e14 (total BTC supply in sats), so it's safe for
+      // any real balance — but we still validate to turn a silent overflow
+      // into an actionable error.
+      if (amountIn > BigInt(Number.MAX_SAFE_INTEGER)) {
+        throw new Error(
+          `swap: amountIn ${amountIn} exceeds SparkWallet.transfer's ` +
+            `number precision cap (2^53-1). Use a smaller value.`
+        );
+      }
+      const transfer = await wallet.transfer({
+        amountSats: Number(amountIn),
+        receiverSparkAddress,
+      });
+      rawId = transfer.id;
+    } else {
+      rawId = await wallet.transferTokens({
+        tokenIdentifier: assetInSparkTokenId!,
+        tokenAmount: amountIn,
+        receiverSparkAddress,
+      });
+    }
+
+    // Normalize: strip UUID dashes and optional 0x prefix to match the
+    // gateway's hex-only transfer-id format.
+    const stripped = rawId.replace(/-/g, "").trim();
+    return stripped.startsWith("0x") || stripped.startsWith("0X")
+      ? stripped.slice(2)
+      : stripped;
+  }
+
+  /**
+   * Sign an EIP-2612 Permit granting the Conductor a one-shot allowance
+   * of `amountIn` on `tokenAddress`. Returns the (value, deadline, v, r, s)
+   * tuple shape the Conductor's `*WithEIP2612` functions expect.
+   *
+   * Reads `name()` and `nonces(owner)` from the token contract for the
+   * EIP-712 domain and message. Uses the execution client's identity
+   * account for signing — by construction this matches the EVM address
+   * the bridged tokens will be minted to.
+   */
+  private async signEip2612Permit(
+    tokenAddress: string,
+    amountIn: bigint
+  ): Promise<{
+    value: bigint;
+    deadline: bigint;
+    v: number;
+    r: Hex;
+    s: Hex;
+  }> {
+    const execConfig = this.execClient.getConfig();
+    const account = await this.execClient.getEvmAccount();
+
+    // Read token.name() and token.nonces(owner) via the shared viem client
+    // — matches the approach in src/execution/evm.ts helpers.
+    const client = getClient(execConfig.rpcUrl);
+    const [tokenName, nonce] = await Promise.all([
+      client.readContract({
+        address: tokenAddress as Address,
+        abi: ERC20_PERMIT_READ_ABI,
+        functionName: "name",
+      }),
+      client.readContract({
+        address: tokenAddress as Address,
+        abi: ERC20_PERMIT_READ_ABI,
+        functionName: "nonces",
+        args: [account.address],
+      }),
+    ]);
+
+    const deadline = BigInt(Math.floor(Date.now() / 1000) + 60 * 30); // 30 min
+
+    const signature = await account.signTypedData({
+      domain: {
+        name: tokenName,
+        version: "1",
+        chainId: execConfig.chainId,
+        verifyingContract: tokenAddress as `0x${string}`,
+      },
+      types: {
+        Permit: [
+          { name: "owner", type: "address" },
+          { name: "spender", type: "address" },
+          { name: "value", type: "uint256" },
+          { name: "nonce", type: "uint256" },
+          { name: "deadline", type: "uint256" },
+        ],
+      },
+      primaryType: "Permit",
+      message: {
+        owner: account.address,
+        spender: this.config.conductorAddress as `0x${string}`,
+        value: amountIn,
+        nonce,
+        deadline,
+      },
+    });
+
+    const r = ("0x" + signature.slice(2, 66)) as Hex;
+    const s = ("0x" + signature.slice(66, 130)) as Hex;
+    const v = parseInt(signature.slice(130, 132), 16);
+
+    return { value: amountIn, deadline, v, r, s };
   }
 
   /**

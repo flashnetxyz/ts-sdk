@@ -365,6 +365,18 @@ export class ExecutionClient {
     return this.config;
   }
 
+  /**
+   * Accessor for the wrapped SparkWallet. Exposed so higher-level clients
+   * (e.g. AMMClient) can issue Spark transfers to fund a bundled deposit
+   * in the same execute intent without duplicating wallet ownership.
+   *
+   * Prefer the ExecutionClient / AMMClient methods over reaching for the
+   * wallet directly — this is an escape hatch, not a recommended API.
+   */
+  getSparkWallet(): SparkWalletInput {
+    return this.wallet;
+  }
+
   // ── Private ────────────────────────────────────────────────
 
   /**

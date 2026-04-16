@@ -44,6 +44,23 @@ export type {
   ExecuteResponse,
   ExecutionSigner,
 } from "./src/execution";
+export {
+  decodeRevertReason,
+  DEFAULT_REVERT_ERRORS,
+  CONDUCTOR_REVERT_ERRORS,
+  SPARK_BRIDGE_REVERT_ERRORS,
+  SOLIDITY_BUILTIN_REVERT_ERRORS,
+  traceInnermostRevert,
+  extractTxHashFromStatusMessage,
+  fetchAbiErrorsFromBlockscout,
+  errorSelector,
+} from "./src/execution";
+export type {
+  DecodedRevertReason,
+  DecodeRevertReasonOptions,
+  InnermostRevertFrame,
+  TraceFrame,
+} from "./src/execution";
 
 // AMM client (wraps ExecutionClient for DEX operations)
 export { AMMClient } from "./src/amm";
