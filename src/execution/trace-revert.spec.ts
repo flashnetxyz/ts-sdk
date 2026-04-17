@@ -109,6 +109,18 @@ describe("traceInnermostRevert", () => {
     expect(await traceInnermostRevert("http://rpc", "0x1")).toBeNull();
   });
 
+  it("returns null for a successful call with return data (no root error)", async () => {
+    // A view / successful tx has non-empty `output` but no `error`.
+    // The walker must not treat the return data as a revert output.
+    const trace = {
+      type: "CALL",
+      to: "0xA",
+      output: "0x0000000000000000000000000000000000000000000000000000000000000042",
+    };
+    global.fetch = mockRpc(trace) as unknown as typeof global.fetch;
+    expect(await traceInnermostRevert("http://rpc", "0x1")).toBeNull();
+  });
+
   it("returns null when the node returns an error", async () => {
     global.fetch = (async () => ({
       ok: true,

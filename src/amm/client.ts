@@ -81,7 +81,9 @@ function normalizeSparkTokenIdentifier(
       ? "SIGNET"
       : trimmed.startsWith("btknt")
         ? "TESTNET"
-        : "MAINNET";
+        : trimmed.startsWith("btknl")
+          ? "LOCAL"
+          : "MAINNET";
   const decoded = decodeSparkHumanReadableTokenIdentifier(
     trimmed as SparkHumanReadableTokenIdentifier,
     network

@@ -97,9 +97,12 @@ export async function traceInnermostRevert(
     clearTimeout(timer);
   }
 
+  // If the root frame didn't error, there's no revert to locate.
+  // A successful `eth_call` can carry return data in `output`, so we
+  // gate only on `error` — matching on non-empty output here would
+  // incorrectly classify view-style return data as a revert.
+  if (!root.error) return null;
   const txOutput = (root.output ?? "").toLowerCase();
-  // If the root frame didn't revert, there's no revert to locate.
-  if (!root.error && !txOutput) return null;
 
   // Walk depth-first, tracking the deepest frame whose output equals the
   // root's output. Empty outputs (e.g. halts from OOG) fall back to the
