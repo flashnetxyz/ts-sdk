@@ -50,7 +50,7 @@
     "dist"
   ],
   "scripts": {
-    "prepare": "npm run build",
+    "prepare": "test -f dist/esm/index.js || npm run build",
     "prebuild": "rm -rf dist",
     "build": "npm run type-check && rollup -c",
     "dev": "rollup -c -w",

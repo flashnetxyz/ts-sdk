@@ -96,7 +96,7 @@ describe("stringifyWithBigint", () => {
   // Golden-vector regression guarding the field ordering on the signed
   // canonical intent message. The validator hashes the JSON output
   // byte-for-byte and the signed bytes must match the Rust
-  // CanonicalIntentMessage struct (chainId, transfers, action, nonce),
+  // CanonicalIntentMessage struct (chainId, transfers, action, nonce, expiresAt),
   // with each CanonicalTransferEntry in the order
   // (transferId, amountSats, assetType, tokenId?). If someone reorders
   // the TS interface, the Rust struct, or the object literal in
@@ -121,6 +121,7 @@ describe("stringifyWithBigint", () => {
       transfers,
       action: { type: "deposit", recipient: "0xabc" },
       nonce: "nonce-xyz",
+      expiresAt: 1_893_456_000_000,
     };
     expect(stringifyWithBigint(message)).toEqual(
       '{"chainId":21022,' +
@@ -129,7 +130,8 @@ describe("stringifyWithBigint", () => {
         '{"transferId":"transfer-2","amountSats":2500,"assetType":"BridgedToken","tokenId":"btkn1foo"}' +
         "]," +
         '"action":{"type":"deposit","recipient":"0xabc"},' +
-        '"nonce":"nonce-xyz"}'
+        '"nonce":"nonce-xyz",' +
+        '"expiresAt":1893456000000}'
     );
   });
 });
