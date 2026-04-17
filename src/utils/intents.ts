@@ -580,10 +580,25 @@ export function generateLockPositionIntentMessage(params: {
   tickUpper?: number;
   nonce: string;
 }): Uint8Array {
+  // Fail fast on non-integer input. parseInt("abc") / parseInt("") both
+  // return NaN, which JSON.stringify serializes as `null`. Signing a
+  // payload with a null timestamp produces a signature the server
+  // cannot verify (or worse, that it coerces to a surprise value).
+  const ts = Number(params.lockUntilTimestamp);
+  if (
+    !Number.isInteger(ts) ||
+    ts < 0 ||
+    String(params.lockUntilTimestamp).trim() !== String(ts)
+  ) {
+    throw new Error(
+      `Invalid lockUntilTimestamp: "${params.lockUntilTimestamp}" is not a non-negative integer`
+    );
+  }
+
   const intentMessage = {
     userPublicKey: params.userPublicKey,
     lpIdentityPublicKey: params.lpIdentityPublicKey,
-    lockUntilTimestamp: parseInt(params.lockUntilTimestamp, 10),
+    lockUntilTimestamp: ts,
     tickLower: params.tickLower ?? null,
     tickUpper: params.tickUpper ?? null,
     nonce: params.nonce,
