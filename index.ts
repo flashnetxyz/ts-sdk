@@ -76,6 +76,7 @@ export {
   generateDecreaseLiquidityIntentMessage,
   generateFundEscrowIntentMessage,
   generateIncreaseLiquidityIntentMessage,
+  generateLockPositionIntentMessage,
   generatePoolConfirmInitialDepositIntentMessage,
   generatePoolInitializationIntentMessage,
   generatePoolSwapIntentMessage,

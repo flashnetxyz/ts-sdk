@@ -2023,6 +2023,48 @@ export interface ValidateDepositBalanceData {
   nonce: string;
 }
 
+// LP Lock & Transfer Types
+
+export interface LpLockInfo {
+  poolId: string;
+  ownerPublicKey: string;
+  lockUntilTimestamp: string;
+  tickLower?: number;
+  tickUpper?: number;
+  isIndefinite: boolean;
+}
+
+export interface LockPositionRequest {
+  userPublicKey: string;
+  poolId: string;
+  lockUntilTimestamp: string;
+  tickLower?: number;
+  tickUpper?: number;
+  nonce: string;
+  signature: string;
+}
+
+export interface LockPositionResponse {
+  requestId: string;
+  accepted: boolean;
+  lockUntilTimestamp?: string;
+  isIndefinite?: boolean;
+  error?: string;
+}
+
+export interface GetPositionLocksResponse {
+  locks: LpLockInfo[];
+}
+
+export interface ValidateLpLockPositionData {
+  userPublicKey: string;
+  lpIdentityPublicKey: string;
+  lockUntilTimestamp: number;
+  tickLower: number | null;
+  tickUpper: number | null;
+  nonce: string;
+}
+
 // Error Types
 // Re-export all error types from errors module
 export * from "./errors";

@@ -1,6 +1,6 @@
 {
   "name": "@flashnet/sdk",
-  "version": "0.5.7",
+  "version": "0.5.8",
   "main": "./dist/cjs/index.js",
   "module": "./dist/esm/index.js",
   "types": "./dist/esm/index.d.ts",
@@ -66,8 +66,8 @@
   },
   "devDependencies": {
     "@biomejs/biome": "2.0.5",
-    "@buildonspark/issuer-sdk": "latest",
-    "@buildonspark/spark-sdk": "latest",
+    "@buildonspark/issuer-sdk": "^0.1.32",
+    "@buildonspark/spark-sdk": "^0.7.14",
     "@rollup/plugin-typescript": "^12.1.4",
     "@types/bun": "latest",
     "@types/jest": "^30.0.0",
@@ -82,8 +82,8 @@
   "peerDependencies": {
     "@buildonspark/issuer-sdk": "latest",
     "@buildonspark/spark-sdk": "latest",
-    "typescript": "^5",
-    "react-native-get-random-values": ">=1.11.0"
+    "react-native-get-random-values": ">=1.11.0",
+    "typescript": "^5"
   },
   "peerDependenciesMeta": {
     "@buildonspark/spark-sdk": {

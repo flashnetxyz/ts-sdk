@@ -115,6 +115,9 @@ import {
   type WithdrawHostFeesResponse,
   type WithdrawIntegratorFeesRequest,
   type WithdrawIntegratorFeesResponse,
+  type LockPositionRequest,
+  type LockPositionResponse,
+  type LpLockInfo,
 } from "../types";
 import { compareDecimalStrings, generateNonce, safeBigInt } from "../utils";
 import { AuthManager } from "../utils/auth";
@@ -141,6 +144,7 @@ import {
   generateWithdrawBalanceIntentMessage,
   generateWithdrawHostFeesIntentMessage,
   generateWithdrawIntegratorFeesIntentMessage,
+  generateLockPositionIntentMessage,
 } from "../utils/intents";
 import {
   encodeSparkAddressNew,
@@ -1785,6 +1789,79 @@ export class FlashnetClient {
     }
 
     return response;
+  }
+
+  // LP Lock & Transfer Operations
+
+  /**
+   * Lock an LP position to prevent withdrawal until expiry.
+   * Locks can only be set or extended, never shortened.
+   * @param poolId Pool ID (LP identity public key)
+   * @param lockUntilTimestamp Unix timestamp (seconds). "0" = indefinite lock.
+   */
+  async lockPosition(
+    poolId: string,
+    lockUntilTimestamp: string,
+    opts?: {
+      tickLower?: number;
+      tickUpper?: number;
+    }
+  ): Promise<LockPositionResponse> {
+    await this.ensureInitialized();
+    await this.ensurePingOk();
+
+    const nonce = generateNonce();
+    const intentMessage = generateLockPositionIntentMessage({
+      userPublicKey: this.publicKey,
+      lpIdentityPublicKey: poolId,
+      lockUntilTimestamp,
+      tickLower: opts?.tickLower,
+      tickUpper: opts?.tickUpper,
+      nonce,
+    });
+
+    const messageHash = sha256(intentMessage);
+    const signature = await (
+      this._wallet as any
+    ).config.signer.signMessageWithIdentityKey(messageHash, true);
+
+    const request: LockPositionRequest = {
+      userPublicKey: this.publicKey,
+      poolId,
+      lockUntilTimestamp,
+      tickLower: opts?.tickLower,
+      tickUpper: opts?.tickUpper,
+      nonce,
+      signature: getHexFromUint8Array(signature),
+    };
+
+    const response = await this.typedApi.lockPosition(request);
+
+    if (!response.accepted) {
+      const errorMessage =
+        response.error || "Lock position rejected by the AMM";
+      throw new Error(errorMessage);
+    }
+
+    return response;
+  }
+
+  /**
+   * List LP position locks for a pool. Read-only, no signature required.
+   * @param poolId Pool ID (LP identity public key)
+   * @param ownerPublicKey Optional filter by owner
+   */
+  async getPositionLocks(
+    poolId: string,
+    ownerPublicKey?: string
+  ): Promise<LpLockInfo[]> {
+    await this.ensureInitialized();
+
+    const response = await this.typedApi.getPositionLocks(
+      poolId,
+      ownerPublicKey
+    );
+    return response.locks;
   }
 
   // Host Operations
