@@ -37,6 +37,7 @@ import { sparkWalletToEvmAccount, getWalletSigner, type SparkWalletInput } from 
 import type { LocalAccount } from "viem/accounts";
 import { encodeWithdrawSats, encodeWithdrawToken } from "./bridge";
 import { fetchNonce, fetchEip1559Fees } from "./evm";
+import { resolveExpiresAt } from "./types";
 import type {
   CanonicalIntentAction,
   CanonicalIntentMessage,
@@ -121,8 +122,21 @@ export interface ExecutionClientConfig {
   bridgeAddress: string;
 }
 
+/**
+ * Optional absolute unix-millisecond timestamp past which the intent expires.
+ *
+ * Every intent carries this value through the signed canonical preimage; the
+ * gateway rejects past or >24h-future timestamps, and the sequencer
+ * admission / TTL-sweeper use it as a terminal deadline. When omitted, the
+ * SDK applies `DEFAULT_INTENT_TTL_MS` (15 minutes) from the moment the
+ * request is built. See `flashnet-execution/plan/deposit-oracle-admission-check.md`.
+ */
+export interface IntentExpiry {
+  expiresAt?: number;
+}
+
 /** Parameters for a deposit intent. */
-export interface DepositParams {
+export interface DepositParams extends IntentExpiry {
   /** Spark transfers funding this deposit. */
   deposits: Deposit[];
   /** EVM address to credit. If omitted, credits the identity key's EVM address. */
@@ -130,13 +144,13 @@ export interface DepositParams {
 }
 
 /** Parameters for a BTC withdrawal. */
-export interface WithdrawParams {
+export interface WithdrawParams extends IntentExpiry {
   /** Amount in satoshis to withdraw. */
   amount: bigint;
 }
 
 /** Parameters for a token withdrawal. */
-export interface WithdrawTokenParams {
+export interface WithdrawTokenParams extends IntentExpiry {
   /** ERC20 token contract address. */
   tokenAddress: string;
   /** Amount in token base units. */
@@ -144,7 +158,7 @@ export interface WithdrawTokenParams {
 }
 
 /** Parameters for a raw execute intent (advanced). */
-export interface ExecuteParams {
+export interface ExecuteParams extends IntentExpiry {
   /** Spark transfers to credit before executing. */
   deposits?: Deposit[];
   /** Hex-encoded signed EVM transaction (RLP-serialized, 0x-prefixed). */
@@ -248,6 +262,7 @@ export class ExecutionClient {
 
     return this.submitIntent(params.deposits, action, {
       recipient: recipient.toLowerCase(),
+      expiresAt: params.expiresAt,
     });
   }
 
@@ -278,6 +293,7 @@ export class ExecutionClient {
 
     return this.submitIntent([], { type: "execute", signedTxHash: viemKeccak256(signedTx) }, {
       evmTransaction: signedTx,
+      expiresAt: params.expiresAt,
     });
   }
 
@@ -310,6 +326,7 @@ export class ExecutionClient {
 
     return this.submitIntent([], { type: "execute", signedTxHash: viemKeccak256(signedTx) }, {
       evmTransaction: signedTx,
+      expiresAt: params.expiresAt,
     });
   }
 
@@ -337,7 +354,7 @@ export class ExecutionClient {
     return this.submitIntent(
       deposits,
       { type: "execute", signedTxHash: txHash },
-      { evmTransaction: txHex }
+      { evmTransaction: txHex, expiresAt: params.expiresAt }
     );
   }
 
@@ -392,9 +409,14 @@ export class ExecutionClient {
   private async submitIntent(
     deposits: Deposit[],
     action: CanonicalIntentAction,
-    requestAction: { recipient?: string; evmTransaction?: string }
+    requestAction: {
+      recipient?: string;
+      evmTransaction?: string;
+      expiresAt?: number;
+    }
   ): Promise<ExecuteResponse> {
     const nonce = crypto.randomUUID();
+    const expiresAt = resolveExpiresAt(requestAction.expiresAt);
 
     const transfers: CanonicalTransferEntry[] = deposits.map((d) => {
       // Preserve full u64 precision by carrying bigint all the way to the
@@ -434,6 +456,7 @@ export class ExecutionClient {
       transfers,
       action,
       nonce,
+      expiresAt,
     };
 
     const messageJson = stringifyWithBigint(canonicalMessage);
@@ -451,6 +474,7 @@ export class ExecutionClient {
       })),
       signature,
       nonce,
+      expiresAt,
     };
 
     if (requestAction.recipient) {
