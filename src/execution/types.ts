@@ -26,6 +26,15 @@ export interface DepositIntentParams {
   deposits: Deposit[];
   /** EVM address to credit with the deposited funds (0x-prefixed). */
   recipient: string;
+  /**
+   * Absolute unix-millisecond timestamp past which the intent expires.
+   * Optional — defaults to `DEFAULT_INTENT_TTL_MS` (15 minutes) from now.
+   *
+   * This value is part of the signed canonical preimage; the gateway rejects
+   * past or >24h-future timestamps. See
+   * `flashnet-execution/plan/deposit-oracle-admission-check.md`.
+   */
+  expiresAt?: number;
 }
 
 /** Request to submit a deposit-and-execute intent. */
@@ -34,6 +43,8 @@ export interface ExecuteIntentParams {
   deposits: Deposit[];
   /** Hex-encoded signed EVM transaction (RLP-serialized, 0x-prefixed). */
   signedTx: string;
+  /** Optional signed expiry timestamp (unix ms). See `DepositIntentParams.expiresAt`. */
+  expiresAt?: number;
 }
 
 /** Response from the execution gateway after submitting an intent. */
@@ -103,4 +114,31 @@ export interface CanonicalIntentMessage {
   transfers: CanonicalTransferEntry[];
   action: CanonicalIntentAction;
   nonce: string;
+  /**
+   * Absolute unix-millisecond timestamp past which the sequencer refuses
+   * to admit, include, or settle this intent. Part of the signed preimage
+   * so the validator's signature check matches the gateway's.
+   *
+   * Note: JSON `number` is precise for any value within the safe-integer
+   * range (up to 9.007e15 ms ≈ year 287396). Unix-ms timestamps are well
+   * inside that range indefinitely.
+   */
+  expiresAt: number;
+}
+
+/**
+ * Default client-side TTL applied when `expiresAt` is not explicitly provided.
+ * 15 minutes is long enough for normal Spark transfer propagation to appear in
+ * the operator DB even under load, and well inside the gateway's 24h max.
+ */
+export const DEFAULT_INTENT_TTL_MS = 15 * 60 * 1000;
+
+/**
+ * Resolve an `expiresAt` value, defaulting to `DEFAULT_INTENT_TTL_MS` from
+ * `Date.now()` when the caller did not provide one.
+ */
+export function resolveExpiresAt(expiresAt?: number): number {
+  return typeof expiresAt === "number" && Number.isFinite(expiresAt)
+    ? expiresAt
+    : Date.now() + DEFAULT_INTENT_TTL_MS;
 }
