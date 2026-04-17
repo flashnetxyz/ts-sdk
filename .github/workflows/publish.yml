@@ -20,11 +20,19 @@ jobs:
 
       - uses: actions/setup-node@v6
         with:
-          node-version: 22
+          # Pin the minor so we get a Node image whose bundled npm is
+          # known-good. 22.22.2's bundled npm ships with a broken arborist
+          # (Cannot find module 'promise-retry') which made the previous
+          # `npm install -g npm@latest` step fail before it could
+          # self-upgrade.
+          node-version: 22.20.0
           registry-url: https://registry.npmjs.org
 
-      - name: Upgrade npm for trusted publishing support
-        run: npm install -g npm@latest
+      # Node 22.20 ships npm 10.9.x, which already supports OIDC trusted
+      # publishing. No self-upgrade needed. If a future npm feature
+      # requires a newer version, pin it explicitly (e.g. `npm@11.5`)
+      # rather than tracking @latest, to avoid inheriting runner-image
+      # regressions.
 
       - run: bun install
       - run: bun run build
