@@ -152,6 +152,31 @@ describe("traceInnermostRevert", () => {
     expect(result?.address).toBe("0xc");
   });
 
+  it("normalizes undefined root.output vs literal \"0x\" on children for halt matching", async () => {
+    // Regression: when the tracer omits `output` on the root (undefined)
+    // but emits a literal "0x" on a reverted child, the walker used to
+    // compare "" vs "0x" and miss the child. Both must normalize to the
+    // same canonical empty-bytes representation.
+    const trace = {
+      type: "CALL",
+      to: "0xA",
+      // no output field at all — revm-based tracers can omit it on halts
+      error: "out of gas",
+      calls: [
+        {
+          type: "CALL",
+          to: "0xB",
+          output: "0x", // literal empty-bytes, not missing
+          error: "out of gas",
+        },
+      ],
+    };
+    global.fetch = mockRpc(trace) as unknown as typeof global.fetch;
+    const result = await traceInnermostRevert("http://rpc", "0x1");
+    expect(result?.address).toBe("0xb");
+    expect(result?.depth).toBe(1);
+  });
+
   it("returns the root when only the root reverted (no child frames)", async () => {
     const trace = {
       type: "CALL",
