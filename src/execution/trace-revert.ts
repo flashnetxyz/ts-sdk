@@ -102,7 +102,11 @@ export async function traceInnermostRevert(
   // gate only on `error` — matching on non-empty output here would
   // incorrectly classify view-style return data as a revert.
   if (!root.error) return null;
-  const txOutput = (root.output ?? "").toLowerCase();
+  // Normalize a missing output to the EVM's canonical empty-bytes
+  // representation ("0x") so the byte-equality check below doesn't
+  // mis-fire on `undefined` vs. the tracer emitting a literal "0x" for
+  // child frames that halted before producing output.
+  const txOutput = (root.output ?? "0x").toLowerCase();
 
   // Walk depth-first, tracking the deepest frame whose output equals the
   // root's output. Empty outputs (e.g. halts from OOG) fall back to the
@@ -113,14 +117,17 @@ export async function traceInnermostRevert(
   ];
   while (stack.length > 0) {
     const { frame, depth } = stack.pop()!;
-    const frameOutput = (frame.output ?? "").toLowerCase();
+    // Normalize missing output to "0x" to match the tx-level normalization
+    // above — prevents `undefined` vs literal "0x" from sabotaging the
+    // byte-equality check.
+    const frameOutput = (frame.output ?? "0x").toLowerCase();
     const isMatchingReverter =
       (!!frame.error || depth === 0) && // root always counts as a candidate
       frameOutput === txOutput;
     // For Halt-class failures (empty output, present error) fall back to
     // "deepest errored frame" since we can't byte-match on empty output.
     const isHaltCandidate =
-      !!frame.error && txOutput === "" && frameOutput === "";
+      !!frame.error && txOutput === "0x" && frameOutput === "0x";
     if (isMatchingReverter || isHaltCandidate) {
       if (!best || depth > best.depth) {
         best = {
