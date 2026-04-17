@@ -100,6 +100,7 @@ export type {
   ExecuteResponse,
   ExecutionSigner,
 } from "./types";
+export { DEFAULT_INTENT_TTL_MS, resolveExpiresAt } from "./types";
 
 // Revert reason decoding
 export {
