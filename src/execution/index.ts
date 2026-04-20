@@ -15,9 +15,10 @@
  *   gatewayUrl: "http://localhost:8080",
  *   rpcUrl: "http://localhost:8545",
  *   chainId: 21022,
- *   bridgeAddress: "0x...",
  * });
  * await client.authenticate();
+ * // Deposit / withdraw addresses are discovered from the gateway:
+ * const { spark, execution } = await client.getNetworkInfo();
  * await client.deposit({ deposits: [...] });
  * await client.withdraw({ amount: 1000n });
  * ```
@@ -99,6 +100,9 @@ export type {
   DepositAsset,
   ExecuteResponse,
   ExecutionSigner,
+  NetworkInfo,
+  SparkNetworkInfo,
+  ExecutionNetworkInfo,
 } from "./types";
 export { DEFAULT_INTENT_TTL_MS, resolveExpiresAt } from "./types";
 

@@ -31,5 +31,13 @@
     "experimentalDecorators": true
   },
   "include": ["index.ts", "src/**/*"],
-  "exclude": ["node_modules", "dist", "**/*.test.ts", "**/*.spec.ts"]
+  "exclude": ["node_modules", "dist", "**/*.test.ts", "**/*.spec.ts"],
+  "ts-node": {
+    "//": "Overrides applied only when ts-node compiles standalone TS files — i.e. when jest loads jest.config.ts. Without this, `verbatimModuleSyntax: true` + CommonJS output in the top-level compilerOptions causes TS1295 on the ESM `import`/`export` lines in jest.config.ts. The library build path (tsc over src/) is unaffected.",
+    "compilerOptions": {
+      "verbatimModuleSyntax": false,
+      "module": "commonjs",
+      "moduleResolution": "node"
+    }
+  }
 }

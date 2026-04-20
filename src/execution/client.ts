@@ -15,7 +15,6 @@
  *   gatewayUrl: "http://localhost:8080",
  *   rpcUrl: "http://localhost:8545",
  *   chainId: 21022,
- *   bridgeAddress: "0x...",
  * });
  *
  * await client.authenticate();
@@ -45,6 +44,7 @@ import type {
   Deposit,
   ExecuteResponse,
   ExecutionSigner,
+  NetworkInfo,
 } from "./types";
 
 /** Conversion factor: 1 sat = 10^10 wei on Flashnet's EVM. */
@@ -103,10 +103,11 @@ function encodeJson(value: unknown): string {
   return "null";
 }
 
-// Named network configs were removed until real deployment addresses are
-// available. Callers must pass an explicit ExecutionClientConfig. Once the
-// mainnet/testnet/regtest endpoints are finalized, add them here with the
-// correct bridge addresses (which WILL differ per network).
+// The execution-chain contract address is NOT part of this config — it is
+// fetched at runtime via `GET /api/v1/network/info` (see
+// `ExecutionClient.getNetworkInfo`). This keeps consumers automatically
+// aligned with the gateway's view of the world instead of relying on a
+// stale environment variable.
 
 /**
  * Configuration for the execution client.
@@ -118,8 +119,6 @@ export interface ExecutionClientConfig {
   rpcUrl: string;
   /** Chain ID of the Flashnet EVM network. */
   chainId: number;
-  /** SparkBridge contract address (0x-prefixed). */
-  bridgeAddress: string;
 }
 
 /**
@@ -171,18 +170,38 @@ export interface ExecuteParams extends IntentExpiry {
  * Owns the SparkWallet, gateway auth, EVM signing, and RPC configuration.
  * Exposes deposit/withdraw/execute as methods — no loose function args.
  */
+/**
+ * Default cache lifetime for `/network/info` responses, per the endpoint's
+ * design note (issue #283). The value is deliberately short so a re-key on
+ * the gateway propagates to every live client within a minute without
+ * having to flush caches or restart the app.
+ */
+const NETWORK_INFO_CACHE_TTL_MS = 60_000;
+
+interface NetworkInfoCacheEntry {
+  value: NetworkInfo;
+  fetchedAt: number;
+}
+
 export class ExecutionClient {
   private readonly config: ExecutionClientConfig;
   private readonly wallet: SparkWalletInput;
   private readonly signer: ExecutionSigner;
   private evmAccount: LocalAccount | null = null;
   private accessToken: string | null = null;
+  private networkInfoCache: NetworkInfoCacheEntry | null = null;
+  /**
+   * Shared in-flight promise for `getNetworkInfo()` so concurrent callers
+   * coalesce onto a single HTTP request instead of fanning out N fetches
+   * at cold start. Cleared on resolution or failure.
+   */
+  private networkInfoInFlight: Promise<NetworkInfo> | null = null;
 
   /**
    * @param wallet - SparkWallet instance (identity key used for auth + EVM signing).
    * @param config - Explicit endpoint configuration: gatewayUrl, rpcUrl,
-   *   chainId, bridgeAddress. Named network shortcuts will be re-added
-   *   once real deployments exist.
+   *   chainId. The execution-chain contract address is fetched at runtime
+   *   via `getNetworkInfo()`; consumers no longer carry their own copy.
    */
   constructor(wallet: SparkWalletInput, config: ExecutionClientConfig) {
     this.config = {
@@ -191,6 +210,45 @@ export class ExecutionClient {
     };
     this.wallet = wallet;
     this.signer = sparkWalletToExecutionSigner(wallet);
+  }
+
+  /**
+   * Fetch runtime network discovery info (Spark deposit address, execution
+   * contract address, paused flag, min deposit size).
+   *
+   * Results are cached in-process for {@link NETWORK_INFO_CACHE_TTL_MS}.
+   * Pass `{ forceRefresh: true }` to bypass the cache — useful after a
+   * suspected re-key.
+   */
+  async getNetworkInfo(opts?: { forceRefresh?: boolean }): Promise<NetworkInfo> {
+    const now = Date.now();
+    if (
+      !opts?.forceRefresh &&
+      this.networkInfoCache &&
+      now - this.networkInfoCache.fetchedAt < NETWORK_INFO_CACHE_TTL_MS
+    ) {
+      return this.networkInfoCache.value;
+    }
+    if (this.networkInfoInFlight) {
+      return this.networkInfoInFlight;
+    }
+    const fetchPromise = (async () => {
+      const resp = await fetch(`${this.config.gatewayUrl}/api/v1/network/info`);
+      if (!resp.ok) {
+        throw new Error(
+          `gateway /network/info returned HTTP ${resp.status} ${resp.statusText}`
+        );
+      }
+      const body = (await resp.json()) as NetworkInfo;
+      this.networkInfoCache = { value: body, fetchedAt: Date.now() };
+      return body;
+    })();
+    this.networkInfoInFlight = fetchPromise;
+    try {
+      return await fetchPromise;
+    } finally {
+      this.networkInfoInFlight = null;
+    }
   }
 
   /**
@@ -279,9 +337,10 @@ export class ExecutionClient {
     const calldata = encodeWithdrawSats(sparkRecipient);
     const nonce = await fetchNonce(this.config.rpcUrl, account.address);
     const fees = await fetchEip1559Fees(this.config.rpcUrl);
+    const network = await this.getNetworkInfo();
 
     const signedTx = await account.signTransaction({
-      to: this.config.bridgeAddress as `0x${string}`,
+      to: network.execution.contractAddress as `0x${string}`,
       data: calldata as `0x${string}`,
       value: params.amount * WEI_PER_SAT,
       chainId: this.config.chainId,
@@ -312,9 +371,10 @@ export class ExecutionClient {
     );
     const nonce = await fetchNonce(this.config.rpcUrl, account.address);
     const fees = await fetchEip1559Fees(this.config.rpcUrl);
+    const network = await this.getNetworkInfo();
 
     const signedTx = await account.signTransaction({
-      to: this.config.bridgeAddress as `0x${string}`,
+      to: network.execution.contractAddress as `0x${string}`,
       data: calldata as `0x${string}`,
       value: 0n,
       chainId: this.config.chainId,

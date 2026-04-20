@@ -50,27 +50,63 @@ const EXEC_CONFIG = {
   gatewayUrl: "http://localhost:8080",
   rpcUrl: "http://localhost:8545",
   chainId: 21022,
-  bridgeAddress: "0x1e2861ce58eaa89260226b5704416b9a20589d47",
 };
 
-const AMM_CONFIG_WITH_CUSTODY = {
-  conductorAddress: "0x1111111111111111111111111111111111111111",
-  wbtcAddress: "0x2222222222222222222222222222222222222222",
-  factoryAddress: "0x3333333333333333333333333333333333333333",
-  bridgeCustodySparkAddress:
-    "sparkrt1pgssx3qm405syfc0hcgul58t7ce9c9xjyu5w4pnda4eu6tts9d6cqkj94epdlw",
-};
-
-const AMM_CONFIG_NO_CUSTODY = {
+const AMM_CONFIG = {
   conductorAddress: "0x1111111111111111111111111111111111111111",
   wbtcAddress: "0x2222222222222222222222222222222222222222",
   factoryAddress: "0x3333333333333333333333333333333333333333",
 };
+
+/**
+ * Deposit address the mocked `/network/info` endpoint returns. Tests that
+ * care about the argument AMMClient passes to `wallet.transfer` assert
+ * against this value.
+ */
+const TEST_DEPOSIT_ADDRESS =
+  "sparkrt1pgssx3qm405syfc0hcgul58t7ce9c9xjyu5w4pnda4eu6tts9d6cqkj94epdlw";
+
+const TEST_NETWORK_INFO = {
+  spark: {
+    depositAddress: TEST_DEPOSIT_ADDRESS,
+    network: "REGTEST",
+  },
+  execution: {
+    contractAddress: "0x1e2861ce58eaa89260226b5704416b9a20589d47",
+    chainId: 21022,
+  },
+  paused: false,
+  minDepositSats: 1000,
+};
+
+/**
+ * Stub `fetch` so `ExecutionClient.getNetworkInfo()` resolves without a
+ * running gateway. Every test that reaches the AMM swap flow needs this
+ * — the swap path awaits getNetworkInfo before issuing the Spark transfer.
+ */
+function stubNetworkInfoFetch(): void {
+  global.fetch = jest.fn(async (input: any) => {
+    const url = typeof input === "string" ? input : input.url ?? "";
+    if (url.endsWith("/api/v1/network/info")) {
+      return new Response(JSON.stringify(TEST_NETWORK_INFO), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      });
+    }
+    throw new Error(`unexpected fetch in test: ${url}`);
+  }) as unknown as typeof fetch;
+}
+
+afterEach(() => {
+  // jest.fn() assigned to global.fetch — clear so individual tests don't
+  // leak mock state to each other.
+  jest.restoreAllMocks();
+});
 
 describe("AMMClient.swap — useAvailableBalance validation", () => {
   it("rejects BTC → BTC unconditionally", async () => {
     const client = new ExecutionClient(mockWallet(), EXEC_CONFIG);
-    const amm = new AMMClient(client, AMM_CONFIG_WITH_CUSTODY);
+    const amm = new AMMClient(client, AMM_CONFIG);
     await expect(
       amm.swap({
         assetInAddress: "btc",
@@ -85,7 +121,7 @@ describe("AMMClient.swap — useAvailableBalance validation", () => {
 
   it("requires withdraw=true when useAvailableBalance is set", async () => {
     const client = new ExecutionClient(mockWallet(), EXEC_CONFIG);
-    const amm = new AMMClient(client, AMM_CONFIG_WITH_CUSTODY);
+    const amm = new AMMClient(client, AMM_CONFIG);
     await expect(
       amm.swap({
         assetInAddress: "btc",
@@ -99,24 +135,10 @@ describe("AMMClient.swap — useAvailableBalance validation", () => {
     ).rejects.toThrow(/withdraw=true/);
   });
 
-  it("requires bridgeCustodySparkAddress in config", async () => {
-    const client = new ExecutionClient(mockWallet(), EXEC_CONFIG);
-    const amm = new AMMClient(client, AMM_CONFIG_NO_CUSTODY);
-    await expect(
-      amm.swap({
-        assetInAddress: "btc",
-        assetOutAddress: "0x4444444444444444444444444444444444444444",
-        amountIn: "1000",
-        minAmountOut: "0",
-        fee: 3000,
-        useAvailableBalance: true,
-      })
-    ).rejects.toThrow(/bridgeCustodySparkAddress/);
-  });
-
   it("requires assetInSparkTokenId for ERC-20 inputs", async () => {
+    stubNetworkInfoFetch();
     const client = new ExecutionClient(mockWallet(), EXEC_CONFIG);
-    const amm = new AMMClient(client, AMM_CONFIG_WITH_CUSTODY);
+    const amm = new AMMClient(client, AMM_CONFIG);
     await expect(
       amm.swap({
         assetInAddress: "0x4444444444444444444444444444444444444444",
@@ -133,11 +155,12 @@ describe("AMMClient.swap — useAvailableBalance validation", () => {
   it("rejects amountIn beyond Number.MAX_SAFE_INTEGER for BTC deposits", async () => {
     // SparkWallet.transfer caps amountSats at 2^53-1; a larger input
     // should surface as an actionable error rather than silent overflow.
-    // We get here BEFORE the RPC-reaching parts of the flow: the transfer
-    // helper runs first, so no mocking of the gateway/RPC is needed.
+    // We need getNetworkInfo() to succeed first (the swap flow awaits it
+    // before the Spark transfer), so stub the fetch.
+    stubNetworkInfoFetch();
     const wallet = mockWallet();
     const client = new ExecutionClient(wallet, EXEC_CONFIG);
-    const amm = new AMMClient(client, AMM_CONFIG_WITH_CUSTODY);
+    const amm = new AMMClient(client, AMM_CONFIG);
     const tooBig = (BigInt(Number.MAX_SAFE_INTEGER) + 1n).toString();
     await expect(
       amm.swap({
@@ -153,11 +176,12 @@ describe("AMMClient.swap — useAvailableBalance validation", () => {
 });
 
 describe("AMMClient.swap — BTC → token deposit wiring", () => {
-  it("calls wallet.transfer with the right amount and custody address", async () => {
-    // We cannot fully exercise the happy path without stubbing the EVM RPC
-    // (nonce, EIP-1559 fees) and the gateway. Instead verify the Spark
-    // transfer is issued with the expected args — the first observable
-    // side effect — and let the e2e script in the UI cover the rest.
+  it("calls wallet.transfer with the gateway-advertised deposit address", async () => {
+    // Stub /network/info so the swap flow can proceed past the runtime
+    // discovery fetch. Assert that AMMClient forwards the resolved
+    // depositAddress to wallet.transfer instead of a hard-coded config
+    // value — this is the whole point of runtime discovery.
+    stubNetworkInfoFetch();
     let observed: any = null;
     const wallet = mockWallet({
       transferId: "abc123",
@@ -166,7 +190,7 @@ describe("AMMClient.swap — BTC → token deposit wiring", () => {
       },
     });
     const client = new ExecutionClient(wallet, EXEC_CONFIG);
-    const amm = new AMMClient(client, AMM_CONFIG_WITH_CUSTODY);
+    const amm = new AMMClient(client, AMM_CONFIG);
 
     // The call will throw when it reaches `fetchNonce` (no RPC running).
     // That's fine — by then `wallet.transfer` has already run and we can
@@ -184,8 +208,6 @@ describe("AMMClient.swap — BTC → token deposit wiring", () => {
 
     expect(observed).not.toBeNull();
     expect(observed.amountSats).toBe(250000);
-    expect(observed.receiverSparkAddress).toBe(
-      AMM_CONFIG_WITH_CUSTODY.bridgeCustodySparkAddress
-    );
+    expect(observed.receiverSparkAddress).toBe(TEST_DEPOSIT_ADDRESS);
   });
 });
