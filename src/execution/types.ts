@@ -57,10 +57,44 @@ export interface ExecuteResponse {
   status: string;
 }
 
-/** Configuration for the execution client. */
-export interface ExecutionClientConfig {
-  /** Base URL of the execution gateway (e.g. "http://localhost:8080"). */
-  gatewayUrl: string;
+/**
+ * Runtime discovery info returned by `GET /api/v1/network/info`.
+ *
+ * This is the single source of truth for where deposits land (Spark side)
+ * and where on-chain transactions go (execution side). Clients call
+ * `ExecutionClient.getNetworkInfo()` once per session (memoized, 60s TTL)
+ * and read fields here instead of hard-coding them in environment config.
+ */
+export interface NetworkInfo {
+  spark: SparkNetworkInfo;
+  execution: ExecutionNetworkInfo;
+  /**
+   * When true, the gateway is advising consumers to stop offering new
+   * deposits (maintenance, incident). The gateway still accepts signed
+   * intents — this is a UX signal, not an enforcement boundary.
+   */
+  paused: boolean;
+  /**
+   * Advisory minimum deposit size for client-side pre-validation. The
+   * gateway enforces its own bounds at admission regardless.
+   */
+  minDepositSats: number;
+}
+
+/** Spark-side discovery fields. */
+export interface SparkNetworkInfo {
+  /** Bech32m Spark address where deposits must be sent. */
+  depositAddress: string;
+  /** Spark network, either `"MAINNET"` or `"REGTEST"`. */
+  network: string;
+}
+
+/** Execution-chain discovery fields. */
+export interface ExecutionNetworkInfo {
+  /** 0x-prefixed 20-byte contract address for deposit / withdrawal calls. */
+  contractAddress: string;
+  /** Execution-chain chain id. */
+  chainId: number;
 }
 
 /**

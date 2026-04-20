@@ -137,12 +137,10 @@ export interface AMMConfig {
    * own so callers must supply it.
    */
   permit2Address?: string;
-  /**
-   * Spark address of the bridge custody. Required when a caller uses
-   * `useAvailableBalance: true` so AMMClient can make the Spark transfer
-   * that funds the bundled deposit.
-   */
-  bridgeCustodySparkAddress?: string;
+  // NOTE: the Spark deposit address used when `useAvailableBalance: true`
+  // is no longer configured here. AMMClient resolves it at call time via
+  // `executionClient.getNetworkInfo()` so consumers always track the
+  // gateway's current view.
   /**
    * How to authorize the Conductor to pull input tokens for ERC-20 swaps.
    *
@@ -194,8 +192,9 @@ export interface SwapParams {
   withdraw?: boolean;
   /**
    * When true, AMMClient sources `amountIn` from the caller's Spark
-   * balance: it makes the Spark transfer to `bridgeCustodySparkAddress`
-   * and bundles the resulting `transferId` into the execute intent as a
+   * balance: it makes the Spark transfer to the gateway-advertised
+   * deposit address (resolved via `executionClient.getNetworkInfo()`) and
+   * bundles the resulting `transferId` into the execute intent as a
    * `deposit`. This is the single-intent "round-trip" path — nothing is
    * expected to sit on the caller's EVM address before or after.
    *
@@ -205,8 +204,7 @@ export interface SwapParams {
    * `assetInAddress` must point to a token that implements ERC20Permit —
    * BridgedSparkToken does. No prior on-chain approve is required.
    *
-   * Requires `withdraw` to be true (the default) and
-   * `config.bridgeCustodySparkAddress` to be set. Ignored by the legacy
+   * Requires `withdraw` to be true (the default). Ignored by the legacy
    * no-deposit swap paths.
    */
   useAvailableBalance?: boolean;
@@ -231,7 +229,7 @@ export interface SwapResult {
    */
   evmTxHash: string;
   /**
-   * Spark transfer id of the inbound (caller → bridge custody) transfer
+   * Spark transfer id of the inbound (caller → deposit address) transfer
    * that funded the bundled deposit. Set only when
    * `useAvailableBalance` was true on the originating call; undefined
    * for the legacy no-deposit paths.
@@ -499,10 +497,11 @@ export class AMMClient {
    * intent.
    *
    * Flow:
-   *   1. Make a Spark transfer from the caller to
-   *      `bridgeCustodySparkAddress`. This produces a `transferId` that
-   *      authorizes the gateway to apply the deposit to the caller's
-   *      EVM identity address before the signed tx runs.
+   *   1. Make a Spark transfer from the caller to the deposit address
+   *      published by the gateway via `GET /api/v1/network/info`. This
+   *      produces a `transferId` that authorizes the gateway to apply
+   *      the deposit to the caller's EVM identity address before the
+   *      signed tx runs.
    *   2. Build the swap calldata. For BTC in we use `swapBTCAndWithdraw`
    *      (msg.value funded by the deposit, no allowance needed). For
    *      ERC-20 in we use the `*WithEIP2612` variants and sign an
@@ -523,13 +522,6 @@ export class AMMClient {
           "round-trip path always sends output back to Spark."
       );
     }
-    if (!this.config.bridgeCustodySparkAddress) {
-      throw new Error(
-        "swap: useAvailableBalance requires config.bridgeCustodySparkAddress " +
-          "so AMMClient knows where to send the Spark transfer that funds " +
-          "the bundled deposit."
-      );
-    }
     if (!isBtcIn && !params.assetInSparkTokenId) {
       throw new Error(
         "swap: useAvailableBalance with an ERC-20 input requires " +
@@ -542,7 +534,10 @@ export class AMMClient {
     const amountIn = BigInt(params.amountIn);
     const minAmountOut = BigInt(params.minAmountOut);
     const sparkRecipient = await this.execClient.getSparkRecipientHex();
-    const custody = this.config.bridgeCustodySparkAddress;
+    // Pull the current Spark deposit address from the gateway — always
+    // in sync with the current threshold key, no stale env var in the app.
+    const network = await this.execClient.getNetworkInfo();
+    const custody = network.spark.depositAddress;
 
     // For ERC-20 inputs, normalize the Spark token id into both forms:
     // bech32m for the Spark SDK's transferTokens call, hex for the
@@ -551,7 +546,7 @@ export class AMMClient {
       ? null
       : normalizeSparkTokenIdentifier(params.assetInSparkTokenId!);
 
-    // Step 1: Spark transfer → bridge custody.
+    // Step 1: Spark transfer → gateway-advertised deposit address.
     const transferId = await this.sparkTransferForDeposit(
       isBtcIn,
       amountIn,
