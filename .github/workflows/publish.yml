@@ -28,11 +28,18 @@ jobs:
           node-version: 22.20.0
           registry-url: https://registry.npmjs.org
 
-      # Node 22.20 ships npm 10.9.x, which already supports OIDC trusted
-      # publishing. No self-upgrade needed. If a future npm feature
-      # requires a newer version, pin it explicitly (e.g. `npm@11.5`)
-      # rather than tracking @latest, to avoid inheriting runner-image
-      # regressions.
+      # Node 22.20 bundles npm 10.9.x, which signs provenance but does
+      # NOT implement the OIDC token-exchange endpoint used by npm's
+      # trusted publisher flow. Without this upgrade the publish step
+      # silently falls through to an unauthenticated PUT and the
+      # registry responds with a misleading 404. Pin the minor so the
+      # runner is fully reproducible and we do not inherit regressions
+      # from a future npm 11 minor the way `@latest` exposed us before.
+      # Bump the pin deliberately when a newer OIDC-capable minor is
+      # needed; 11.5 is the first line with the trusted-publisher
+      # token-exchange client.
+      - name: Upgrade npm for trusted publishing OIDC support
+        run: npm install -g npm@11.5
 
       - run: bun install
       - run: bun run build
