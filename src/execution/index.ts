@@ -40,13 +40,13 @@ export {
   type SparkWalletInput,
 } from "./spark-evm-account";
 
-// Bridge calldata encoding and queries
+// Gateway calldata encoding and queries
 export {
   encodeWithdrawSats,
   encodeWithdrawToken,
-  queryBridgedTokenAddress,
-  waitForBridgedTokenAddress,
-} from "./bridge";
+  querySparkTokenAddress,
+  waitForSparkTokenAddress,
+} from "./gateway";
 
 // Conductor calldata encoding (used by AMMClient)
 export {
@@ -111,7 +111,7 @@ export {
   decodeRevertReason,
   DEFAULT_REVERT_ERRORS,
   CONDUCTOR_REVERT_ERRORS,
-  SPARK_BRIDGE_REVERT_ERRORS,
+  SPARK_GATEWAY_REVERT_ERRORS,
   SOLIDITY_BUILTIN_REVERT_ERRORS,
   type DecodedRevertReason,
   type DecodeRevertReasonOptions,

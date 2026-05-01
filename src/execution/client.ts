@@ -34,7 +34,7 @@ import { sha256 } from "@noble/hashes/sha2";
 import { bytesToHex } from "@noble/curves/abstract/utils";
 import { sparkWalletToEvmAccount, getWalletSigner, type SparkWalletInput } from "./spark-evm-account";
 import type { LocalAccount } from "viem/accounts";
-import { encodeWithdrawSats, encodeWithdrawToken } from "./bridge";
+import { encodeWithdrawSats, encodeWithdrawToken } from "./gateway";
 import { fetchNonce, fetchEip1559Fees } from "./evm";
 import { resolveExpiresAt } from "./types";
 import type {
@@ -326,7 +326,7 @@ export class ExecutionClient {
 
   /**
    * Withdraw native BTC (sats) from EVM back to Spark.
-   * Signs a SparkBridge.withdrawSats transaction with the identity key.
+   * Signs a SparkGateway.withdrawSats transaction with the identity key.
    *
    * @param params.amount - Amount in satoshis.
    */
@@ -358,7 +358,7 @@ export class ExecutionClient {
 
   /**
    * Withdraw an ERC20 token from EVM back to Spark.
-   * Signs a SparkBridge.withdrawBtkn transaction with the identity key.
+   * Signs a SparkGateway.withdrawBtkn transaction with the identity key.
    */
   async withdrawToken(params: WithdrawTokenParams): Promise<ExecuteResponse> {
     this.requireAuth();
@@ -496,7 +496,7 @@ export class ExecutionClient {
         // Store as bigint so the custom serializer emits it as a numeric
         // literal preserving full precision.
         amountSats: amountBig,
-        assetType: d.asset.type === "btc" ? "NativeSats" : "BridgedToken",
+        assetType: d.asset.type === "btc" ? "NativeSats" : "SparkToken",
       };
       if (d.asset.type === "token") {
         entry.tokenId = d.asset.tokenId;

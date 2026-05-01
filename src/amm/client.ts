@@ -202,7 +202,7 @@ export interface SwapParams {
    * allowance needed). For ERC-20 inputs it uses the EIP-2612 variants
    * (`swapAndWithdrawWithEIP2612` / `swapAndWithdrawBTCWithEIP2612`), so
    * `assetInAddress` must point to a token that implements ERC20Permit —
-   * BridgedSparkToken does. No prior on-chain approve is required.
+   * SparkToken does. No prior on-chain approve is required.
    *
    * Requires `withdraw` to be true (the default). Ignored by the legacy
    * no-deposit swap paths.
@@ -282,7 +282,7 @@ export class AMMClient {
     if (isBtcOut && !withdraw) {
       throw new Error(
         'swap: assetOutAddress="btc" with withdraw=false is ambiguous. ' +
-          'Use withdraw=true to bridge native BTC back to Spark, or pass ' +
+          'Use withdraw=true to withdraw native BTC back to Spark, or pass ' +
           "the WBTC contract address explicitly if you want wrapped BTC " +
           "to stay on EVM."
       );
@@ -506,7 +506,7 @@ export class AMMClient {
    *      (msg.value funded by the deposit, no allowance needed). For
    *      ERC-20 in we use the `*WithEIP2612` variants and sign an
    *      EIP-2612 permit so the Conductor can pull the freshly-minted
-   *      bridged tokens in the same tx — no standing allowance required.
+   *      Spark tokens in the same tx — no standing allowance required.
    *   3. Sign the EVM tx with the identity key and submit a single
    *      execute intent containing both the deposit and the signed tx.
    */
@@ -585,7 +585,7 @@ export class AMMClient {
       value = amountIn * WEI_PER_SAT;
     } else {
       // ERC-20 in: sign an EIP-2612 permit against the freshly-minted
-      // bridged token and use the *WithEIP2612 Conductor variants so
+      // Spark token and use the *WithEIP2612 Conductor variants so
       // no standing allowance is required.
       const permit = await this.signEip2612Permit(
         params.assetInAddress,
@@ -699,7 +699,7 @@ export class AMMClient {
    * Reads `name()` and `nonces(owner)` from the token contract for the
    * EIP-712 domain and message. Uses the execution client's identity
    * account for signing — by construction this matches the EVM address
-   * the bridged tokens will be minted to.
+   * the Spark tokens will be minted to.
    */
   private async signEip2612Permit(
     tokenAddress: string,

@@ -112,7 +112,7 @@ describe("stringifyWithBigint", () => {
       {
         transferId: "transfer-2",
         amountSats: 2500n,
-        assetType: "BridgedToken",
+        assetType: "SparkToken",
         tokenId: "btkn1foo",
       },
     ];
@@ -127,7 +127,7 @@ describe("stringifyWithBigint", () => {
       '{"chainId":21022,' +
         '"transfers":[' +
         '{"transferId":"transfer-1","amountSats":1000,"assetType":"NativeSats"},' +
-        '{"transferId":"transfer-2","amountSats":2500,"assetType":"BridgedToken","tokenId":"btkn1foo"}' +
+        '{"transferId":"transfer-2","amountSats":2500,"assetType":"SparkToken","tokenId":"btkn1foo"}' +
         "]," +
         '"action":{"type":"deposit","recipient":"0xabc"},' +
         '"nonce":"nonce-xyz",' +

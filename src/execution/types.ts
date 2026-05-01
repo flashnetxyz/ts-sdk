@@ -126,7 +126,7 @@ export interface ExecutionSigner {
 export interface CanonicalTransferEntry {
   transferId: string;
   amountSats: number | bigint;
-  assetType: "NativeSats" | "BridgedToken";
+  assetType: "NativeSats" | "SparkToken";
   tokenId?: string;
 }
 
