@@ -1,4 +1,4 @@
-export const sparkBridgeAbi = [
+export const sparkGatewayAbi = [
   {
     type: "function",
     name: "withdrawSats",

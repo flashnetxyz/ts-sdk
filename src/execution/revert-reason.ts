@@ -11,17 +11,17 @@
  *
  * `output` is the ABI-encoded revert data — a 4-byte error selector
  * followed by any arguments. We map selectors for the contracts we own
- * (SparkBridge + Conductor) back to their Solidity error names, and
+ * (SparkGateway + Conductor) back to their Solidity error names, and
  * ABI-decode the standard `Error(string)` / `Panic(uint256)` payloads
  * so the user sees something readable instead of `0x1f2a2005`.
  */
 
 /**
- * Selectors for custom errors defined in SparkBridge (`contracts/evm/src/SparkBridge.sol`).
+ * Selectors for custom errors defined in SparkGateway (`contracts/evm/src/SparkGateway.sol`).
  * Kept co-located with the contract source — any new custom error in
- * SparkBridge.sol must be mirrored here.
+ * SparkGateway.sol must be mirrored here.
  */
-export const SPARK_BRIDGE_REVERT_ERRORS: Readonly<Record<string, string>> = {
+export const SPARK_GATEWAY_REVERT_ERRORS: Readonly<Record<string, string>> = {
   "0x1f2a2005": "ZeroAmount()",
   "0xaac3845a": "TransferAlreadyUsed()",
   "0x15a108b9": "InvalidRecipientLength()",
@@ -66,7 +66,7 @@ export const SOLIDITY_BUILTIN_REVERT_ERRORS: Readonly<Record<string, string>> = 
  * selectors on top without mutating this constant.
  */
 export const DEFAULT_REVERT_ERRORS: Readonly<Record<string, string>> = {
-  ...SPARK_BRIDGE_REVERT_ERRORS,
+  ...SPARK_GATEWAY_REVERT_ERRORS,
   ...CONDUCTOR_REVERT_ERRORS,
   ...SOLIDITY_BUILTIN_REVERT_ERRORS,
 };

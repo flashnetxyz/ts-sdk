@@ -14,7 +14,7 @@ describe("decodeRevertReason", () => {
     expect(decodeRevertReason("timeout")).toBeNull();
   });
 
-  it("decodes SparkBridge.ZeroAmount()", () => {
+  it("decodes SparkGateway.ZeroAmount()", () => {
     const msg =
       "payload_flagged:stage=Execute outcome=Reverted intent_index=0 " +
       "tx_hash=0x1234 reason=reverted:gas_used=189179 output=0x1f2a2005";
@@ -74,7 +74,7 @@ describe("decodeRevertReason", () => {
         "0xabcd": { "0xdeadbeef": "Irrelevant()" },
       },
     });
-    // Default SparkBridge ZeroAmount() still applies.
+    // Default SparkGateway ZeroAmount() still applies.
     expect(decoded?.name).toBe("ZeroAmount()");
   });
 

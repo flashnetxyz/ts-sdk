@@ -24,7 +24,7 @@ export interface TokenInfo {
   address: string;
   /** Token symbol (e.g. "USDB"). */
   symbol: string;
-  /** Human-readable token name (e.g. "Bridged USD"). */
+  /** Human-readable token name (e.g. "Spark USD"). */
   name: string;
   /** Number of decimal places (e.g. 18). */
   decimals: number;

@@ -138,8 +138,8 @@ export const conductorAbi = [
   // EIP-2612 variants — use the token's own `permit(...)` to grant an inline
   // allowance and then `transferFrom`. Unlike Permit2 these require NO prior
   // on-chain approve from the caller, so they can be bundled with a fresh
-  // bridge-deposit in a single execute intent. Tokens must implement
-  // ERC20Permit (BridgedSparkToken does).
+  // deposit-and-call in a single execute intent. Tokens must implement
+  // ERC20Permit (SparkToken does).
   {
     type: "function",
     name: "swapAndWithdrawBTCWithEIP2612",
