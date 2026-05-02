@@ -26,9 +26,9 @@ describe("decodeRevertReason", () => {
     });
   });
 
-  it("decodes Conductor.SparkBridgeNotSet()", () => {
-    const decoded = decodeRevertReason("output=0x9b561384");
-    expect(decoded?.name).toBe("SparkBridgeNotSet()");
+  it("decodes Conductor.SparkGatewayNotSet()", () => {
+    const decoded = decodeRevertReason("output=0x88dd1ae0");
+    expect(decoded?.name).toBe("SparkGatewayNotSet()");
   });
 
   it("surfaces unknown selectors with a helpful label", () => {

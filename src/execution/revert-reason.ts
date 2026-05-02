@@ -44,7 +44,7 @@ export const CONDUCTOR_REVERT_ERRORS: Readonly<Record<string, string>> = {
   "0xd4446472": "InsufficientBTCValue()",
   "0x91005e4d": "WBTCNotInPair()",
   "0xf60ca03b": "SwapRouterNotSet()",
-  "0x9b561384": "SparkBridgeNotSet()",
+  "0x88dd1ae0": "SparkGatewayNotSet()",
   "0x8d7584ad": "BTCDustRefundFailed()",
   "0x9c8787c0": "PoolDoesNotExist()",
   "0x990965c1": "ZeroAmountIn()",
