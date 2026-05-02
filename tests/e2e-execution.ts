@@ -41,8 +41,6 @@ import {
 const GATEWAY_URL = process.env.GATEWAY_URL ?? "http://localhost:8080";
 const RPC_URL = process.env.RPC_URL ?? "http://localhost:8545";
 const CHAIN_ID = Number(process.env.CHAIN_ID ?? 21022);
-const BRIDGE_ADDRESS =
-  process.env.BRIDGE_ADDRESS ?? "0x1e2861ce58eaa89260226b5704416b9a20589d47";
 
 // ---------------------------------------------------------------------------
 // Test helpers
@@ -101,7 +99,6 @@ function clientConfig() {
     gatewayUrl: GATEWAY_URL,
     rpcUrl: RPC_URL,
     chainId: CHAIN_ID,
-    bridgeAddress: BRIDGE_ADDRESS,
   };
 }
 
