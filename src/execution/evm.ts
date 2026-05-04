@@ -135,26 +135,26 @@ export async function fetchNonce(
 }
 
 /**
- * Fetch current EIP-1559 fee parameters (maxFeePerGas, maxPriorityFeePerGas).
+ * EIP-1559 fee parameters for Flashnet tx construction.
  *
- * On Flashnet both are effectively 0 today, but a partner running their own
- * chain or a future base-fee activation would make hardcoded 0s incorrect.
- * This queries the node and returns the values to use for tx construction.
+ * Flashnet is zero-gas by design — the operator-funded sequencer pays no
+ * base fee and the block builder charges no priority fee. The node correctly
+ * reports `eth_gasPrice = 0x0`, `baseFeePerGas = 0x0`, and
+ * `eth_maxPriorityFeePerGas = 0x0`, but viem's `estimateFeesPerGas()`
+ * still applies its own defaults (base-fee multiplier + a floor priority
+ * fee) on top of the node values. Using those defaults produces a
+ * transaction whose pre-execution balance check
+ * `balance >= value + gasLimit * maxFeePerGas` fails for any deposit
+ * that exactly matches the user's balance — precisely the case we hit
+ * on every `withdraw(amountSats)` call.
  *
- * Falls back to 0/0 if the node doesn't support `eth_feeHistory` or returns
- * an empty response — correct for today's Flashnet.
+ * The function is kept (rather than inlining `{ maxFeePerGas: 0n,
+ * maxPriorityFeePerGas: 0n }` at each call site) so a partner chain
+ * with non-zero base fees can monkey-patch it, and so tests can stub it.
+ * The `rpcUrl` parameter is retained for the same reason.
  */
 export async function fetchEip1559Fees(
-  rpcUrl: string
+  _rpcUrl: string
 ): Promise<{ maxFeePerGas: bigint; maxPriorityFeePerGas: bigint }> {
-  const client = getClient(rpcUrl);
-  try {
-    const est = await client.estimateFeesPerGas();
-    return {
-      maxFeePerGas: est.maxFeePerGas ?? 0n,
-      maxPriorityFeePerGas: est.maxPriorityFeePerGas ?? 0n,
-    };
-  } catch {
-    return { maxFeePerGas: 0n, maxPriorityFeePerGas: 0n };
-  }
+  return { maxFeePerGas: 0n, maxPriorityFeePerGas: 0n };
 }
