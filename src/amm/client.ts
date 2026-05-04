@@ -12,10 +12,12 @@
  * const execClient = new ExecutionClient(sparkWallet, { ... });
  * await execClient.authenticate();
  *
+ * // Use a built-in environment preset (addresses baked into the SDK):
+ * const amm = new AMMClient(execClient, "regtest");
+ *
+ * // Or pass an explicit config (e.g. for localnet / custom deploys):
  * const amm = new AMMClient(execClient, {
  *   conductorAddress: "0x...",
- *   wbtcAddress: "0x...",
- *   factoryAddress: "0x...",
  * });
  *
  * await amm.swap({
@@ -46,7 +48,7 @@ import {
   decodeSparkHumanReadableTokenIdentifier,
   type SparkHumanReadableTokenIdentifier,
 } from "../utils/tokenAddress";
-import type { SparkNetworkType } from "../types";
+import type { ClientEnvironment, SparkNetworkType } from "../types";
 
 /**
  * Normalize a Spark token identifier into its two required forms.
@@ -121,15 +123,14 @@ const DEFAULT_APPROVE_GAS_LIMIT = 100_000n;
 const WEI_PER_SAT = 10_000_000_000n;
 
 /**
- * AMM-specific configuration (Conductor and Uniswap addresses).
+ * AMM-specific configuration.
+ *
+ * For known networks pass a preset name (see {@link AMMNetwork}) instead
+ * of building this object by hand.
  */
 export interface AMMConfig {
   /** Conductor proxy contract address. */
   conductorAddress: string;
-  /** WBTC (wrapped native BTC) token address. */
-  wbtcAddress: string;
-  /** Uniswap V3 Factory address. */
-  factoryAddress: string;
   /**
    * Permit2 contract address. Required when `approvalMode` is `"permit2"`.
    * On Uniswap's canonical deployments this is
@@ -238,6 +239,20 @@ export interface SwapResult {
 }
 
 /**
+ * Built-in AMM environment presets — addresses for known Flashnet
+ * deployments, keyed by {@link ClientEnvironment} to mirror
+ * {@link CLIENT_NETWORK_CONFIGS}.
+ *
+ * Populate an entry once a network's contracts are deployed and stable;
+ * until then callers must pass an explicit {@link AMMConfig}. Note: the
+ * "staging" environment lives under `regtest` here.
+ */
+const AMM_ENVIRONMENT_CONFIGS: Partial<Record<ClientEnvironment, AMMConfig>> = {
+  // Populate once contracts are deployed:
+  // regtest: { conductorAddress: "0x..." },
+};
+
+/**
  * High-level AMM client for Flashnet DEX operations.
  *
  * Wraps the Conductor contract interactions and delegates to
@@ -247,9 +262,29 @@ export class AMMClient {
   private readonly execClient: ExecutionClient;
   private readonly config: AMMConfig;
 
-  constructor(execClient: ExecutionClient, config: AMMConfig) {
+  constructor(
+    execClient: ExecutionClient,
+    environmentOrConfig: ClientEnvironment | AMMConfig
+  ) {
     this.execClient = execClient;
-    this.config = config;
+    this.config =
+      typeof environmentOrConfig === "string"
+        ? AMMClient.resolveEnvironment(environmentOrConfig)
+        : environmentOrConfig;
+  }
+
+  private static resolveEnvironment(env: ClientEnvironment): AMMConfig {
+    const preset = AMM_ENVIRONMENT_CONFIGS[env];
+    if (!preset) {
+      const deployed = Object.keys(AMM_ENVIRONMENT_CONFIGS);
+      throw new Error(
+        `AMMClient: no AMM deployment for environment "${env}". ` +
+          (deployed.length === 0
+            ? "No environments have AMM contracts deployed yet — pass an explicit AMMConfig."
+            : `Deployed: ${deployed.join(", ")}. Pass an explicit AMMConfig for others.`)
+      );
+    }
+    return preset;
   }
 
   /**
@@ -365,7 +400,7 @@ export class AMMClient {
 
     if (isBtcOut) {
       const calldata = this.encodeTokenToBtcSwap(
-        params.assetInAddress, params.fee, amountIn, minAmountOut, integrator, withdraw, sparkRecipient
+        params.assetInAddress, params.fee, amountIn, minAmountOut, integrator, sparkRecipient
       );
       const signedTx = await this.signConductorTx(calldata, 0n);
       return this.submitSwapIntent(signedTx);
@@ -884,40 +919,26 @@ export class AMMClient {
     });
   }
 
+  // Token → BTC always implies withdraw=true: the public `swap()` rejects
+  // `assetOutAddress="btc" && withdraw=false` up front (ambiguous between
+  // native BTC and WBTC), so this helper only encodes the withdraw path.
   private encodeTokenToBtcSwap(
     tokenIn: string,
     fee: number,
     amountIn: bigint,
     minAmountOut: bigint,
     integrator: string,
-    withdraw: boolean,
     sparkRecipient: string
   ): string {
-    if (withdraw) {
-      return encodeFunctionData({
-        abi: conductorAbi,
-        functionName: "swapAndWithdrawBTC",
-        args: [
-          tokenIn as `0x${string}`,
-          fee,
-          amountIn,
-          minAmountOut,
-          sparkRecipient as `0x${string}`,
-          integrator as `0x${string}`,
-        ],
-      });
-    }
-    // When not withdrawing, swap tokenIn → WBTC and leave the WBTC in the
-    // user's account on the EVM side.
     return encodeFunctionData({
       abi: conductorAbi,
-      functionName: "swap",
+      functionName: "swapAndWithdrawBTC",
       args: [
         tokenIn as `0x${string}`,
-        this.config.wbtcAddress as `0x${string}`,
         fee,
         amountIn,
         minAmountOut,
+        sparkRecipient as `0x${string}`,
         integrator as `0x${string}`,
       ],
     });
