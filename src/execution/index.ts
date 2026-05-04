@@ -32,6 +32,7 @@ export {
   type WithdrawParams,
   type WithdrawTokenParams,
   type ExecuteParams,
+  type WaitForIntentOptions,
 } from "./client";
 
 // SparkWallet → EVM account adapter
@@ -100,11 +101,18 @@ export type {
   DepositAsset,
   ExecuteResponse,
   ExecutionSigner,
+  IntentStatus,
+  IntentStatusResponse,
   NetworkInfo,
   SparkNetworkInfo,
   ExecutionNetworkInfo,
 } from "./types";
-export { DEFAULT_INTENT_TTL_MS, resolveExpiresAt } from "./types";
+export {
+  DEFAULT_INTENT_TTL_MS,
+  TERMINAL_INTENT_STATUSES,
+  isTerminalIntentStatus,
+  resolveExpiresAt,
+} from "./types";
 
 // Revert reason decoding
 export {

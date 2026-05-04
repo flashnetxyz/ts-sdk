@@ -31,6 +31,8 @@ import {
   sqrtPriceX96ToPrice,
   fullRangeTicks,
   FEE_TIERS,
+  isTerminalIntentStatus,
+  type IntentStatus,
   type SparkWalletInput,
 } from "../src/execution";
 
@@ -330,6 +332,83 @@ async function testInputValidation(): Promise<void> {
   }
 }
 
+async function testLifecycleHelpers(): Promise<void> {
+  console.log("\n--- Intent Lifecycle Helpers (pure logic) ---");
+
+  const terminals: IntentStatus[] = ["finalized", "rejected", "expired"];
+  for (const s of terminals) {
+    assert(isTerminalIntentStatus(s), `${s} is terminal`);
+  }
+  const nonTerminals: IntentStatus[] = [
+    "accepted",
+    "oracle_pending",
+    "included_pending_finality",
+  ];
+  for (const s of nonTerminals) {
+    assert(!isTerminalIntentStatus(s), `${s} is not terminal`);
+  }
+
+  const client = new ExecutionClient(deterministicWallet(), clientConfig());
+  const pub = client.getPublicClient();
+  assert(typeof pub.getBlockNumber === "function", "getPublicClient returns a viem PublicClient");
+  assert(
+    pub.chain?.id === clientConfig().chainId,
+    `getPublicClient.chain.id matches config (${pub.chain?.id})`
+  );
+}
+
+async function testGetIntentStatus404(): Promise<void> {
+  console.log("\n--- getIntentStatus 404 ---");
+  const client = new ExecutionClient(deterministicWallet(), clientConfig());
+  try {
+    await client.getIntentStatus("00000000-0000-0000-0000-000000000000");
+    failed++;
+    console.error("  ✗ FAIL: expected 404 for unknown submission id");
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    if (/404|not found|HTTP 4/i.test(msg)) {
+      passed++;
+      console.log("  ✓ getIntentStatus throws on unknown submission id");
+    } else {
+      failed++;
+      console.error(`  ✗ unexpected error: ${msg}`);
+    }
+  }
+}
+
+async function testWaitForIntentLive(): Promise<void> {
+  const submissionId = process.env.LIFECYCLE_SUBMISSION_ID;
+  if (!submissionId) {
+    console.log(
+      "\n--- waitForIntent live (skipped: set LIFECYCLE_SUBMISSION_ID to enable) ---"
+    );
+    return;
+  }
+  console.log(`\n--- waitForIntent live: ${submissionId} ---`);
+  const client = new ExecutionClient(deterministicWallet(), clientConfig());
+  const seen: IntentStatus[] = [];
+  try {
+    const final = await client.waitForIntent(submissionId, {
+      timeoutMs: 60_000,
+      intervalMs: 1_000,
+      onUpdate: (r) => {
+        if (seen[seen.length - 1] !== r.status) {
+          console.log(`    status: ${r.status}`);
+          seen.push(r.status);
+        }
+      },
+    });
+    assert(
+      isTerminalIntentStatus(final.status),
+      `waitForIntent returns terminal status (${final.status})`
+    );
+    assert(seen.length > 0, "onUpdate fired at least once");
+  } catch (e) {
+    failed++;
+    console.error(`  ✗ waitForIntent failed: ${e}`);
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Main
 // ---------------------------------------------------------------------------
@@ -344,6 +423,7 @@ async function main(): Promise<void> {
   await testPriceMath();
   await testInputValidation();
   await testIdentityEvmAddress();
+  await testLifecycleHelpers();
 
   // Tests that require RPC
   await testEvmReadHelpers();
@@ -352,6 +432,8 @@ async function main(): Promise<void> {
   // Tests that require the full gateway
   await testHealthCheck();
   await testAuthentication();
+  await testGetIntentStatus404();
+  await testWaitForIntentLive();
 
   console.log(`\n=== Results: ${passed} passed, ${failed} failed ===`);
 

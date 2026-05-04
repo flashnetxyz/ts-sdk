@@ -54,7 +54,73 @@ export interface ExecuteResponse {
   /** Canonical identifier of the logical intent content. */
   intentId: string;
   /** Current status of the intent. */
-  status: string;
+  status: IntentStatus;
+}
+
+/**
+ * Lifecycle status of an intent on the execution gateway.
+ *
+ * Wire format mirrors the Rust enum (snake_case strings). Use this as the
+ * source of truth when polling — `getIntentStatus()` and `waitForIntent()`
+ * both return / target values from this set.
+ *
+ * Lifecycle order under the happy path is roughly:
+ *   `accepted → oracle_pending? → included_pending_finality → finalized`
+ *
+ * Terminal failure states are `rejected` and `expired`. `oracle_pending` is
+ * only entered for deposit-shaped intents waiting on Spark operator-DB
+ * confirmation; pure-execute intents skip it.
+ */
+export type IntentStatus =
+  | "accepted"
+  | "oracle_pending"
+  | "included_pending_finality"
+  | "finalized"
+  | "rejected"
+  | "expired";
+
+/** Statuses that represent terminal lifecycle states (no further updates). */
+export const TERMINAL_INTENT_STATUSES = [
+  "finalized",
+  "rejected",
+  "expired",
+] as const satisfies readonly IntentStatus[];
+
+/**
+ * Returns true when the status is a terminal lifecycle state — i.e. the
+ * intent has reached a final outcome and will receive no further updates.
+ */
+export function isTerminalIntentStatus(status: IntentStatus): boolean {
+  return (TERMINAL_INTENT_STATUSES as readonly string[]).includes(status);
+}
+
+/**
+ * Response from `GET /api/v1/intents/{submission_id}`.
+ *
+ * Mirrors the Rust `IntentStatusResponse` (camelCase). All timestamp fields
+ * are RFC3339 strings as serialized by the gateway; consumers may parse
+ * them with `new Date(...)`.
+ */
+export interface IntentStatusResponse {
+  /** The submission lifecycle handle. */
+  submissionId: string;
+  /** Canonical content identifier of the intent. */
+  intentId: string;
+  /** Current lifecycle status. */
+  status: IntentStatus;
+  /**
+   * Machine-readable status detail (e.g. rejection reason). Absent when
+   * not applicable.
+   */
+  statusMessage?: string;
+  /**
+   * Attributable execution transaction hash. Absent before inclusion.
+   */
+  executionTxHash?: string;
+  /** When the intent was accepted (RFC3339). */
+  createdAt: string;
+  /** When the status was last updated (RFC3339). */
+  updatedAt: string;
 }
 
 /**

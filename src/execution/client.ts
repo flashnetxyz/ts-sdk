@@ -29,14 +29,14 @@
  * ```
  */
 
-import { keccak256 as viemKeccak256 } from "viem";
+import { createPublicClient, http, keccak256 as viemKeccak256, type PublicClient } from "viem";
 import { sha256 } from "@noble/hashes/sha2";
 import { bytesToHex } from "@noble/curves/abstract/utils";
 import { sparkWalletToEvmAccount, getWalletSigner, type SparkWalletInput } from "./spark-evm-account";
 import type { LocalAccount } from "viem/accounts";
 import { encodeWithdrawSats, encodeWithdrawToken } from "./gateway";
 import { fetchNonce, fetchEip1559Fees } from "./evm";
-import { resolveExpiresAt } from "./types";
+import { isTerminalIntentStatus, resolveExpiresAt } from "./types";
 import type {
   CanonicalIntentAction,
   CanonicalIntentMessage,
@@ -44,6 +44,8 @@ import type {
   Deposit,
   ExecuteResponse,
   ExecutionSigner,
+  IntentStatus,
+  IntentStatusResponse,
   NetworkInfo,
 } from "./types";
 
@@ -154,6 +156,24 @@ export interface WithdrawTokenParams extends IntentExpiry {
   tokenAddress: string;
   /** Amount in token base units. */
   amount: bigint;
+}
+
+/** Options for {@link ExecutionClient.waitForIntent}. */
+export interface WaitForIntentOptions {
+  /**
+   * Stop polling when the intent reaches this status (or any terminal
+   * status, whichever comes first). Default: any terminal status
+   * (`finalized | rejected | expired`).
+   */
+  until?: IntentStatus;
+  /** Polling interval in milliseconds. Default: 1500. */
+  intervalMs?: number;
+  /** Maximum time to wait before throwing. Default: 5 minutes. */
+  timeoutMs?: number;
+  /** Cancel the wait. Throws the signal's `reason` from the returned promise. */
+  signal?: AbortSignal;
+  /** Fired for every polled status, including the terminal one. */
+  onUpdate?: (record: IntentStatusResponse) => void;
 }
 
 /** Parameters for a raw execute intent (advanced). */
@@ -419,6 +439,112 @@ export class ExecutionClient {
   }
 
   /**
+   * Look up the lifecycle status of a previously submitted intent.
+   *
+   * Calls `GET /api/v1/intents/{submissionId}` on the gateway. No auth
+   * required — submission IDs are non-guessable handles, and a leak only
+   * exposes status text. Use {@link waitForIntent} to poll until a target
+   * status is reached.
+   *
+   * @throws if the submission is unknown (HTTP 404) or the gateway is
+   *   unreachable.
+   */
+  async getIntentStatus(submissionId: string): Promise<IntentStatusResponse> {
+    if (!submissionId || submissionId.trim() === "") {
+      throw new Error("submissionId is required");
+    }
+    const path = `/api/v1/intents/${encodeURIComponent(submissionId)}`;
+    const resp = await fetch(`${this.config.gatewayUrl}${path}`);
+    const text = await resp.text();
+    if (!resp.ok) {
+      throw new Error(
+        `gateway ${path} returned HTTP ${resp.status}: ${text}`
+      );
+    }
+    try {
+      return JSON.parse(text) as IntentStatusResponse;
+    } catch {
+      throw new Error(`gateway ${path} response is not valid JSON: ${text}`);
+    }
+  }
+
+  /**
+   * Poll {@link getIntentStatus} until the intent reaches a terminal state
+   * (or, optionally, a specific target status), then return the final
+   * record.
+   *
+   * The default target is "any terminal state" (`finalized | rejected |
+   * expired`). To wait only for inclusion without finality, pass
+   * `until: "included_pending_finality"`.
+   *
+   * `onUpdate` fires for every fetched status, including the first response
+   * and the terminal one. Suitable for driving a UI stepper without writing
+   * your own polling loop.
+   *
+   * Cancellation: pass an `AbortSignal` to cancel mid-poll. The signal is
+   * checked between polls and will reject the returned promise with the
+   * signal's `reason`.
+   *
+   * @throws if the configured `timeoutMs` elapses before a target status
+   *   is reached.
+   */
+  async waitForIntent(
+    submissionId: string,
+    opts: WaitForIntentOptions = {}
+  ): Promise<IntentStatusResponse> {
+    const interval = opts.intervalMs ?? 1500;
+    const timeout = opts.timeoutMs ?? 5 * 60_000;
+    const onUpdate = opts.onUpdate;
+    const signal = opts.signal;
+    const target = opts.until;
+    const deadline = Date.now() + timeout;
+
+    const matches = (status: IntentStatus): boolean => {
+      if (target) return status === target || isTerminalIntentStatus(status);
+      return isTerminalIntentStatus(status);
+    };
+
+    // First poll happens immediately so callers see the current status
+    // before any wait.
+    while (true) {
+      if (signal?.aborted) {
+        throw signal.reason ?? new Error("waitForIntent aborted");
+      }
+      const record = await this.getIntentStatus(submissionId);
+      onUpdate?.(record);
+      if (matches(record.status)) return record;
+      const remaining = deadline - Date.now();
+      if (remaining <= 0) {
+        throw new Error(
+          `waitForIntent(${submissionId}) timed out after ${timeout}ms in status "${record.status}"`
+        );
+      }
+      await sleep(Math.min(interval, remaining), signal);
+    }
+  }
+
+  /**
+   * Build a viem `PublicClient` configured for the same JSON-RPC URL and
+   * chain id this ExecutionClient was constructed with.
+   *
+   * Use this for read-only `eth_*` calls — `getBlockNumber`, `getBalance`,
+   * `readContract`, etc. The Flashnet RPC is filtered to read methods only
+   * (write methods are blocked); transactions must be submitted as intents
+   * via {@link withdraw} / {@link withdrawToken} / {@link execute}.
+   */
+  getPublicClient(): PublicClient {
+    return createPublicClient({
+      chain: {
+        id: this.config.chainId,
+        name: `flashnet-${this.config.chainId}`,
+        nativeCurrency: { name: "Bitcoin", symbol: "BTC", decimals: 18 },
+        rpcUrls: { default: { http: [this.config.rpcUrl] } },
+      },
+      transport: http(this.config.rpcUrl),
+    });
+  }
+
+  /**
    * Check if the gateway is healthy.
    */
   async health(): Promise<boolean> {
@@ -609,6 +735,28 @@ function sparkWalletToExecutionSigner(wallet: SparkWalletInput): ExecutionSigner
       return bytesToHex(signature);
     },
   };
+}
+
+/**
+ * Cancellable sleep. Resolves after `ms`, or rejects with `signal.reason`
+ * if the signal is aborted in the meantime.
+ */
+function sleep(ms: number, signal?: AbortSignal): Promise<void> {
+  return new Promise((resolve, reject) => {
+    if (signal?.aborted) {
+      reject(signal.reason ?? new Error("aborted"));
+      return;
+    }
+    const timer = setTimeout(() => {
+      signal?.removeEventListener("abort", onAbort);
+      resolve();
+    }, ms);
+    const onAbort = () => {
+      clearTimeout(timer);
+      reject(signal!.reason ?? new Error("aborted"));
+    };
+    signal?.addEventListener("abort", onAbort, { once: true });
+  });
 }
 
 function validateDeposits(deposits: Deposit[]): void {

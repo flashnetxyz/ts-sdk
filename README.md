@@ -67,6 +67,22 @@ The Flashnet SDK offers two approaches to suit different needs:
 
 Use `FlashnetClient` for a complete, ready-to-use solution with automatic network detection, authentication, and balance checking.
 
+The fastest path is `FlashnetClient.fromMnemonic` — one call gets you a wallet, an authenticated client, and is ready to use:
+
+```typescript
+import { FlashnetClient } from "@flashnet/sdk";
+
+const client = await FlashnetClient.fromMnemonic(
+  process.env.SPARK_MNEMONIC!,
+  { sparkNetworkType: "REGTEST", clientConfig: "regtest" }
+);
+
+const balance = await client.getBalance();
+const pools   = await client.listPools();
+```
+
+Equivalent long-form, if you want to manage the wallet yourself:
+
 ```typescript
 import { FlashnetClient } from "@flashnet/sdk";
 import { IssuerSparkWallet } from "@buildonspark/issuer-sdk";
@@ -91,6 +107,37 @@ const swapResult = await client.executeSwap({
   minAmountOut: 950000n,
   maxSlippageBps: 500,
 });
+```
+
+#### Submitting and watching execution-layer intents
+
+```typescript
+import { ExecutionClient } from "@flashnet/sdk";
+
+const exec = new ExecutionClient(wallet, {
+  gatewayUrl: "https://execution.makebitcoingreatagain.dev",
+  rpcUrl:     "https://rpc.makebitcoingreatagain.dev",
+  chainId:    21022,
+});
+await exec.authenticate();
+
+const { submissionId } = await exec.deposit({
+  deposits: [{ sparkTransferId, amount: 100_000n, asset: { type: "btc" } }],
+});
+
+// Drive a UI stepper without writing your own polling loop:
+const final = await exec.waitForIntent(submissionId, {
+  onUpdate: (r) => console.log(r.status, r.statusMessage ?? ""),
+});
+
+if (final.status === "finalized") {
+  console.log("inner tx", final.executionTxHash);
+}
+
+// Read-only EVM calls go through the same client — viem against the
+// filtered Flashnet RPC.
+const pub = exec.getPublicClient();
+const block = await pub.getBlockNumber();
 ```
 
 ### 2. 🧩 Modular Components (For advanced customization)

@@ -344,6 +344,93 @@ export interface FlashnetClientOptions {
   autoAuthenticate?: boolean; // Default: true
 }
 
+/** Options for {@link FlashnetClient.fromMnemonic}. */
+export interface FromMnemonicWalletOptions {
+  /**
+   * Optional account number for HD derivation. Defaults to the underlying
+   * Spark SDK's default (account 0).
+   */
+  accountNumber?: number;
+  /**
+   * Extra options forwarded verbatim to the underlying Spark wallet's
+   * `initialize` call (e.g. `sspBaseUrl`, `electrsUrl`,
+   * `preferLegacyRegtestOperators`). Shape mirrors
+   * `IssuerSparkWallet.initialize`'s `options` parameter.
+   */
+  sparkOptions?: Record<string, unknown>;
+  /**
+   * Force which Spark wallet implementation to use:
+   * - `"issuer"` — `IssuerSparkWallet` from `@buildonspark/issuer-sdk`
+   * - `"spark"`  — `SparkWallet` from `@buildonspark/spark-sdk`
+   * - `undefined` (default) — try issuer first, fall back to spark.
+   */
+  walletKind?: "issuer" | "spark";
+}
+
+/**
+ * Build a Spark wallet from a mnemonic, trying the issuer SDK first and
+ * falling back to the base Spark SDK. Both peer-deps are optional; if
+ * neither is installed this throws with an actionable message.
+ */
+async function createWalletFromMnemonic(
+  mnemonicOrSeed: string,
+  sparkNetworkType: SparkNetworkType,
+  walletOptions?: FromMnemonicWalletOptions
+): Promise<IssuerSparkWallet | SparkWallet> {
+  const initOptions: Record<string, unknown> = {
+    mnemonicOrSeed,
+    accountNumber: walletOptions?.accountNumber,
+    options: {
+      network: sparkNetworkType,
+      ...walletOptions?.sparkOptions,
+    },
+  };
+
+  const tryIssuer = walletOptions?.walletKind !== "spark";
+  const trySpark = walletOptions?.walletKind !== "issuer";
+
+  let lastError: unknown = null;
+
+  if (tryIssuer) {
+    try {
+      const mod = await import("@buildonspark/issuer-sdk");
+      const result = await mod.IssuerSparkWallet.initialize(
+        initOptions as Parameters<typeof mod.IssuerSparkWallet.initialize>[0]
+      );
+      // Spark SDKs return `{ wallet, ... }` from initialize; tolerate both
+      // shapes for forward-compatibility.
+      const wallet = (result as { wallet?: IssuerSparkWallet }).wallet ??
+        (result as unknown as IssuerSparkWallet);
+      return wallet;
+    } catch (err) {
+      lastError = err;
+      if (walletOptions?.walletKind === "issuer") throw err;
+    }
+  }
+
+  if (trySpark) {
+    try {
+      const mod = await import("@buildonspark/spark-sdk");
+      const result = await mod.SparkWallet.initialize(
+        initOptions as Parameters<typeof mod.SparkWallet.initialize>[0]
+      );
+      const wallet = (result as { wallet?: SparkWallet }).wallet ??
+        (result as unknown as SparkWallet);
+      return wallet;
+    } catch (err) {
+      lastError = err;
+      if (walletOptions?.walletKind === "spark") throw err;
+    }
+  }
+
+  throw new Error(
+    "FlashnetClient.fromMnemonic: failed to initialize a Spark wallet. " +
+      "Install one of the peer dependencies (@buildonspark/issuer-sdk or " +
+      "@buildonspark/spark-sdk). Last error: " +
+      (lastError instanceof Error ? lastError.message : String(lastError))
+  );
+}
+
 /**
  * Helper type for fixed lists
  */
@@ -590,6 +677,55 @@ export class FlashnetClient {
     this.apiClient = new ApiClient(resolvedClientConfig);
     this.typedApi = new TypedAmmApi(this.apiClient);
     this.authManager = new AuthManager(this.apiClient, "", wallet);
+  }
+
+  /**
+   * Create a fully-initialized FlashnetClient from a BIP39 mnemonic (or
+   * raw hex seed) — the one-step "hello world" entrypoint.
+   *
+   * Internally:
+   * 1. Imports `@buildonspark/issuer-sdk` (peer dependency) and calls
+   *    `IssuerSparkWallet.initialize`. Falls back to
+   *    `@buildonspark/spark-sdk`'s `SparkWallet.initialize` if the issuer
+   *    SDK isn't installed — both produce a wallet whose identity key is
+   *    deterministically derived from the mnemonic.
+   * 2. Constructs a `FlashnetClient` with the supplied config.
+   * 3. Calls `initialize()` (challenge-response auth with the AMM gateway)
+   *    unless `config.autoAuthenticate === false`.
+   *
+   * Either peer dep must be installed; if neither is present the call
+   * throws with a message naming the missing package.
+   *
+   * @example
+   * ```typescript
+   * const client = await FlashnetClient.fromMnemonic(
+   *   process.env.SPARK_MNEMONIC!,
+   *   { sparkNetworkType: "REGTEST", clientConfig: "regtest" }
+   * );
+   * const balance = await client.getBalance();
+   * ```
+   */
+  static async fromMnemonic(
+    mnemonicOrSeed: string,
+    config:
+      | FlashnetClientConfig
+      | FlashnetClientCustomConfig
+      | FlashnetClientEnvironmentConfig,
+    walletOptions?: FromMnemonicWalletOptions
+  ): Promise<FlashnetClient> {
+    if (!mnemonicOrSeed || mnemonicOrSeed.trim() === "") {
+      throw new Error("mnemonicOrSeed is required");
+    }
+    const wallet = await createWalletFromMnemonic(
+      mnemonicOrSeed.trim().split(/\s+/).join(" "),
+      config.sparkNetworkType,
+      walletOptions
+    );
+    const client = new FlashnetClient(wallet, config);
+    if (config.autoAuthenticate !== false) {
+      await client.initialize();
+    }
+    return client;
   }
 
   /**

@@ -43,6 +43,13 @@ export type {
   DepositAsset,
   ExecuteResponse,
   ExecutionSigner,
+  IntentStatus,
+  IntentStatusResponse,
+  WaitForIntentOptions,
+} from "./src/execution";
+export {
+  TERMINAL_INTENT_STATUSES,
+  isTerminalIntentStatus,
 } from "./src/execution";
 export {
   decodeRevertReason,
@@ -95,6 +102,7 @@ export {
   type ClawbackPollResult,
   FlashnetClient,
   type FlashnetClientOptions,
+  type FromMnemonicWalletOptions,
   type PayLightningWithTokenOptions,
   type PayLightningWithTokenQuote,
   type PayLightningWithTokenResult,
