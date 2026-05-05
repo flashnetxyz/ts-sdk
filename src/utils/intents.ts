@@ -607,3 +607,56 @@ export function generateLockPositionIntentMessage(params: {
   return new TextEncoder().encode(JSON.stringify(intentMessage));
 }
 
+/**
+ * Generate the intent message for transferring an LP position to a new owner.
+ * Single-step: signing this hands off ownership on server acceptance. Verify
+ * the recipient before signing.
+ *
+ * @param params Parameters for transferring a position
+ * @returns The serialized intent message as Uint8Array
+ */
+export function generateTransferPositionIntentMessage(params: {
+  userPublicKey: string;
+  lpIdentityPublicKey: string;
+  newOwnerPublicKey: string;
+  tickLower?: number;
+  tickUpper?: number;
+  lpTokensToTransfer?: string;
+  nonce: string;
+}): Uint8Array {
+  if (params.newOwnerPublicKey === params.userPublicKey) {
+    throw new Error(
+      "Self-transfer not allowed: newOwnerPublicKey must differ from userPublicKey"
+    );
+  }
+
+  // V3 shape: both ticks present. V2 shape: both absent + lpTokensToTransfer
+  // present. Mixed shape (one tick set, the other not) is rejected up front
+  // so a malformed signature is never produced.
+  const tlSet = params.tickLower !== undefined && params.tickLower !== null;
+  const tuSet = params.tickUpper !== undefined && params.tickUpper !== null;
+  if (tlSet !== tuSet) {
+    throw new Error(
+      "tickLower and tickUpper must both be provided for V3, or both omitted for V2"
+    );
+  }
+  if (
+    tlSet &&
+    tuSet &&
+    (params.tickLower as number) >= (params.tickUpper as number)
+  ) {
+    throw new Error("tickLower must be less than tickUpper");
+  }
+
+  const intentMessage = {
+    userPublicKey: params.userPublicKey,
+    lpIdentityPublicKey: params.lpIdentityPublicKey,
+    newOwnerPublicKey: params.newOwnerPublicKey,
+    tickLower: params.tickLower ?? null,
+    tickUpper: params.tickUpper ?? null,
+    lpTokensToTransfer: params.lpTokensToTransfer ?? null,
+    nonce: params.nonce,
+  };
+
+  return new TextEncoder().encode(JSON.stringify(intentMessage));
+}

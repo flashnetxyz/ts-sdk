@@ -740,6 +740,20 @@ export class TypedAmmApi {
       ownerPublicKey ? { params: { ownerPublicKey } } : undefined
     );
   }
+
+  /**
+   * Transfer ownership of a locked LP position to a new owner
+   * @POST /v1/liquidity/transfer/position
+   * @requires Bearer token
+   */
+  async transferPosition(
+    request: Types.TransferPositionRequest
+  ): Promise<Types.TransferPositionResponse> {
+    return this.client.ammPost<Types.TransferPositionResponse>(
+      "/v1/liquidity/transfer/position",
+      request
+    );
+  }
 }
 
 /**

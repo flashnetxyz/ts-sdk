@@ -2065,6 +2065,48 @@ export interface ValidateLpLockPositionData {
   nonce: string;
 }
 
+/**
+ * Request to transfer ownership of a locked LP position to a new owner.
+ * Single-step: signing this payload immediately reassigns ownership on
+ * acceptance. There is no propose/accept handshake; verify the recipient
+ * carefully before signing.
+ */
+export interface TransferPositionRequest {
+  userPublicKey: string;
+  poolId: string;
+  newOwnerPublicKey: string;
+  tickLower?: number;
+  tickUpper?: number;
+  /** V2 only; not yet supported by the server. */
+  lpTokensToTransfer?: string;
+  nonce: string;
+  signature: string;
+}
+
+export interface TransferPositionResponse {
+  requestId: string;
+  accepted: boolean;
+  /** Confirmation message on success. */
+  confirmation?: string;
+  /** Rejection reason on failure. */
+  error?: string;
+}
+
+/**
+ * Canonical-JSON shape of the LP transfer intent. The server rebuilds this
+ * exact structure and verifies the signature against it. Field names are
+ * camelCase to match the proto's `serde(rename_all = "camelCase")` derive.
+ */
+export interface ValidateLpTransferPositionData {
+  userPublicKey: string;
+  lpIdentityPublicKey: string;
+  newOwnerPublicKey: string;
+  tickLower: number | null;
+  tickUpper: number | null;
+  lpTokensToTransfer: string | null;
+  nonce: string;
+}
+
 // Error Types
 // Re-export all error types from errors module
 export * from "./errors";

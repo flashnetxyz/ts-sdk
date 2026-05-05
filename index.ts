@@ -84,6 +84,7 @@ export {
   generateRegisterHostIntentMessage,
   generateRemoveLiquidityIntentMessage,
   generateRouteSwapIntentMessage,
+  generateTransferPositionIntentMessage,
   generateWithdrawHostFeesIntentMessage,
   generateWithdrawIntegratorFeesIntentMessage,
 } from "./src/utils/intents";
