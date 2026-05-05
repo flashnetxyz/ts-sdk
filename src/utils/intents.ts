@@ -624,15 +624,28 @@ export function generateTransferPositionIntentMessage(params: {
   lpTokensToTransfer?: string;
   nonce: string;
 }): Uint8Array {
-  if (params.newOwnerPublicKey === params.userPublicKey) {
+  // Compare on lowercase so a different-case encoding of the same
+  // compressed pubkey can't smuggle a self-transfer past this guard. The
+  // server-side comparison is on the parsed PublicKey curve point (case-
+  // insensitive by construction); mirror that here so the signature is
+  // never produced for what the server will reject.
+  if (
+    params.newOwnerPublicKey.toLowerCase() ===
+    params.userPublicKey.toLowerCase()
+  ) {
     throw new Error(
       "Self-transfer not allowed: newOwnerPublicKey must differ from userPublicKey"
     );
   }
 
-  // V3 shape: both ticks present. V2 shape: both absent + lpTokensToTransfer
-  // present. Mixed shape (one tick set, the other not) is rejected up front
-  // so a malformed signature is never produced.
+  // V3 shape: both ticks present and integer. V2 shape: both absent +
+  // lpTokensToTransfer present. Mixed shape (one tick set, the other not)
+  // is rejected up front so a malformed signature is never produced.
+  //
+  // Number.isInteger guards against NaN, Infinity, and non-integer values
+  // — JSON.stringify would serialize a NaN tick to `null`, producing a
+  // signed intent whose hash won't match what the server reconstructs.
+  // Failing fast here gives the caller a clear local error.
   const tlSet = params.tickLower !== undefined && params.tickLower !== null;
   const tuSet = params.tickUpper !== undefined && params.tickUpper !== null;
   if (tlSet !== tuSet) {
@@ -640,12 +653,17 @@ export function generateTransferPositionIntentMessage(params: {
       "tickLower and tickUpper must both be provided for V3, or both omitted for V2"
     );
   }
-  if (
-    tlSet &&
-    tuSet &&
-    (params.tickLower as number) >= (params.tickUpper as number)
-  ) {
-    throw new Error("tickLower must be less than tickUpper");
+  if (tlSet && tuSet) {
+    const tl = params.tickLower as number;
+    const tu = params.tickUpper as number;
+    if (!Number.isInteger(tl) || !Number.isInteger(tu)) {
+      throw new Error(
+        `Invalid tick value: tickLower=${tl}, tickUpper=${tu}; both must be integers`
+      );
+    }
+    if (tl >= tu) {
+      throw new Error("tickLower must be less than tickUpper");
+    }
   }
 
   const intentMessage = {
