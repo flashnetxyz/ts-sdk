@@ -653,6 +653,23 @@ export function generateTransferPositionIntentMessage(params: {
       "tickLower and tickUpper must both be provided for V3, or both omitted for V2"
     );
   }
+  // V2 shape requires lpTokensToTransfer; V3 shape requires the tick pair.
+  // Refusing the all-empty case here mirrors the gateway's "Provide either
+  // V3 tickLower+tickUpper or V2 lpTokensToTransfer" reject.
+  const lpAmountSet =
+    params.lpTokensToTransfer !== undefined &&
+    params.lpTokensToTransfer !== null &&
+    params.lpTokensToTransfer.length > 0;
+  if (!tlSet && !tuSet && !lpAmountSet) {
+    throw new Error(
+      "Provide either V3 tickLower+tickUpper or V2 lpTokensToTransfer; neither was supplied"
+    );
+  }
+  if (tlSet && tuSet && lpAmountSet) {
+    throw new Error(
+      "lpTokensToTransfer (V2) cannot be combined with tickLower/tickUpper (V3); use one or the other"
+    );
+  }
   if (tlSet && tuSet) {
     const tl = params.tickLower as number;
     const tu = params.tickUpper as number;
