@@ -69,9 +69,9 @@ export type {
   TraceFrame,
 } from "./src/execution";
 
-// AMM client (wraps ExecutionClient for DEX operations)
-export { AMMClient } from "./src/amm";
-export type { AMMConfig, SwapParams as AMMSwapParams, SwapResult as AMMSwapResult } from "./src/amm";
+// Trading client (wraps ExecutionClient for DEX operations)
+export { TradingClient } from "./src/trading";
+export type { TradingConfig, SwapParams as TradingSwapParams, SwapResult as TradingSwapResult } from "./src/trading";
 
 export type { RequestOptions } from "./src/api/client";
 // Export API client and typed endpoints

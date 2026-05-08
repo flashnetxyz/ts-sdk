@@ -412,7 +412,7 @@ export class ExecutionClient {
 
   /**
    * Submit a raw execute intent with a pre-signed EVM transaction.
-   * For advanced use — prefer `withdraw()` or AMMClient methods.
+   * For advanced use — prefer `withdraw()` or TradingClient methods.
    */
   async execute(params: ExecuteParams): Promise<ExecuteResponse> {
     this.requireAuth();
@@ -570,10 +570,10 @@ export class ExecutionClient {
 
   /**
    * Accessor for the wrapped SparkWallet. Exposed so higher-level clients
-   * (e.g. AMMClient) can issue Spark transfers to fund a bundled deposit
+   * (e.g. TradingClient) can issue Spark transfers to fund a bundled deposit
    * in the same execute intent without duplicating wallet ownership.
    *
-   * Prefer the ExecutionClient / AMMClient methods over reaching for the
+   * Prefer the ExecutionClient / TradingClient methods over reaching for the
    * wallet directly — this is an escape hatch, not a recommended API.
    */
   getSparkWallet(): SparkWalletInput {
