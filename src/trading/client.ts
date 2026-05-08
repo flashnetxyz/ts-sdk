@@ -1,26 +1,25 @@
 /**
- * Flashnet AMM Client
+ * Flashnet Trading Client
  *
  * High-level client for DEX operations through the Conductor contract.
  * Wraps ExecutionClient for intent submission and EVM signing.
  *
  * @example
  * ```typescript
- * import { ExecutionClient } from "@flashnet/sdk";
- * import { AMMClient } from "@flashnet/sdk/amm";
+ * import { ExecutionClient, TradingClient } from "@flashnet/sdk";
  *
  * const execClient = new ExecutionClient(sparkWallet, { ... });
  * await execClient.authenticate();
  *
  * // Use a built-in environment preset (addresses baked into the SDK):
- * const amm = new AMMClient(execClient, "regtest");
+ * const trading = new TradingClient(execClient, "regtest");
  *
  * // Or pass an explicit config (e.g. for localnet / custom deploys):
- * const amm = new AMMClient(execClient, {
+ * const trading = new TradingClient(execClient, {
  *   conductorAddress: "0x...",
  * });
  *
- * await amm.swap({
+ * await trading.swap({
  *   assetInAddress: "btc",
  *   assetOutAddress: "0x...",
  *   amountIn: "1000",
@@ -128,7 +127,7 @@ const WEI_PER_SAT = 10_000_000_000n;
  * For known networks pass a preset name (see {@link AMMNetwork}) instead
  * of building this object by hand.
  */
-export interface AMMConfig {
+export interface TradingConfig {
   /** Conductor proxy contract address. */
   conductorAddress: string;
   /**
@@ -139,7 +138,7 @@ export interface AMMConfig {
    */
   permit2Address?: string;
   // NOTE: the Spark deposit address used when `useAvailableBalance: true`
-  // is no longer configured here. AMMClient resolves it at call time via
+  // is no longer configured here. TradingClient resolves it at call time via
   // `executionClient.getNetworkInfo()` so consumers always track the
   // gateway's current view.
   /**
@@ -192,7 +191,7 @@ export interface SwapParams {
   /** Whether to withdraw output back to Spark. Default true. */
   withdraw?: boolean;
   /**
-   * When true, AMMClient sources `amountIn` from the caller's Spark
+   * When true, TradingClient sources `amountIn` from the caller's Spark
    * balance: it makes the Spark transfer to the gateway-advertised
    * deposit address (resolved via `executionClient.getNetworkInfo()`) and
    * bundles the resulting `transferId` into the execute intent as a
@@ -244,10 +243,10 @@ export interface SwapResult {
  * {@link CLIENT_NETWORK_CONFIGS}.
  *
  * Populate an entry once a network's contracts are deployed and stable;
- * until then callers must pass an explicit {@link AMMConfig}. Note: the
+ * until then callers must pass an explicit {@link TradingConfig}. Note: the
  * "staging" environment lives under `regtest` here.
  */
-const AMM_ENVIRONMENT_CONFIGS: Partial<Record<ClientEnvironment, AMMConfig>> = {
+const AMM_ENVIRONMENT_CONFIGS: Partial<Record<ClientEnvironment, TradingConfig>> = {
   // Populate once contracts are deployed:
   // regtest: { conductorAddress: "0x..." },
 };
@@ -258,30 +257,30 @@ const AMM_ENVIRONMENT_CONFIGS: Partial<Record<ClientEnvironment, AMMConfig>> = {
  * Wraps the Conductor contract interactions and delegates to
  * ExecutionClient for intent submission and EVM signing.
  */
-export class AMMClient {
+export class TradingClient {
   private readonly execClient: ExecutionClient;
-  private readonly config: AMMConfig;
+  private readonly config: TradingConfig;
 
   constructor(
     execClient: ExecutionClient,
-    environmentOrConfig: ClientEnvironment | AMMConfig
+    environmentOrConfig: ClientEnvironment | TradingConfig
   ) {
     this.execClient = execClient;
     this.config =
       typeof environmentOrConfig === "string"
-        ? AMMClient.resolveEnvironment(environmentOrConfig)
+        ? TradingClient.resolveEnvironment(environmentOrConfig)
         : environmentOrConfig;
   }
 
-  private static resolveEnvironment(env: ClientEnvironment): AMMConfig {
+  private static resolveEnvironment(env: ClientEnvironment): TradingConfig {
     const preset = AMM_ENVIRONMENT_CONFIGS[env];
     if (!preset) {
       const deployed = Object.keys(AMM_ENVIRONMENT_CONFIGS);
       throw new Error(
-        `AMMClient: no AMM deployment for environment "${env}". ` +
+        `TradingClient: no AMM deployment for environment "${env}". ` +
           (deployed.length === 0
-            ? "No environments have AMM contracts deployed yet — pass an explicit AMMConfig."
-            : `Deployed: ${deployed.join(", ")}. Pass an explicit AMMConfig for others.`)
+            ? "No environments have AMM contracts deployed yet — pass an explicit TradingConfig."
+            : `Deployed: ${deployed.join(", ")}. Pass an explicit TradingConfig for others.`)
       );
     }
     return preset;
@@ -323,7 +322,7 @@ export class AMMClient {
       );
     }
 
-    // Round-trip path: AMMClient owns the full Spark→EVM→Spark dance in
+    // Round-trip path: TradingClient owns the full Spark→EVM→Spark dance in
     // one intent. Dispatch to the dedicated helper so the classic paths
     // below stay readable.
     if (params.useAvailableBalance) {
@@ -438,7 +437,7 @@ export class AMMClient {
   }> {
     if (!this.config.permit2Address) {
       throw new Error(
-        "approvalMode='permit2' requires permit2Address in AMMConfig. " +
+        "approvalMode='permit2' requires permit2Address in TradingConfig. " +
           "Pass the deployed Permit2 contract address."
       );
     }

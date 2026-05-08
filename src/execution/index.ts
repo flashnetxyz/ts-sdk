@@ -4,8 +4,8 @@
  * Core client for interacting with the Flashnet execution gateway.
  * Handles deposit, withdrawal, and raw execute intents.
  *
- * For AMM operations (swap, quote, createPool), use the AMMClient
- * from "@flashnet/sdk/amm" which wraps ExecutionClient.
+ * For AMM operations (swap, quote, createPool), use the TradingClient
+ * from "@flashnet/sdk" which wraps ExecutionClient.
  *
  * @example
  * ```typescript
@@ -52,7 +52,7 @@ export {
   waitForSparkTokenAddress,
 } from "./gateway";
 
-// Conductor calldata encoding (used by AMMClient)
+// Conductor calldata encoding (used by TradingClient)
 export {
   Conductor,
   type ConductorConfig,
