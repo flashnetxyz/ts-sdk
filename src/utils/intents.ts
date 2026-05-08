@@ -683,6 +683,22 @@ export function generateTransferPositionIntentMessage(params: {
     }
   }
 
+  // V2 amount must be a non-empty positive-integer string. Mirrors the
+  // gateway and TEE guards so all three layers agree on what a "valid
+  // V2 transfer amount" is. Reject sign, decimal point, scientific
+  // notation, leading zeros, whitespace, or any non-digit character.
+  if (lpAmountSet) {
+    const raw = params.lpTokensToTransfer as string;
+    const valid =
+      raw.length > 0 &&
+      /^[1-9][0-9]*$/.test(raw); // strict positive integer, no leading zeros, no "0"
+    if (!valid) {
+      throw new Error(
+        `Invalid lpTokensToTransfer: ${raw}; must be a positive integer string (digits only, no sign, no decimals, no leading zeros)`
+      );
+    }
+  }
+
   const intentMessage = {
     userPublicKey: params.userPublicKey,
     lpIdentityPublicKey: params.lpIdentityPublicKey,

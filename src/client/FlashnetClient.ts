@@ -1875,11 +1875,21 @@ export class FlashnetClient {
    * before calling. The lock metadata travels with the position; you cannot
    * use this to bypass an active lock.
    *
+   * V3 (concentrated liquidity): pass `tickLower` and `tickUpper`; the
+   * entire position at that tick range moves to the new owner.
+   *
+   * V2 (constant-product): pass `lpTokensToTransfer` as a positive-integer
+   * string; the named amount of LP shares transfers to the new owner. The
+   * sender keeps the residual; if the transfer drains the sender to zero,
+   * the sender's lock row is deleted and the recipient gets a new lock at
+   * the same expiry. If the recipient already has a lock, the stronger of
+   * the two (later expiry, or indefinite) wins.
+   *
    * @param poolId Pool ID (LP identity public key)
    * @param newOwnerPublicKey Recipient's compressed secp256k1 pubkey (hex)
    * @param opts.tickLower V3 lower tick (required for V3, must pair with tickUpper)
    * @param opts.tickUpper V3 upper tick
-   * @param opts.lpTokensToTransfer V2 only; V2 transfer is not yet supported
+   * @param opts.lpTokensToTransfer V2 only; positive integer string in atomic units
    */
   async transferPosition(
     poolId: string,
