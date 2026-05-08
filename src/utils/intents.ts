@@ -607,3 +607,107 @@ export function generateLockPositionIntentMessage(params: {
   return new TextEncoder().encode(JSON.stringify(intentMessage));
 }
 
+/**
+ * Generate the intent message for transferring an LP position to a new owner.
+ * Single-step: signing this hands off ownership on server acceptance. Verify
+ * the recipient before signing.
+ *
+ * @param params Parameters for transferring a position
+ * @returns The serialized intent message as Uint8Array
+ */
+export function generateTransferPositionIntentMessage(params: {
+  userPublicKey: string;
+  lpIdentityPublicKey: string;
+  newOwnerPublicKey: string;
+  tickLower?: number;
+  tickUpper?: number;
+  lpTokensToTransfer?: string;
+  nonce: string;
+}): Uint8Array {
+  // Compare on lowercase so a different-case encoding of the same
+  // compressed pubkey can't smuggle a self-transfer past this guard. The
+  // server-side comparison is on the parsed PublicKey curve point (case-
+  // insensitive by construction); mirror that here so the signature is
+  // never produced for what the server will reject.
+  if (
+    params.newOwnerPublicKey.toLowerCase() ===
+    params.userPublicKey.toLowerCase()
+  ) {
+    throw new Error(
+      "Self-transfer not allowed: newOwnerPublicKey must differ from userPublicKey"
+    );
+  }
+
+  // V3 shape: both ticks present and integer. V2 shape: both absent +
+  // lpTokensToTransfer present. Mixed shape (one tick set, the other not)
+  // is rejected up front so a malformed signature is never produced.
+  //
+  // Number.isInteger guards against NaN, Infinity, and non-integer values
+  // — JSON.stringify would serialize a NaN tick to `null`, producing a
+  // signed intent whose hash won't match what the server reconstructs.
+  // Failing fast here gives the caller a clear local error.
+  const tlSet = params.tickLower !== undefined && params.tickLower !== null;
+  const tuSet = params.tickUpper !== undefined && params.tickUpper !== null;
+  if (tlSet !== tuSet) {
+    throw new Error(
+      "tickLower and tickUpper must both be provided for V3, or both omitted for V2"
+    );
+  }
+  // V2 shape requires lpTokensToTransfer; V3 shape requires the tick pair.
+  // Refusing the all-empty case here mirrors the gateway's "Provide either
+  // V3 tickLower+tickUpper or V2 lpTokensToTransfer" reject.
+  const lpAmountSet =
+    params.lpTokensToTransfer !== undefined &&
+    params.lpTokensToTransfer !== null &&
+    params.lpTokensToTransfer.length > 0;
+  if (!tlSet && !tuSet && !lpAmountSet) {
+    throw new Error(
+      "Provide either V3 tickLower+tickUpper or V2 lpTokensToTransfer; neither was supplied"
+    );
+  }
+  if (tlSet && tuSet && lpAmountSet) {
+    throw new Error(
+      "lpTokensToTransfer (V2) cannot be combined with tickLower/tickUpper (V3); use one or the other"
+    );
+  }
+  if (tlSet && tuSet) {
+    const tl = params.tickLower as number;
+    const tu = params.tickUpper as number;
+    if (!Number.isInteger(tl) || !Number.isInteger(tu)) {
+      throw new Error(
+        `Invalid tick value: tickLower=${tl}, tickUpper=${tu}; both must be integers`
+      );
+    }
+    if (tl >= tu) {
+      throw new Error("tickLower must be less than tickUpper");
+    }
+  }
+
+  // V2 amount must be a non-empty positive-integer string. Mirrors the
+  // gateway and TEE guards so all three layers agree on what a "valid
+  // V2 transfer amount" is. Reject sign, decimal point, scientific
+  // notation, leading zeros, whitespace, or any non-digit character.
+  if (lpAmountSet) {
+    const raw = params.lpTokensToTransfer as string;
+    const valid =
+      raw.length > 0 &&
+      /^[1-9][0-9]*$/.test(raw); // strict positive integer, no leading zeros, no "0"
+    if (!valid) {
+      throw new Error(
+        `Invalid lpTokensToTransfer: ${raw}; must be a positive integer string (digits only, no sign, no decimals, no leading zeros)`
+      );
+    }
+  }
+
+  const intentMessage = {
+    userPublicKey: params.userPublicKey,
+    lpIdentityPublicKey: params.lpIdentityPublicKey,
+    newOwnerPublicKey: params.newOwnerPublicKey,
+    tickLower: params.tickLower ?? null,
+    tickUpper: params.tickUpper ?? null,
+    lpTokensToTransfer: params.lpTokensToTransfer ?? null,
+    nonce: params.nonce,
+  };
+
+  return new TextEncoder().encode(JSON.stringify(intentMessage));
+}
