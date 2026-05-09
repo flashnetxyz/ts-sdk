@@ -58,7 +58,7 @@ import type { ClientEnvironment, SparkNetworkType } from "../types";
  * payload as a 64-char lowercase hex string (32 bytes, no `0x` prefix).
  *
  * We require the bech32m form as input: given a hex string we could
- * re-encode to bech32m only if we knew the Spark network, and the AMM
+ * re-encode to bech32m only if we knew the Spark network, and the trading
  * client intentionally doesn't carry that. The bech32m prefix
  * (`btkn`/`btknt`/`btkns`/`btknrt`) tells us the network unambiguously.
  */
@@ -122,10 +122,10 @@ const DEFAULT_APPROVE_GAS_LIMIT = 100_000n;
 const WEI_PER_SAT = 10_000_000_000n;
 
 /**
- * AMM-specific configuration.
+ * Configuration for the {@link TradingClient}.
  *
- * For known networks pass a preset name (see {@link AMMNetwork}) instead
- * of building this object by hand.
+ * For known networks pass a preset name (see {@link ClientEnvironment})
+ * instead of building this object by hand.
  */
 export interface TradingConfig {
   /** Conductor proxy contract address. */
@@ -252,7 +252,7 @@ const AMM_ENVIRONMENT_CONFIGS: Partial<Record<ClientEnvironment, TradingConfig>>
 };
 
 /**
- * High-level AMM client for Flashnet DEX operations.
+ * High-level trading client for Flashnet DEX operations.
  *
  * Wraps the Conductor contract interactions and delegates to
  * ExecutionClient for intent submission and EVM signing.
