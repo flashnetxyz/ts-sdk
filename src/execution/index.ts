@@ -67,6 +67,7 @@ export {
   fetchNativeBalance,
   fetchAllowance,
   fetchNonce,
+  fetchEip1559Fees,
   type TokenInfo,
 } from "./evm";
 
