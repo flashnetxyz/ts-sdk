@@ -31,7 +31,7 @@ const createPackageJson = (type) => ({
 export default [
   // ESM build
   {
-    input: "index.ts",
+    input: ["index.ts", "src/execution/index.ts"],
     external,
     output: {
       dir: "dist/esm",
@@ -57,7 +57,7 @@ export default [
   },
   // CJS build
   {
-    input: "index.ts",
+    input: ["index.ts", "src/execution/index.ts"],
     external,
     output: {
       dir: "dist/cjs",
