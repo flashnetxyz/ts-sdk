@@ -38,6 +38,7 @@ import {
 } from "viem";
 import { sha256 } from "@noble/hashes/sha2";
 import { bytesToHex } from "@noble/curves/abstract/utils";
+import type { NetworkType } from "@buildonspark/spark-sdk";
 import { sparkWalletToEvmAccount, getWalletSigner, type SparkWalletInput } from "./spark-evm-account";
 import type { LocalAccount } from "viem/accounts";
 import { encodeWithdrawSats, encodeWithdrawToken } from "./gateway";
@@ -139,6 +140,60 @@ export interface ExecutionClientConfig {
   rpcUrl: string;
   /** Chain ID of the Flashnet EVM network. */
   chainId: number;
+}
+
+/**
+ * Built-in execution-chain endpoints keyed by the SparkWallet's network
+ * type. When the consumer instantiates `new ExecutionClient(wallet)`
+ * without an explicit config, the constructor reads
+ * `wallet.getNetworkType()` and uses the matching entry here.
+ *
+ * Localnet has no preset because its ports are randomized per run; pass
+ * an explicit `ExecutionClientConfig` for localnet flows.
+ */
+export const EXECUTION_NETWORK_CONFIGS: Partial<
+  Record<NetworkType, ExecutionClientConfig>
+> = {
+  // Staging cluster on Spark regtest. The gateway proxies both
+  // `/api/v1/*` and JSON-RPC at the same host.
+  REGTEST: {
+    gatewayUrl: "https://execution.makebitcoingreatagain.dev",
+    rpcUrl: "https://execution.makebitcoingreatagain.dev",
+    chainId: 21022,
+  },
+  // MAINNET, TESTNET, SIGNET, LOCAL: not deployed yet. Consumers
+  // targeting those networks must pass an explicit config until the
+  // mapping is filled in.
+};
+
+/**
+ * The wallet exposes its network via the protected `config` service.
+ * Reach through a focused interface so the cast is contained.
+ */
+interface SparkWalletWithConfig {
+  config: { getNetworkType(): NetworkType };
+}
+
+/**
+ * Resolve an ExecutionClientConfig for the wallet's network. The
+ * optional `override` is shallow-merged on top so consumers can swap a
+ * single field (e.g. local rpcUrl) without restating the rest.
+ */
+function resolveExecutionConfig(
+  wallet: SparkWalletInput,
+  override?: Partial<ExecutionClientConfig>
+): ExecutionClientConfig {
+  const network = (wallet as unknown as SparkWalletWithConfig).config.getNetworkType();
+  const preset = EXECUTION_NETWORK_CONFIGS[network];
+  const merged = { ...preset, ...override } as Partial<ExecutionClientConfig>;
+  if (!merged.gatewayUrl || !merged.rpcUrl || merged.chainId === undefined) {
+    throw new Error(
+      `ExecutionClient: no built-in execution endpoints for SparkWallet ` +
+        `network "${network}". Pass an explicit ` +
+        `{ gatewayUrl, rpcUrl, chainId } as the second argument.`
+    );
+  }
+  return merged as ExecutionClientConfig;
 }
 
 /**
@@ -281,15 +336,23 @@ export class ExecutionClient {
   private networkInfoInFlight: Promise<NetworkInfo> | null = null;
 
   /**
-   * @param wallet - SparkWallet instance (identity key used for auth + EVM signing).
-   * @param config - Explicit endpoint configuration: gatewayUrl, rpcUrl,
-   *   chainId. The execution-chain contract address is fetched at runtime
-   *   via `getNetworkInfo()`; consumers no longer carry their own copy.
+   * @param wallet - SparkWallet instance. The identity key is used for
+   *   gateway auth and EVM signing. The wallet's network
+   *   (`wallet.getNetworkType()`) drives the default endpoints.
+   * @param config - Optional override for `{ gatewayUrl, rpcUrl, chainId }`.
+   *   Omit to use the built-in preset for the wallet's network (see
+   *   {@link EXECUTION_NETWORK_CONFIGS}). Pass an object to point at
+   *   localnet or a custom deployment; fields you don't override are
+   *   pulled from the preset.
    */
-  constructor(wallet: SparkWalletInput, config: ExecutionClientConfig) {
+  constructor(
+    wallet: SparkWalletInput,
+    config?: Partial<ExecutionClientConfig>
+  ) {
+    const resolved = resolveExecutionConfig(wallet, config);
     this.config = {
-      ...config,
-      gatewayUrl: config.gatewayUrl.replace(/\/+$/, ""),
+      ...resolved,
+      gatewayUrl: resolved.gatewayUrl.replace(/\/+$/, ""),
     };
     this.wallet = wallet;
     this.signer = sparkWalletToExecutionSigner(wallet);
