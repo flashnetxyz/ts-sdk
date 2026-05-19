@@ -24,8 +24,8 @@ export interface Deposit {
    * When present, the gateway re-verifies the proof on `/execute` before
    * forwarding the intent. When absent, the intent falls back to the
    * legacy admission path that polls the operator side until confirmation.
-   * Higher-level callers should prefer `ExecutionClient.depositWithProofs`,
-   * which fetches proofs and attaches them in one call.
+   * Higher-level callers should prefer {@link ExecutionClient.deposit},
+   * which auto-fetches and attaches proofs before submitting the intent.
    */
   depositProof?: SignedDepositProof;
 }
@@ -33,11 +33,12 @@ export interface Deposit {
 /**
  * Signed deposit proof returned by `POST /api/v1/verifyDeposit`.
  *
- * `payloadBytes` is an opaque byte string (lowercase hex, no 0x prefix)
- * carrying the canonical proof payload. `signature` is the compact ECDSA
- * signature over that payload as 64 lowercase hex bytes (no 0x prefix).
- * Callers should treat both fields as opaque and pass the value through
- * unchanged when submitting the intent.
+ * Both fields are hex-encoded byte strings; the gateway accepts the
+ * value with or without a leading `0x` and emits it with the prefix.
+ * `payloadBytes` is opaque (canonical proof payload, variable length)
+ * and `signature` is the compact 64-byte ECDSA signature over it.
+ * Callers should treat both fields as opaque and pass the value
+ * through unchanged when submitting the intent.
  */
 export interface SignedDepositProof {
   payloadBytes: string;

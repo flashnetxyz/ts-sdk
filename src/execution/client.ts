@@ -49,7 +49,6 @@ import type {
   DepositRejection,
   ExecuteResponse,
   ExecutionSigner,
-  IndexedDepositProof,
   IntentStatus,
   IntentStatusResponse,
   NetworkInfo,
@@ -492,16 +491,17 @@ export class ExecutionClient {
     // Validate the shape of any pre-attached proof so a malformed
     // `depositProof` (wrong-length signature, etc.) fails here with a
     // clear message rather than being rejected by the gateway after
-    // the intent is signed.
+    // the intent is signed. The gateway accepts both `0x`-prefixed
+    // and bare hex - so does this check.
     for (let i = 0; i < deposits.length; i++) {
       const proof = deposits[i]!.depositProof;
       if (proof) {
-        if (!proof.payloadBytes || typeof proof.payloadBytes !== "string") {
-          throw new Error(`deposits[${i}].depositProof.payloadBytes is missing or not a string`);
+        if (typeof proof.payloadBytes !== "string" || proof.payloadBytes.trim() === "") {
+          throw new Error(`deposits[${i}].depositProof.payloadBytes is missing or empty`);
         }
-        if (typeof proof.signature !== "string" || !/^[0-9a-fA-F]{128}$/.test(proof.signature)) {
+        if (typeof proof.signature !== "string" || !SIGNATURE_HEX_RE.test(proof.signature)) {
           throw new Error(
-            `deposits[${i}].depositProof.signature must be 64 hex bytes (128 chars)`
+            `deposits[${i}].depositProof.signature must be 64 hex bytes (128 chars, optional 0x prefix)`
           );
         }
       }
@@ -557,12 +557,14 @@ export class ExecutionClient {
     }
 
     if (response.rejections.length > 0) {
-      const summary = response.rejections
-        .map((r) => `[${missing[r.index] ?? r.index}] ${r.sparkTransferId}: ${r.reason} (${r.message})`)
-        .join("; ");
-      throw new Error(
-        `verifyDeposit returned ${response.rejections.length} rejection(s): ${summary}`
-      );
+      // Re-index rejections to the original deposit positions so
+      // callers can pair them with their `deposits[]` array by index
+      // without knowing about the internal `missing` projection.
+      const remapped: DepositRejection[] = response.rejections.map((r) => ({
+        ...r,
+        index: missing[r.index] ?? r.index,
+      }));
+      throw new VerifyDepositRejectedError(remapped);
     }
     if (response.proofs.length !== missing.length) {
       throw new Error(
@@ -571,7 +573,7 @@ export class ExecutionClient {
     }
 
     const proofByMissingIndex = new Map<number, SignedDepositProof>();
-    for (const p of response.proofs as IndexedDepositProof[]) {
+    for (const p of response.proofs) {
       proofByMissingIndex.set(p.index, p.proof);
     }
 
@@ -1049,6 +1051,28 @@ function isGatewayUnavailable(err: unknown): boolean {
   if (!(err instanceof Error)) return false;
   return /failed \(503\)/.test(err.message);
 }
+
+/**
+ * Thrown when `/verifyDeposit` returns per-transfer rejections. The
+ * `rejections` field carries the structured details so callers can
+ * branch programmatically on `reason` (e.g. retry on
+ * `transfer_not_found`, alert on `condition_a_failed`) instead of
+ * parsing the message string.
+ */
+export class VerifyDepositRejectedError extends Error {
+  readonly rejections: DepositRejection[];
+  constructor(rejections: DepositRejection[]) {
+    const summary = rejections
+      .map((r) => `[${r.index}] ${r.sparkTransferId}: ${r.reason} (${r.message})`)
+      .join("; ");
+    super(`verifyDeposit returned ${rejections.length} rejection(s): ${summary}`);
+    this.name = "VerifyDepositRejectedError";
+    this.rejections = rejections;
+  }
+}
+
+/** Hex-with-optional-0x of exactly 64 bytes (128 hex chars). */
+const SIGNATURE_HEX_RE = /^(0x|0X)?[0-9a-fA-F]{128}$/;
 
 function validateDeposits(deposits: Deposit[]): void {
   if (deposits.length === 0) {

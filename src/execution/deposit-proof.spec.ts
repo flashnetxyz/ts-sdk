@@ -1,7 +1,7 @@
 /**
  * Tests for the deposit-proof types, helpers, and auto-attach flow.
  */
-import { ExecutionClient } from "./client";
+import { ExecutionClient, VerifyDepositRejectedError } from "./client";
 import {
   generateProofNonce,
   type SignedDepositProof,
@@ -48,9 +48,18 @@ function errorResponse(status: number, body = ""): Response {
   });
 }
 
+// Bare-hex shape (the gateway accepts both bare and 0x-prefixed on input).
 const SAMPLE_PROOF: SignedDepositProof = {
   payloadBytes: "deadbeef",
   signature: "ab".repeat(64),
+};
+
+// 0x-prefixed shape (the gateway emits this on /verifyDeposit responses
+// via serde_bytes_hex, so any proof flowing through the BYO path will
+// carry the prefix).
+const SAMPLE_PROOF_0X: SignedDepositProof = {
+  payloadBytes: "0xdeadbeef",
+  signature: "0x" + "ab".repeat(64),
 };
 
 afterEach(() => {
@@ -229,7 +238,7 @@ describe("ExecutionClient.deposit auto-attach flow", () => {
     expect(body.deposits[0].depositProof).toBeUndefined();
   });
 
-  it("rejects when /verifyDeposit returns a rejection", async () => {
+  it("rejects with a typed VerifyDepositRejectedError carrying structured rejections", async () => {
     const verifyResp: VerifyDepositsResponse = {
       proofs: [],
       rejections: [
@@ -246,8 +255,9 @@ describe("ExecutionClient.deposit auto-attach flow", () => {
     );
     const client = authenticatedClient(fetchMock);
 
-    await expect(
-      client.deposit({
+    let caught: unknown;
+    try {
+      await client.deposit({
         deposits: [
           {
             sparkTransferId: "a1b2c3d4e5f60718a1b2c3d4e5f60718",
@@ -256,8 +266,15 @@ describe("ExecutionClient.deposit auto-attach flow", () => {
           },
         ],
         recipient: "0x" + "01".repeat(20),
-      })
-    ).rejects.toThrow(/condition_a_failed/);
+      });
+    } catch (e) {
+      caught = e;
+    }
+    expect(caught).toBeInstanceOf(VerifyDepositRejectedError);
+    const rej = (caught as VerifyDepositRejectedError).rejections;
+    expect(rej).toHaveLength(1);
+    expect(rej[0]?.reason).toBe("condition_a_failed");
+    expect(rej[0]?.index).toBe(0);
 
     // /execute was never reached.
     expect(
@@ -265,6 +282,43 @@ describe("ExecutionClient.deposit auto-attach flow", () => {
         String(c[0]).endsWith("/api/v1/execute")
       )
     ).toBe(false);
+  });
+
+  it("accepts a 0x-prefixed pre-attached proof (server response shape)", async () => {
+    // The gateway emits proofs with a leading `0x` on payloadBytes
+    // and signature via serde_bytes_hex. Confirm the SDK doesn't
+    // reject a proof captured directly from /verifyDeposit and
+    // re-passed on /execute via the BYO path.
+    const executeResp = {
+      submissionId: "sub-byo",
+      intentId: "0xfeed",
+      status: "accepted",
+    };
+    const fetchMock = jest.fn(async (input: unknown, _init?: unknown) => {
+      const url = String(input);
+      if (url.endsWith("/api/v1/execute")) return okResponse(executeResp);
+      throw new Error(`unexpected URL: ${url}`);
+    });
+    const client = authenticatedClient(fetchMock);
+
+    await client.deposit({
+      nonce: "ffeeddccbbaa99887766554433221100",
+      deposits: [
+        {
+          sparkTransferId: "a1b2c3d4e5f60718a1b2c3d4e5f60718",
+          asset: { type: "btc" },
+          amount: 100_000n,
+          depositProof: SAMPLE_PROOF_0X,
+        },
+      ],
+      recipient: "0x" + "01".repeat(20),
+    });
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    const body = JSON.parse(
+      String((fetchMock.mock.calls[0]![1] as RequestInit).body)
+    );
+    expect(body.deposits[0].depositProof).toEqual(SAMPLE_PROOF_0X);
   });
 
   it("manualProofs:true bypasses /verifyDeposit entirely", async () => {
