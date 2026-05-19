@@ -145,24 +145,42 @@ export interface IntentExpiry {
   expiresAt?: number;
 }
 
+/**
+ * Mixin: opt out of the automatic proof-fetching step that
+ * `deposit` / `execute` perform on any deposit that arrives without a
+ * `depositProof`. Default is `false` (auto-fetch). Set `true` only
+ * when the caller has a reason to skip the verification step entirely
+ * (e.g. a benchmarking probe, or a flow where the gateway is known
+ * not to expose `/verifyDeposit`).
+ */
+export interface ProofOptOut {
+  skipProofs?: boolean;
+}
+
 /** Parameters for a deposit intent. */
-export interface DepositParams extends IntentExpiry {
-  /** Spark transfers funding this deposit. */
+export interface DepositParams extends IntentExpiry, ProofOptOut {
+  /**
+   * Spark transfers funding this deposit. Each entry that arrives
+   * without `depositProof` is automatically verified and proof-bound
+   * before the intent is signed - see `ProofOptOut` to disable.
+   */
   deposits: Deposit[];
   /** EVM address to credit. If omitted, credits the identity key's EVM address. */
   recipient?: string;
   /**
    * Optional explicit nonce (32 lowercase hex chars, no `0x`). When
    * omitted the SDK generates one with {@link generateProofNonce}.
-   * Required to be set explicitly only when the caller is supplying
-   * pre-fetched `depositProof` values on `deposits[]` and needs the
-   * nonce to match the one those proofs were minted with.
+   * Provide this only when the caller already holds matching
+   * `depositProof` values that were minted under a specific nonce.
    */
   nonce?: string;
 }
 
 /**
  * Parameters for {@link ExecutionClient.verifyDeposit}.
+ *
+ * This is the modular escape hatch - most callers should let
+ * `deposit` / `execute` handle proof fetching automatically.
  */
 export interface VerifyDepositParams {
   /**
@@ -177,27 +195,6 @@ export interface VerifyDepositParams {
    * `0x`-prefixed hex; the gateway canonicalises before lookup.
    */
   sparkTransferIds: string[];
-}
-
-/** Parameters for {@link ExecutionClient.depositWithProofs}. */
-export interface DepositWithProofsParams extends IntentExpiry {
-  /**
-   * Spark transfers funding this deposit. `depositProof` on each entry
-   * is populated by the call; callers should leave it unset.
-   */
-  deposits: Deposit[];
-  /** EVM address to credit. If omitted, credits the identity key's EVM address. */
-  recipient?: string;
-}
-
-/** Result of {@link ExecutionClient.depositWithProofs}. */
-export interface DepositWithProofsResult {
-  /** Per-transfer rejections from the verification step (empty on a fully-successful call). */
-  rejections: DepositRejection[];
-  /** The submission record from `/execute`. */
-  submission: ExecuteResponse;
-  /** The nonce that bound the proofs to the intent. */
-  nonce: string;
 }
 
 /** Parameters for a BTC withdrawal. */
@@ -233,11 +230,22 @@ export interface WaitForIntentOptions {
 }
 
 /** Parameters for a raw execute intent (advanced). */
-export interface ExecuteParams extends IntentExpiry {
-  /** Spark transfers to credit before executing. */
+export interface ExecuteParams extends IntentExpiry, ProofOptOut {
+  /**
+   * Spark transfers to credit before executing. Each entry without an
+   * attached `depositProof` is auto-verified before the intent is
+   * signed - see `ProofOptOut` to disable.
+   */
   deposits?: Deposit[];
   /** Hex-encoded signed EVM transaction (RLP-serialized, 0x-prefixed). */
   signedTx: string;
+  /**
+   * Optional explicit nonce (32 lowercase hex chars, no `0x`). When
+   * omitted the SDK generates one. Provide this only when the caller
+   * already holds matching `depositProof` values that were minted
+   * under a specific nonce.
+   */
+  nonce?: string;
 }
 
 /**
@@ -381,14 +389,20 @@ export class ExecutionClient {
 
   /**
    * Submit a deposit intent.
-   * Credits the deposited funds to the specified recipient or the identity key's EVM address.
    *
-   * If `params.deposits[i].depositProof` is populated for every deposit,
-   * the proofs are attached to the request so the gateway can re-verify
-   * them in line. Otherwise the intent is submitted without proofs and
-   * falls back to the legacy admission path. Pass `params.nonce` to
-   * pin the value when supplying pre-fetched proofs; otherwise the SDK
-   * generates one.
+   * Credits the deposited funds to the specified recipient or the
+   * identity key's EVM address. Any deposit that arrives without an
+   * attached `depositProof` is automatically proof-bound first by an
+   * internal `/verifyDeposit` call; the resulting proofs are stitched
+   * into the request the gateway receives. Pass `params.skipProofs:
+   * true` to opt out (rare), or pre-populate `deposits[i].depositProof`
+   * and `params.nonce` if proofs were fetched out of band.
+   *
+   * If the gateway has not enabled proof verification yet (returns
+   * 503) the call falls back to the legacy proofless path. Any
+   * per-transfer rejection from the verification step is surfaced as
+   * an error before the intent is signed - the SDK never silently
+   * drops or downgrades a deposit.
    */
   async deposit(params: DepositParams): Promise<ExecuteResponse> {
     this.requireAuth();
@@ -405,6 +419,7 @@ export class ExecutionClient {
       recipient: recipient.toLowerCase(),
       expiresAt: params.expiresAt,
       nonce: params.nonce,
+      skipProofs: params.skipProofs,
     });
   }
 
@@ -412,11 +427,12 @@ export class ExecutionClient {
    * Verify a batch of Spark transfers and obtain signed deposit proofs
    * for the ones the gateway can confirm.
    *
-   * The returned proofs MUST be attached to the matching entries in
-   * `deposits[].depositProof` when calling `deposit` / `execute` with
-   * the same `params.nonce`; otherwise the gateway will not bind them
-   * to the intent. {@link depositWithProofs} performs both steps in
-   * one call and is the recommended path for most callers.
+   * This is the **modular escape hatch**. `deposit` and `execute`
+   * already call into this method automatically for any deposit that
+   * arrives without a proof, so most callers do not need to invoke it
+   * directly. Reach for it only when the caller wants to inspect
+   * `rejections` before deciding whether to submit, cache proofs for
+   * later use, or otherwise stage the work in multiple steps.
    *
    * Per-transfer failures (transfer not found, condition checks, etc.)
    * land in `rejections[]` rather than aborting the whole request.
@@ -443,61 +459,84 @@ export class ExecutionClient {
   }
 
   /**
-   * Fetch signed deposit proofs and submit a deposit intent in one
-   * call.
+   * Auto-attach proofs for any deposit that arrives without one.
    *
-   * Internally this picks a fresh nonce, calls `verifyDeposit` to
-   * obtain proofs for each transfer, attaches the proofs to the
-   * matching deposits, and submits the intent via `deposit`. If any
-   * transfer is rejected by the verification step, no `/execute` call
-   * is made; instead the result carries `rejections` and an error is
-   * thrown so the caller can branch on the rejection list.
+   * Returns the (possibly mutated) deposit list plus the nonce that
+   * was used. If the caller already passed a nonce we honour it; if
+   * not, and at least one verification call was needed, we generate
+   * a proof-compatible 16-byte hex value via `generateProofNonce()`.
+   *
+   * On 503 from the gateway (proof verification not yet enabled),
+   * the call returns the inputs unchanged so the intent can be
+   * submitted on the legacy path. Any other failure - including a
+   * non-empty `rejections[]` - throws to surface the issue before
+   * the intent is signed.
    */
-  async depositWithProofs(
-    params: DepositWithProofsParams
-  ): Promise<DepositWithProofsResult> {
-    this.requireAuth();
-    validateDeposits(params.deposits);
+  private async resolveProofs(
+    deposits: Deposit[],
+    explicitNonce: string | undefined,
+    skipProofs: boolean | undefined
+  ): Promise<{ deposits: Deposit[]; nonce: string | undefined }> {
+    if (
+      skipProofs ||
+      deposits.length === 0 ||
+      deposits.every((d) => Boolean(d.depositProof))
+    ) {
+      return { deposits, nonce: explicitNonce };
+    }
 
-    const nonce = generateProofNonce();
-    const verify = await this.verifyDeposit({
-      nonce,
-      sparkTransferIds: params.deposits.map((d) => d.sparkTransferId),
-    });
+    const missing = deposits
+      .map((d, i) => (d.depositProof ? -1 : i))
+      .filter((i) => i >= 0);
 
-    if (verify.rejections.length > 0) {
-      const summary = verify.rejections
-        .map((r) => `[${r.index}] ${r.sparkTransferId}: ${r.reason}`)
+    const nonce = explicitNonce ?? generateProofNonce();
+    let response: VerifyDepositsResponse;
+    try {
+      response = await this.verifyDeposit({
+        nonce,
+        sparkTransferIds: missing.map((i) => deposits[i]!.sparkTransferId),
+      });
+    } catch (err) {
+      // Soft-mode fallback: if the gateway does not yet expose
+      // /verifyDeposit it returns 503. Fall through to the legacy
+      // proofless path instead of failing the caller's intent.
+      if (isGatewayUnavailable(err)) {
+        return { deposits, nonce: explicitNonce };
+      }
+      throw err;
+    }
+
+    if (response.rejections.length > 0) {
+      const summary = response.rejections
+        .map((r) => `[${missing[r.index] ?? r.index}] ${r.sparkTransferId}: ${r.reason} (${r.message})`)
         .join("; ");
       throw new Error(
-        `verifyDeposit returned ${verify.rejections.length} rejection(s): ${summary}`
+        `verifyDeposit returned ${response.rejections.length} rejection(s): ${summary}`
       );
     }
-    if (verify.proofs.length !== params.deposits.length) {
+    if (response.proofs.length !== missing.length) {
       throw new Error(
-        `verifyDeposit returned ${verify.proofs.length} proofs for ${params.deposits.length} deposits`
+        `verifyDeposit returned ${response.proofs.length} proofs for ${missing.length} unproven deposits`
       );
     }
 
-    const proofByIndex = new Map<number, SignedDepositProof>();
-    for (const p of verify.proofs as IndexedDepositProof[]) {
-      proofByIndex.set(p.index, p.proof);
+    const proofByMissingIndex = new Map<number, SignedDepositProof>();
+    for (const p of response.proofs as IndexedDepositProof[]) {
+      proofByMissingIndex.set(p.index, p.proof);
     }
-    const depositsWithProofs: Deposit[] = params.deposits.map((d, i) => {
-      const proof = proofByIndex.get(i);
-      if (!proof) {
-        throw new Error(`verifyDeposit response missing proof for index ${i}`);
-      }
-      return { ...d, depositProof: proof };
-    });
 
-    const submission = await this.deposit({
-      deposits: depositsWithProofs,
-      recipient: params.recipient,
-      expiresAt: params.expiresAt,
-      nonce,
-    });
-    return { rejections: [], submission, nonce };
+    const out = deposits.slice();
+    for (let i = 0; i < missing.length; i++) {
+      const originalIndex = missing[i]!;
+      const proof = proofByMissingIndex.get(i);
+      if (!proof) {
+        throw new Error(
+          `verifyDeposit response missing proof for transfer ${out[originalIndex]!.sparkTransferId}`
+        );
+      }
+      out[originalIndex] = { ...out[originalIndex]!, depositProof: proof };
+    }
+    return { deposits: out, nonce };
   }
 
   /**
@@ -568,7 +607,11 @@ export class ExecutionClient {
 
   /**
    * Submit a raw execute intent with a pre-signed EVM transaction.
-   * For advanced use — prefer `withdraw()` or AMMClient methods.
+   * For advanced use - prefer `withdraw()` or AMMClient methods.
+   *
+   * When `params.deposits` is non-empty, the same automatic proof
+   * attachment that `deposit()` does applies here. Set
+   * `params.skipProofs: true` to opt out.
    */
   async execute(params: ExecuteParams): Promise<ExecuteResponse> {
     this.requireAuth();
@@ -590,7 +633,12 @@ export class ExecutionClient {
     return this.submitIntent(
       deposits,
       { type: "execute", signedTxHash: txHash },
-      { evmTransaction: txHex, expiresAt: params.expiresAt }
+      {
+        evmTransaction: txHex,
+        expiresAt: params.expiresAt,
+        nonce: params.nonce,
+        skipProofs: params.skipProofs,
+      }
     );
   }
 
@@ -749,21 +797,31 @@ export class ExecutionClient {
   }
 
   private async submitIntent(
-    deposits: Deposit[],
+    rawDeposits: Deposit[],
     action: CanonicalIntentAction,
     requestAction: {
       recipient?: string;
       evmTransaction?: string;
       expiresAt?: number;
       nonce?: string;
+      skipProofs?: boolean;
     }
   ): Promise<ExecuteResponse> {
+    // Auto-attach proofs for any deposit that arrives without one.
+    // Falls through silently on a 503 from /verifyDeposit (soft-mode
+    // gateway), and throws on any per-transfer rejection.
+    const { deposits, nonce: resolvedNonce } = await this.resolveProofs(
+      rawDeposits,
+      requestAction.nonce,
+      requestAction.skipProofs
+    );
+
     // Default to the 16-byte hex format. UUIDs are still accepted by the
     // gateway on the proofless legacy path, but the proof flow requires
     // 32 lowercase hex chars - using the proof-compatible shape for all
     // new intents lets the same nonce flow into `/verifyDeposit` when
     // proofs are added.
-    const nonce = requestAction.nonce ?? generateProofNonce();
+    const nonce = resolvedNonce ?? generateProofNonce();
     const expiresAt = resolveExpiresAt(requestAction.expiresAt);
 
     const transfers: CanonicalTransferEntry[] = deposits.map((d) => {
@@ -929,6 +987,17 @@ function sleep(ms: number, signal?: AbortSignal): Promise<void> {
     };
     signal?.addEventListener("abort", onAbort, { once: true });
   });
+}
+
+/**
+ * Detect the "endpoint not (yet) available" 503 surface so callers
+ * can fall back to legacy behaviour without leaking the failure.
+ * Pattern-matches the error message thrown by `ExecutionClient.post`
+ * so we don't have to surface response.status through the type layer.
+ */
+function isGatewayUnavailable(err: unknown): boolean {
+  if (!(err instanceof Error)) return false;
+  return /failed \(503\)/.test(err.message);
 }
 
 function validateDeposits(deposits: Deposit[]): void {

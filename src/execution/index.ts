@@ -34,8 +34,7 @@ export {
   type ExecuteParams,
   type WaitForIntentOptions,
   type VerifyDepositParams,
-  type DepositWithProofsParams,
-  type DepositWithProofsResult,
+  type ProofOptOut,
 } from "./client";
 
 // SparkWallet → EVM account adapter

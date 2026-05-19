@@ -1,6 +1,7 @@
 /**
- * Tests for the deposit-proof types and helpers.
+ * Tests for the deposit-proof types, helpers, and auto-attach flow.
  */
+import { ExecutionClient } from "./client";
 import {
   generateProofNonce,
   type SignedDepositProof,
@@ -9,6 +10,52 @@ import {
   type DepositRejection,
   type IndexedDepositProof,
 } from "./types";
+import type { SparkWalletInput } from "./spark-evm-account";
+import { secp256k1 } from "@noble/curves/secp256k1";
+
+const TEST_KEY = new Uint8Array(32);
+TEST_KEY[31] = 1;
+
+function mockWallet(): SparkWalletInput {
+  return {
+    config: {
+      signer: {
+        getIdentityPublicKey: async () =>
+          secp256k1.getPublicKey(TEST_KEY, true),
+        signMessageWithIdentityKey: async () => new Uint8Array(64),
+      },
+    },
+  } as unknown as SparkWalletInput;
+}
+
+const EXEC_CONFIG = {
+  gatewayUrl: "http://localhost:8080",
+  rpcUrl: "http://localhost:8545",
+  chainId: 21022,
+};
+
+function okResponse(body: unknown): Response {
+  return new Response(JSON.stringify(body), {
+    status: 200,
+    headers: { "Content-Type": "application/json" },
+  });
+}
+
+function errorResponse(status: number, body = ""): Response {
+  return new Response(body, {
+    status,
+    statusText: status === 503 ? "Service Unavailable" : "Error",
+  });
+}
+
+const SAMPLE_PROOF: SignedDepositProof = {
+  payloadBytes: "deadbeef",
+  signature: "ab".repeat(64),
+};
+
+afterEach(() => {
+  jest.restoreAllMocks();
+});
 
 describe("generateProofNonce", () => {
   it("returns 32 lowercase hex chars (no 0x, no dashes)", () => {
@@ -24,7 +71,6 @@ describe("generateProofNonce", () => {
     for (let i = 0; i < 64; i++) {
       seen.add(generateProofNonce());
     }
-    // Collision odds on 16 random bytes over 64 draws are negligible.
     expect(seen.size).toBe(64);
   });
 });
@@ -42,11 +88,7 @@ describe("VerifyDeposit type round-trips", () => {
   });
 
   it("a response body with mixed proofs and rejections type-checks", () => {
-    const proof: SignedDepositProof = {
-      payloadBytes: "deadbeef",
-      signature: "00".repeat(64),
-    };
-    const ok: IndexedDepositProof = { index: 0, proof };
+    const ok: IndexedDepositProof = { index: 0, proof: SAMPLE_PROOF };
     const rej: DepositRejection = {
       index: 1,
       sparkTransferId: "00".repeat(16),
@@ -59,5 +101,198 @@ describe("VerifyDeposit type round-trips", () => {
     };
     expect(resp.proofs[0]?.proof.signature).toHaveLength(128);
     expect(resp.rejections[0]?.reason).toBe("transfer_not_found");
+  });
+});
+
+describe("ExecutionClient.deposit auto-attach flow", () => {
+  function authenticatedClient(fetchMock: jest.Mock): ExecutionClient {
+    global.fetch = fetchMock as unknown as typeof fetch;
+    const client = new ExecutionClient(mockWallet(), EXEC_CONFIG);
+    // Bypass the real auth handshake.
+    (client as unknown as { accessToken: string }).accessToken = "test-token";
+    return client;
+  }
+
+  it("calls /verifyDeposit and attaches each proof before /execute", async () => {
+    const verifyResp: VerifyDepositsResponse = {
+      proofs: [{ index: 0, proof: SAMPLE_PROOF }],
+      rejections: [],
+    };
+    const executeResp = {
+      submissionId: "sub-1",
+      intentId: "0xabc",
+      status: "accepted",
+    };
+
+    const fetchMock = jest.fn(async (input: unknown, _init?: unknown) => {
+      const url = String(input);
+      if (url.endsWith("/api/v1/verifyDeposit")) return okResponse(verifyResp);
+      if (url.endsWith("/api/v1/execute")) return okResponse(executeResp);
+      throw new Error(`unexpected URL: ${url}`);
+    });
+
+    const client = authenticatedClient(fetchMock);
+    const result = await client.deposit({
+      deposits: [
+        {
+          sparkTransferId: "a1b2c3d4e5f60718a1b2c3d4e5f60718",
+          asset: { type: "btc" },
+          amount: 100_000n,
+        },
+      ],
+      recipient: "0x" + "01".repeat(20),
+    });
+
+    expect(result.submissionId).toBe("sub-1");
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+
+    // Inspect the /execute body to confirm the proof was forwarded.
+    const executeCall = fetchMock.mock.calls.find((c) =>
+      String(c[0]).endsWith("/api/v1/execute")
+    );
+    if (!executeCall) throw new Error("/execute was not called");
+    const init = executeCall[1] as RequestInit;
+    const body = JSON.parse(String(init.body));
+    expect(body.deposits[0].depositProof).toEqual(SAMPLE_PROOF);
+    // Same nonce on both the /verifyDeposit call and the signed body.
+    const verifyCall = fetchMock.mock.calls.find((c) =>
+      String(c[0]).endsWith("/api/v1/verifyDeposit")
+    );
+    if (!verifyCall) throw new Error("/verifyDeposit was not called");
+    const verifyBody = JSON.parse(String((verifyCall[1] as RequestInit).body));
+    expect(verifyBody.nonce).toBe(body.nonce);
+    // And the nonce conforms to the 16-byte hex shape.
+    expect(verifyBody.nonce).toMatch(/^[0-9a-f]{32}$/);
+  });
+
+  it("skips /verifyDeposit when every deposit arrives with a proof", async () => {
+    const executeResp = {
+      submissionId: "sub-2",
+      intentId: "0xdef",
+      status: "accepted",
+    };
+    const fetchMock = jest.fn(async (input: unknown, _init?: unknown) => {
+      const url = String(input);
+      if (url.endsWith("/api/v1/execute")) return okResponse(executeResp);
+      throw new Error(`unexpected URL: ${url}`);
+    });
+
+    const client = authenticatedClient(fetchMock);
+    await client.deposit({
+      nonce: "ffeeddccbbaa99887766554433221100",
+      deposits: [
+        {
+          sparkTransferId: "a1b2c3d4e5f60718a1b2c3d4e5f60718",
+          asset: { type: "btc" },
+          amount: 100_000n,
+          depositProof: SAMPLE_PROOF,
+        },
+      ],
+      recipient: "0x" + "01".repeat(20),
+    });
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(String(fetchMock.mock.calls[0]![0])).toContain("/api/v1/execute");
+  });
+
+  it("falls back to proofless /execute when /verifyDeposit returns 503", async () => {
+    const executeResp = {
+      submissionId: "sub-3",
+      intentId: "0xfeed",
+      status: "accepted",
+    };
+    const fetchMock = jest.fn(async (input: unknown, _init?: unknown) => {
+      const url = String(input);
+      if (url.endsWith("/api/v1/verifyDeposit")) return errorResponse(503);
+      if (url.endsWith("/api/v1/execute")) return okResponse(executeResp);
+      throw new Error(`unexpected URL: ${url}`);
+    });
+
+    const client = authenticatedClient(fetchMock);
+    const result = await client.deposit({
+      deposits: [
+        {
+          sparkTransferId: "a1b2c3d4e5f60718a1b2c3d4e5f60718",
+          asset: { type: "btc" },
+          amount: 100_000n,
+        },
+      ],
+      recipient: "0x" + "01".repeat(20),
+    });
+
+    expect(result.submissionId).toBe("sub-3");
+    const executeCall = fetchMock.mock.calls.find((c) =>
+      String(c[0]).endsWith("/api/v1/execute")
+    );
+    if (!executeCall) throw new Error("/execute was not called");
+    const body = JSON.parse(String((executeCall[1] as RequestInit).body));
+    expect(body.deposits[0].depositProof).toBeUndefined();
+  });
+
+  it("rejects when /verifyDeposit returns a rejection", async () => {
+    const verifyResp: VerifyDepositsResponse = {
+      proofs: [],
+      rejections: [
+        {
+          index: 0,
+          sparkTransferId: "a1b2c3d4e5f60718a1b2c3d4e5f60718",
+          reason: "condition_a_failed",
+          message: "sender mismatch",
+        },
+      ],
+    };
+    const fetchMock = jest.fn(async (_input: unknown, _init?: unknown) =>
+      okResponse(verifyResp)
+    );
+    const client = authenticatedClient(fetchMock);
+
+    await expect(
+      client.deposit({
+        deposits: [
+          {
+            sparkTransferId: "a1b2c3d4e5f60718a1b2c3d4e5f60718",
+            asset: { type: "btc" },
+            amount: 100_000n,
+          },
+        ],
+        recipient: "0x" + "01".repeat(20),
+      })
+    ).rejects.toThrow(/condition_a_failed/);
+
+    // /execute was never reached.
+    expect(
+      fetchMock.mock.calls.some((c) =>
+        String(c[0]).endsWith("/api/v1/execute")
+      )
+    ).toBe(false);
+  });
+
+  it("skipProofs:true bypasses /verifyDeposit entirely", async () => {
+    const executeResp = {
+      submissionId: "sub-4",
+      intentId: "0xbeef",
+      status: "accepted",
+    };
+    const fetchMock = jest.fn(async (input: unknown, _init?: unknown) => {
+      const url = String(input);
+      if (url.endsWith("/api/v1/execute")) return okResponse(executeResp);
+      throw new Error(`unexpected URL: ${url}`);
+    });
+    const client = authenticatedClient(fetchMock);
+
+    await client.deposit({
+      skipProofs: true,
+      deposits: [
+        {
+          sparkTransferId: "a1b2c3d4e5f60718a1b2c3d4e5f60718",
+          asset: { type: "btc" },
+          amount: 100_000n,
+        },
+      ],
+      recipient: "0x" + "01".repeat(20),
+    });
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(String(fetchMock.mock.calls[0]![0])).toContain("/api/v1/execute");
   });
 });
