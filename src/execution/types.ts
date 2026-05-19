@@ -18,6 +18,87 @@ export interface Deposit {
   asset: DepositAsset;
   /** Amount in base units (sats for BTC, smallest unit for tokens). Use bigint for precision with large token amounts. */
   amount: number | bigint;
+  /**
+   * Optional signed deposit proof obtained from `POST /api/v1/verifyDeposit`.
+   *
+   * When present, the gateway re-verifies the proof on `/execute` before
+   * forwarding the intent. When absent, the intent falls back to the
+   * legacy admission path that polls the operator side until confirmation.
+   * Higher-level callers should prefer `ExecutionClient.depositWithProofs`,
+   * which fetches proofs and attaches them in one call.
+   */
+  depositProof?: SignedDepositProof;
+}
+
+/**
+ * Signed deposit proof returned by `POST /api/v1/verifyDeposit`.
+ *
+ * `payloadBytes` is an opaque byte string (lowercase hex, no 0x prefix)
+ * carrying the canonical proof payload. `signature` is the compact ECDSA
+ * signature over that payload as 64 lowercase hex bytes (no 0x prefix).
+ * Callers should treat both fields as opaque and pass the value through
+ * unchanged when submitting the intent.
+ */
+export interface SignedDepositProof {
+  payloadBytes: string;
+  signature: string;
+}
+
+/**
+ * Request body for `POST /api/v1/verifyDeposit`.
+ *
+ * `nonce` is a 16-byte random value as 32 lowercase hex chars (no `0x`).
+ * The same nonce MUST be used when the intent is later submitted via
+ * `/execute` - the gateway binds the proof to it at sign time and
+ * rechecks it on submission. Use {@link generateProofNonce} to produce
+ * a compatible value.
+ *
+ * Each transfer's `sparkTransferId` may be supplied as a dashed UUID, a
+ * raw hex string (with or without `0x`), or a 64-char hex string for
+ * token transfers. The gateway canonicalises before lookup.
+ */
+export interface VerifyDepositsRequest {
+  nonce: string;
+  transfers: VerifyDepositTransfer[];
+}
+
+/** One transfer in a {@link VerifyDepositsRequest}. */
+export interface VerifyDepositTransfer {
+  sparkTransferId: string;
+}
+
+/**
+ * Response body for `POST /api/v1/verifyDeposit`.
+ *
+ * `proofs` and `rejections` together cover every input transfer by
+ * `index` (zero-based, matching the request order). A transfer never
+ * appears in both. Rejections carry a stable machine-readable `reason`
+ * so callers can branch on it programmatically.
+ */
+export interface VerifyDepositsResponse {
+  proofs: IndexedDepositProof[];
+  rejections: DepositRejection[];
+}
+
+/** One signed proof in a {@link VerifyDepositsResponse}. */
+export interface IndexedDepositProof {
+  index: number;
+  proof: SignedDepositProof;
+}
+
+/** One rejected transfer in a {@link VerifyDepositsResponse}. */
+export interface DepositRejection {
+  index: number;
+  sparkTransferId: string;
+  /**
+   * Stable machine-readable reason. See the gateway docs for the full
+   * enumeration; common values include `transfer_not_found`,
+   * `condition_a_failed`, `condition_b_failed`, `status_terminal`,
+   * `amount_mismatch`, `network_mismatch`, `token_id_mismatch`,
+   * `transfer_too_old`, `decode_error`, `database_error`, `sign_failed`.
+   */
+  reason: string;
+  message: string;
 }
 
 /** Request to submit a deposit-only intent (credit recipient without executing). */
@@ -241,4 +322,20 @@ export function resolveExpiresAt(expiresAt?: number): number {
   return typeof expiresAt === "number" && Number.isFinite(expiresAt)
     ? expiresAt
     : Date.now() + DEFAULT_INTENT_TTL_MS;
+}
+
+/**
+ * Generate a 16-byte random nonce as 32 lowercase hex chars (no `0x`
+ * prefix, no dashes).
+ *
+ * Use this for any intent that will carry signed deposit proofs - the
+ * `/verifyDeposit` endpoint requires exactly this shape and the same
+ * value must flow through to `/execute`. UUID-shaped nonces are still
+ * accepted for proofless intents on the legacy path but cannot be used
+ * with the proof flow.
+ */
+export function generateProofNonce(): string {
+  const bytes = new Uint8Array(16);
+  crypto.getRandomValues(bytes);
+  return Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
 }

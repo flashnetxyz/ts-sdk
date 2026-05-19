@@ -33,6 +33,9 @@ export {
   type WithdrawTokenParams,
   type ExecuteParams,
   type WaitForIntentOptions,
+  type VerifyDepositParams,
+  type DepositWithProofsParams,
+  type DepositWithProofsResult,
 } from "./client";
 
 // SparkWallet → EVM account adapter
@@ -99,17 +102,24 @@ export type {
   CanonicalTransferEntry,
   Deposit,
   DepositAsset,
+  DepositRejection,
   ExecuteResponse,
   ExecutionSigner,
+  IndexedDepositProof,
   IntentStatus,
   IntentStatusResponse,
   NetworkInfo,
+  SignedDepositProof,
   SparkNetworkInfo,
   ExecutionNetworkInfo,
+  VerifyDepositsRequest,
+  VerifyDepositsResponse,
+  VerifyDepositTransfer,
 } from "./types";
 export {
   DEFAULT_INTENT_TTL_MS,
   TERMINAL_INTENT_STATUSES,
+  generateProofNonce,
   isTerminalIntentStatus,
   resolveExpiresAt,
 } from "./types";

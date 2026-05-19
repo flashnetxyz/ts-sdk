@@ -36,17 +36,26 @@ import { sparkWalletToEvmAccount, getWalletSigner, type SparkWalletInput } from 
 import type { LocalAccount } from "viem/accounts";
 import { encodeWithdrawSats, encodeWithdrawToken } from "./gateway";
 import { fetchNonce, fetchEip1559Fees } from "./evm";
-import { isTerminalIntentStatus, resolveExpiresAt } from "./types";
+import {
+  generateProofNonce,
+  isTerminalIntentStatus,
+  resolveExpiresAt,
+} from "./types";
 import type {
   CanonicalIntentAction,
   CanonicalIntentMessage,
   CanonicalTransferEntry,
   Deposit,
+  DepositRejection,
   ExecuteResponse,
   ExecutionSigner,
+  IndexedDepositProof,
   IntentStatus,
   IntentStatusResponse,
   NetworkInfo,
+  SignedDepositProof,
+  VerifyDepositsRequest,
+  VerifyDepositsResponse,
 } from "./types";
 
 /** Conversion factor: 1 sat = 10^10 wei on Flashnet's EVM. */
@@ -142,6 +151,53 @@ export interface DepositParams extends IntentExpiry {
   deposits: Deposit[];
   /** EVM address to credit. If omitted, credits the identity key's EVM address. */
   recipient?: string;
+  /**
+   * Optional explicit nonce (32 lowercase hex chars, no `0x`). When
+   * omitted the SDK generates one with {@link generateProofNonce}.
+   * Required to be set explicitly only when the caller is supplying
+   * pre-fetched `depositProof` values on `deposits[]` and needs the
+   * nonce to match the one those proofs were minted with.
+   */
+  nonce?: string;
+}
+
+/**
+ * Parameters for {@link ExecutionClient.verifyDeposit}.
+ */
+export interface VerifyDepositParams {
+  /**
+   * 16-byte nonce as 32 lowercase hex chars (no `0x`). Use
+   * {@link generateProofNonce} to generate one, then keep it for the
+   * subsequent `/execute` call. UUID-shaped nonces are not accepted on
+   * this endpoint.
+   */
+  nonce: string;
+  /**
+   * Spark transfer ids to verify. Accepts dashed UUID, plain hex, or
+   * `0x`-prefixed hex; the gateway canonicalises before lookup.
+   */
+  sparkTransferIds: string[];
+}
+
+/** Parameters for {@link ExecutionClient.depositWithProofs}. */
+export interface DepositWithProofsParams extends IntentExpiry {
+  /**
+   * Spark transfers funding this deposit. `depositProof` on each entry
+   * is populated by the call; callers should leave it unset.
+   */
+  deposits: Deposit[];
+  /** EVM address to credit. If omitted, credits the identity key's EVM address. */
+  recipient?: string;
+}
+
+/** Result of {@link ExecutionClient.depositWithProofs}. */
+export interface DepositWithProofsResult {
+  /** Per-transfer rejections from the verification step (empty on a fully-successful call). */
+  rejections: DepositRejection[];
+  /** The submission record from `/execute`. */
+  submission: ExecuteResponse;
+  /** The nonce that bound the proofs to the intent. */
+  nonce: string;
 }
 
 /** Parameters for a BTC withdrawal. */
@@ -326,6 +382,13 @@ export class ExecutionClient {
   /**
    * Submit a deposit intent.
    * Credits the deposited funds to the specified recipient or the identity key's EVM address.
+   *
+   * If `params.deposits[i].depositProof` is populated for every deposit,
+   * the proofs are attached to the request so the gateway can re-verify
+   * them in line. Otherwise the intent is submitted without proofs and
+   * falls back to the legacy admission path. Pass `params.nonce` to
+   * pin the value when supplying pre-fetched proofs; otherwise the SDK
+   * generates one.
    */
   async deposit(params: DepositParams): Promise<ExecuteResponse> {
     this.requireAuth();
@@ -341,7 +404,100 @@ export class ExecutionClient {
     return this.submitIntent(params.deposits, action, {
       recipient: recipient.toLowerCase(),
       expiresAt: params.expiresAt,
+      nonce: params.nonce,
     });
+  }
+
+  /**
+   * Verify a batch of Spark transfers and obtain signed deposit proofs
+   * for the ones the gateway can confirm.
+   *
+   * The returned proofs MUST be attached to the matching entries in
+   * `deposits[].depositProof` when calling `deposit` / `execute` with
+   * the same `params.nonce`; otherwise the gateway will not bind them
+   * to the intent. {@link depositWithProofs} performs both steps in
+   * one call and is the recommended path for most callers.
+   *
+   * Per-transfer failures (transfer not found, condition checks, etc.)
+   * land in `rejections[]` rather than aborting the whole request.
+   */
+  async verifyDeposit(
+    params: VerifyDepositParams
+  ): Promise<VerifyDepositsResponse> {
+    this.requireAuth();
+    if (!params.nonce || params.nonce.trim() === "") {
+      throw new Error("nonce is required");
+    }
+    if (!Array.isArray(params.sparkTransferIds) || params.sparkTransferIds.length === 0) {
+      throw new Error("sparkTransferIds must contain at least one entry");
+    }
+    const body: VerifyDepositsRequest = {
+      nonce: params.nonce,
+      transfers: params.sparkTransferIds.map((sparkTransferId) => ({
+        sparkTransferId,
+      })),
+    };
+    return this.post<VerifyDepositsResponse>("/api/v1/verifyDeposit", body, {
+      Authorization: `Bearer ${this.accessToken}`,
+    });
+  }
+
+  /**
+   * Fetch signed deposit proofs and submit a deposit intent in one
+   * call.
+   *
+   * Internally this picks a fresh nonce, calls `verifyDeposit` to
+   * obtain proofs for each transfer, attaches the proofs to the
+   * matching deposits, and submits the intent via `deposit`. If any
+   * transfer is rejected by the verification step, no `/execute` call
+   * is made; instead the result carries `rejections` and an error is
+   * thrown so the caller can branch on the rejection list.
+   */
+  async depositWithProofs(
+    params: DepositWithProofsParams
+  ): Promise<DepositWithProofsResult> {
+    this.requireAuth();
+    validateDeposits(params.deposits);
+
+    const nonce = generateProofNonce();
+    const verify = await this.verifyDeposit({
+      nonce,
+      sparkTransferIds: params.deposits.map((d) => d.sparkTransferId),
+    });
+
+    if (verify.rejections.length > 0) {
+      const summary = verify.rejections
+        .map((r) => `[${r.index}] ${r.sparkTransferId}: ${r.reason}`)
+        .join("; ");
+      throw new Error(
+        `verifyDeposit returned ${verify.rejections.length} rejection(s): ${summary}`
+      );
+    }
+    if (verify.proofs.length !== params.deposits.length) {
+      throw new Error(
+        `verifyDeposit returned ${verify.proofs.length} proofs for ${params.deposits.length} deposits`
+      );
+    }
+
+    const proofByIndex = new Map<number, SignedDepositProof>();
+    for (const p of verify.proofs as IndexedDepositProof[]) {
+      proofByIndex.set(p.index, p.proof);
+    }
+    const depositsWithProofs: Deposit[] = params.deposits.map((d, i) => {
+      const proof = proofByIndex.get(i);
+      if (!proof) {
+        throw new Error(`verifyDeposit response missing proof for index ${i}`);
+      }
+      return { ...d, depositProof: proof };
+    });
+
+    const submission = await this.deposit({
+      deposits: depositsWithProofs,
+      recipient: params.recipient,
+      expiresAt: params.expiresAt,
+      nonce,
+    });
+    return { rejections: [], submission, nonce };
   }
 
   /**
@@ -599,9 +755,15 @@ export class ExecutionClient {
       recipient?: string;
       evmTransaction?: string;
       expiresAt?: number;
+      nonce?: string;
     }
   ): Promise<ExecuteResponse> {
-    const nonce = crypto.randomUUID();
+    // Default to the 16-byte hex format. UUIDs are still accepted by the
+    // gateway on the proofless legacy path, but the proof flow requires
+    // 32 lowercase hex chars - using the proof-compatible shape for all
+    // new intents lets the same nonce flow into `/verifyDeposit` when
+    // proofs are added.
+    const nonce = requestAction.nonce ?? generateProofNonce();
     const expiresAt = resolveExpiresAt(requestAction.expiresAt);
 
     const transfers: CanonicalTransferEntry[] = deposits.map((d) => {
@@ -651,13 +813,23 @@ export class ExecutionClient {
     // Body mirrors the Rust `ExecuteRequest` struct. `amount` is u64 on
     // the Rust side; we emit bigints as numeric literals (not strings)
     // so serde_json parses them as u64 without any serde override.
+    //
+    // Each deposit may optionally carry a `depositProof` populated by
+    // an earlier `/verifyDeposit` call. The gateway re-verifies attached
+    // proofs in line; missing proofs fall through to the legacy path.
     const body: Record<string, unknown> = {
       chainId: this.config.chainId,
-      deposits: deposits.map((d) => ({
-        sparkTransferId: d.sparkTransferId,
-        asset: d.asset,
-        amount: d.amount,
-      })),
+      deposits: deposits.map((d) => {
+        const entry: Record<string, unknown> = {
+          sparkTransferId: d.sparkTransferId,
+          asset: d.asset,
+          amount: d.amount,
+        };
+        if (d.depositProof) {
+          entry.depositProof = d.depositProof;
+        }
+        return entry;
+      }),
       signature,
       nonce,
       expiresAt,
