@@ -267,7 +267,7 @@ describe("ExecutionClient.deposit auto-attach flow", () => {
     ).toBe(false);
   });
 
-  it("skipProofs:true bypasses /verifyDeposit entirely", async () => {
+  it("manualProofs:true bypasses /verifyDeposit entirely", async () => {
     const executeResp = {
       submissionId: "sub-4",
       intentId: "0xbeef",
@@ -281,7 +281,7 @@ describe("ExecutionClient.deposit auto-attach flow", () => {
     const client = authenticatedClient(fetchMock);
 
     await client.deposit({
-      skipProofs: true,
+      manualProofs: true,
       deposits: [
         {
           sparkTransferId: "a1b2c3d4e5f60718a1b2c3d4e5f60718",
@@ -294,5 +294,55 @@ describe("ExecutionClient.deposit auto-attach flow", () => {
 
     expect(fetchMock).toHaveBeenCalledTimes(1);
     expect(String(fetchMock.mock.calls[0]![0])).toContain("/api/v1/execute");
+  });
+
+  it("throws when pre-attached proofs are passed without a matching nonce", async () => {
+    // The SDK cannot reconstruct the nonce that minted a pre-attached
+    // proof, so it must come from the caller. Catch this before
+    // signing rather than letting the gateway reject for a binding
+    // mismatch at submit time.
+    const fetchMock = jest.fn(async (_input: unknown, _init?: unknown) =>
+      okResponse({})
+    );
+    const client = authenticatedClient(fetchMock);
+
+    await expect(
+      client.deposit({
+        deposits: [
+          {
+            sparkTransferId: "a1b2c3d4e5f60718a1b2c3d4e5f60718",
+            asset: { type: "btc" },
+            amount: 100_000n,
+            depositProof: SAMPLE_PROOF,
+          },
+        ],
+        recipient: "0x" + "01".repeat(20),
+      })
+    ).rejects.toThrow(/pre-attached depositProof entries but no nonce/);
+
+    // No HTTP call escaped the SDK.
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("throws on a malformed pre-attached proof signature", async () => {
+    const fetchMock = jest.fn(async () => okResponse({}));
+    const client = authenticatedClient(fetchMock);
+
+    await expect(
+      client.deposit({
+        nonce: "ffeeddccbbaa99887766554433221100",
+        deposits: [
+          {
+            sparkTransferId: "a1b2c3d4e5f60718a1b2c3d4e5f60718",
+            asset: { type: "btc" },
+            amount: 100_000n,
+            depositProof: { payloadBytes: "deadbeef", signature: "tooshort" },
+          },
+        ],
+        recipient: "0x" + "01".repeat(20),
+      })
+    ).rejects.toThrow(/signature must be 64 hex bytes/);
+
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 });

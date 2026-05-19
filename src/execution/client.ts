@@ -146,15 +146,19 @@ export interface IntentExpiry {
 }
 
 /**
- * Mixin: opt out of the automatic proof-fetching step that
- * `deposit` / `execute` perform on any deposit that arrives without a
- * `depositProof`. Default is `false` (auto-fetch). Set `true` only
- * when the caller has a reason to skip the verification step entirely
- * (e.g. a benchmarking probe, or a flow where the gateway is known
- * not to expose `/verifyDeposit`).
+ * "Bring your own proofs" opt-out. When `true`, `deposit` / `execute`
+ * do not fetch any proofs themselves - the caller is responsible for
+ * the entire proof flow, either by pre-attaching `depositProof` to
+ * each entry of `deposits[]` (with a matching `nonce`) or by
+ * deliberately submitting an unproven intent.
+ *
+ * Default is `false`: the SDK auto-fetches proofs for any deposit
+ * that arrives without one. This is the recommended path - reach for
+ * `manualProofs: true` only when you need to drive the verification
+ * step yourself.
  */
 export interface ProofOptOut {
-  skipProofs?: boolean;
+  manualProofs?: boolean;
 }
 
 /** Parameters for a deposit intent. */
@@ -394,9 +398,11 @@ export class ExecutionClient {
    * identity key's EVM address. Any deposit that arrives without an
    * attached `depositProof` is automatically proof-bound first by an
    * internal `/verifyDeposit` call; the resulting proofs are stitched
-   * into the request the gateway receives. Pass `params.skipProofs:
-   * true` to opt out (rare), or pre-populate `deposits[i].depositProof`
-   * and `params.nonce` if proofs were fetched out of band.
+   * into the request the gateway receives. Pass `params.manualProofs:
+   * true` to take over the proof flow (e.g., to inspect rejections,
+   * cache proofs, or submit unproven), or pre-populate
+   * `deposits[i].depositProof` and `params.nonce` if proofs were
+   * fetched out of band.
    *
    * If the gateway has not enabled proof verification yet (returns
    * 503) the call falls back to the legacy proofless path. Any
@@ -419,7 +425,7 @@ export class ExecutionClient {
       recipient: recipient.toLowerCase(),
       expiresAt: params.expiresAt,
       nonce: params.nonce,
-      skipProofs: params.skipProofs,
+      manualProofs: params.manualProofs,
     });
   }
 
@@ -462,26 +468,68 @@ export class ExecutionClient {
    * Auto-attach proofs for any deposit that arrives without one.
    *
    * Returns the (possibly mutated) deposit list plus the nonce that
-   * was used. If the caller already passed a nonce we honour it; if
-   * not, and at least one verification call was needed, we generate
-   * a proof-compatible 16-byte hex value via `generateProofNonce()`.
+   * was used. The nonce contract is strict:
    *
-   * On 503 from the gateway (proof verification not yet enabled),
-   * the call returns the inputs unchanged so the intent can be
-   * submitted on the legacy path. Any other failure - including a
-   * non-empty `rejections[]` - throws to surface the issue before
-   * the intent is signed.
+   * - Any pre-attached `depositProof` must have been minted under a
+   *   specific nonce. The caller MUST supply that nonce as
+   *   `explicitNonce`; otherwise we throw before signing rather than
+   *   let the gateway reject the intent for a binding mismatch.
+   * - When no proofs are pre-attached and we have to fetch them, we
+   *   either honour `explicitNonce` or generate a fresh value via
+   *   `generateProofNonce()`.
+   *
+   * On 503 from the gateway (proof verification not yet enabled), the
+   * call returns the inputs unchanged so the intent can be submitted
+   * on the legacy path. Any other failure - including a non-empty
+   * `rejections[]` - throws to surface the issue before the intent
+   * is signed.
    */
   private async resolveProofs(
     deposits: Deposit[],
     explicitNonce: string | undefined,
-    skipProofs: boolean | undefined
+    manualProofs: boolean | undefined
   ): Promise<{ deposits: Deposit[]; nonce: string | undefined }> {
-    if (
-      skipProofs ||
-      deposits.length === 0 ||
-      deposits.every((d) => Boolean(d.depositProof))
-    ) {
+    // Validate the shape of any pre-attached proof so a malformed
+    // `depositProof` (wrong-length signature, etc.) fails here with a
+    // clear message rather than being rejected by the gateway after
+    // the intent is signed.
+    for (let i = 0; i < deposits.length; i++) {
+      const proof = deposits[i]!.depositProof;
+      if (proof) {
+        if (!proof.payloadBytes || typeof proof.payloadBytes !== "string") {
+          throw new Error(`deposits[${i}].depositProof.payloadBytes is missing or not a string`);
+        }
+        if (typeof proof.signature !== "string" || !/^[0-9a-fA-F]{128}$/.test(proof.signature)) {
+          throw new Error(
+            `deposits[${i}].depositProof.signature must be 64 hex bytes (128 chars)`
+          );
+        }
+      }
+    }
+
+    const hasPreAttached = deposits.some((d) => Boolean(d.depositProof));
+
+    // Pre-attached proofs are bound to a specific nonce the caller
+    // chose when fetching them. We cannot reconstruct that nonce from
+    // the opaque payload bytes, so the caller must thread it through
+    // explicitly. Catching this here avoids a confusing
+    // `ProofBindingMismatch` rejection at submit time.
+    if (hasPreAttached && (!explicitNonce || explicitNonce.trim() === "")) {
+      throw new Error(
+        "deposits include pre-attached depositProof entries but no nonce was supplied. " +
+          "Pass the same nonce that was used when fetching the proofs (e.g. via verifyDeposit)."
+      );
+    }
+
+    // Manual mode (BYO proofs): pass the caller's list through
+    // verbatim. They're responsible for any verification and for
+    // wiring up the nonce.
+    if (manualProofs || deposits.length === 0) {
+      return { deposits, nonce: explicitNonce };
+    }
+
+    // All deposits already have a proof - nothing to fetch.
+    if (deposits.every((d) => Boolean(d.depositProof))) {
       return { deposits, nonce: explicitNonce };
     }
 
@@ -499,7 +547,9 @@ export class ExecutionClient {
     } catch (err) {
       // Soft-mode fallback: if the gateway does not yet expose
       // /verifyDeposit it returns 503. Fall through to the legacy
-      // proofless path instead of failing the caller's intent.
+      // proofless path instead of failing the caller's intent. Any
+      // pre-attached proofs flow through unchanged - the legacy path
+      // ignores `depositProof`.
       if (isGatewayUnavailable(err)) {
         return { deposits, nonce: explicitNonce };
       }
@@ -611,7 +661,7 @@ export class ExecutionClient {
    *
    * When `params.deposits` is non-empty, the same automatic proof
    * attachment that `deposit()` does applies here. Set
-   * `params.skipProofs: true` to opt out.
+   * `params.manualProofs: true` to take over the proof flow yourself.
    */
   async execute(params: ExecuteParams): Promise<ExecuteResponse> {
     this.requireAuth();
@@ -637,7 +687,7 @@ export class ExecutionClient {
         evmTransaction: txHex,
         expiresAt: params.expiresAt,
         nonce: params.nonce,
-        skipProofs: params.skipProofs,
+        manualProofs: params.manualProofs,
       }
     );
   }
@@ -804,7 +854,7 @@ export class ExecutionClient {
       evmTransaction?: string;
       expiresAt?: number;
       nonce?: string;
-      skipProofs?: boolean;
+      manualProofs?: boolean;
     }
   ): Promise<ExecuteResponse> {
     // Auto-attach proofs for any deposit that arrives without one.
@@ -813,7 +863,7 @@ export class ExecutionClient {
     const { deposits, nonce: resolvedNonce } = await this.resolveProofs(
       rawDeposits,
       requestAction.nonce,
-      requestAction.skipProofs
+      requestAction.manualProofs
     );
 
     // Default to the 16-byte hex format. UUIDs are still accepted by the
