@@ -417,16 +417,32 @@ function bytesToLowerHex(bytes: Uint8Array): string {
 }
 
 /**
- * Decode hex string to bytes. Accepts optional `0x` prefix.
+ * Decode hex string to bytes. Accepts optional `0x` prefix. Throws on any
+ * non-hex character (rather than silently coercing to 0, which would
+ * produce a wrong — but valid-length — byte array and a wrong intent id).
  */
 function hexToBytes(hex: string): Uint8Array {
   const s = hex.startsWith("0x") || hex.startsWith("0X") ? hex.slice(2) : hex;
   if (s.length % 2 !== 0) throw new Error(`hex string has odd length: ${hex}`);
+  if (s.length > 0 && !/^[0-9a-fA-F]+$/.test(s)) {
+    throw new Error(`invalid hex string: ${hex}`);
+  }
   const out = new Uint8Array(s.length / 2);
   for (let i = 0; i < out.length; i++) {
     out[i] = parseInt(s.slice(i * 2, i * 2 + 2), 16);
   }
   return out;
+}
+
+/**
+ * Normalize a Spark transfer id (or any id) to bare lowercase hex: strips a
+ * leading `0x`/`0X` and any dashes (dashed-UUID Bitcoin transfer ids). This
+ * mirrors the gateway's `canonicalise_transfer_id_hex`, so the canonical
+ * intent-id preimage hashes the same bytes the gateway parses.
+ */
+function normalizeIdHex(id: string): string {
+  const noPrefix = id.startsWith("0x") || id.startsWith("0X") ? id.slice(2) : id;
+  return noPrefix.replace(/-/g, "");
 }
 
 /**
@@ -508,10 +524,10 @@ export function canonicalIntentId(args: {
   parts.push(cntBuf);
 
   for (const t of args.transfers) {
-    // SparkTransferId canonical_bytes: tag + raw bytes.
-    const idHex = t.transferId.startsWith("0x") || t.transferId.startsWith("0X")
-      ? t.transferId.slice(2)
-      : t.transferId;
+    // SparkTransferId canonical_bytes: tag + raw bytes. Strip `0x` and
+    // dashes (dashed-UUID Bitcoin ids) so the length check and bytes
+    // match the gateway's parsed form.
+    const idHex = normalizeIdHex(t.transferId);
     let idTag: number;
     let idBytes: Uint8Array;
     if (idHex.length === 32) {
@@ -575,9 +591,7 @@ export function canonicalIntentId(args: {
     parts.push(blake3(txBytes));
   } else {
     parts.push(new Uint8Array([0x02]));
-    const idHex = args.action.sparkTxid.startsWith("0x") || args.action.sparkTxid.startsWith("0X")
-      ? args.action.sparkTxid.slice(2)
-      : args.action.sparkTxid;
+    const idHex = normalizeIdHex(args.action.sparkTxid);
     if (idHex.length === 32) {
       parts.push(new Uint8Array([0x00]));
       parts.push(hexToBytes(idHex));

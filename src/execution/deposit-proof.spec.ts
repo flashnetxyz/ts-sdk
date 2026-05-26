@@ -129,6 +129,33 @@ describe("canonicalIntentId", () => {
     });
     expect(a).toEqual(b);
   });
+
+  it("treats a dashed-UUID transferId the same as its bare-hex form", () => {
+    const action: CanonicalIntentAction = {
+      type: "deposit",
+      recipient: RECIPIENT,
+    };
+    const mk = (transferId: string): CanonicalTransferEntry => ({
+      transferId,
+      amount: "0x186a0",
+      asset: { type: "NATIVE_SATS" },
+      depositProof: PLACEHOLDER_DEPOSIT_PROOF,
+    });
+    const dashed = canonicalIntentId({
+      chainId: 21022,
+      transfers: [mk("a1b2c3d4-e5f6-0718-a1b2-c3d4e5f60718")],
+      action,
+      recipientForHash: RECIPIENT,
+    });
+    const bare = canonicalIntentId({
+      chainId: 21022,
+      transfers: [mk("a1b2c3d4e5f60718a1b2c3d4e5f60718")],
+      action,
+      recipientForHash: RECIPIENT,
+    });
+    expect(dashed).toEqual(bare);
+    expect(dashed).toMatch(/^[0-9a-f]{64}$/);
+  });
 });
 
 describe("VerifyDeposit type round-trips", () => {

@@ -29,7 +29,13 @@
  * ```
  */
 
-import { createPublicClient, http, keccak256 as viemKeccak256, type PublicClient } from "viem";
+import {
+  createPublicClient,
+  http,
+  keccak256 as viemKeccak256,
+  recoverTransactionAddress,
+  type PublicClient,
+} from "viem";
 import { sha256 } from "@noble/hashes/sha2";
 import { bytesToHex } from "@noble/curves/abstract/utils";
 import { sparkWalletToEvmAccount, getWalletSigner, type SparkWalletInput } from "./spark-evm-account";
@@ -673,10 +679,17 @@ export class ExecutionClient {
       : `0x${params.signedTx}`;
     const txHash = viemKeccak256(txHex as `0x${string}`);
 
-    // The canonical recipient for the BLAKE3 intent_id is the recovered
-    // signer of the signed tx. For self-signed flows (the SDK signs with
-    // its own identity key) that is the SDK's own EVM address.
-    const account = await this.getEvmAccount();
+    // The canonical recipient for the BLAKE3 intent_id is the RECOVERED
+    // signer of the signed tx — that's exactly what the gateway uses
+    // (`recover_sender_from_signed_tx`). `execute()` accepts arbitrary
+    // externally-signed transactions, so we must not assume the SDK's own
+    // identity account signed it; recovering keeps the intent_id (and any
+    // attached deposit-proof binding) in lockstep with the gateway.
+    // Flashnet withdraw/execute txs are EIP-1559 (0x02-typed); the cast
+    // satisfies viem's serialized-transaction union.
+    const recipientForHash = await recoverTransactionAddress({
+      serializedTransaction: txHex as `0x02${string}`,
+    });
 
     // Pass the normalized txHex to the gateway, not the raw input. If the
     // server recomputes the hash from evmTransaction (it does, for
@@ -688,7 +701,7 @@ export class ExecutionClient {
       { type: "execute", signedTxHash: txHash },
       {
         evmTransaction: txHex,
-        recipientForHash: account.address,
+        recipientForHash,
         expiresAt: params.expiresAt,
         manualProofs: params.manualProofs,
       }
