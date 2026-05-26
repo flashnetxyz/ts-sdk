@@ -3,12 +3,15 @@
  */
 import { ExecutionClient, VerifyDepositRejectedError } from "./client";
 import {
-  generateProofNonce,
+  PLACEHOLDER_DEPOSIT_PROOF,
+  canonicalIntentId,
+  type CanonicalIntentAction,
+  type CanonicalTransferEntry,
+  type DepositRejection,
+  type IndexedDepositProof,
   type SignedDepositProof,
   type VerifyDepositsRequest,
   type VerifyDepositsResponse,
-  type DepositRejection,
-  type IndexedDepositProof,
 } from "./types";
 import type { SparkWalletInput } from "./spark-evm-account";
 import { secp256k1 } from "@noble/curves/secp256k1";
@@ -62,38 +65,83 @@ const SAMPLE_PROOF_0X: SignedDepositProof = {
   signature: "0x" + "ab".repeat(64),
 };
 
+const RECIPIENT = "0x" + "01".repeat(20);
+
 afterEach(() => {
   jest.restoreAllMocks();
 });
 
-describe("generateProofNonce", () => {
-  it("returns 32 lowercase hex chars (no 0x, no dashes)", () => {
-    const n = generateProofNonce();
-    expect(n).toHaveLength(32);
-    expect(n).toMatch(/^[0-9a-f]{32}$/);
-    expect(n.includes("-")).toBe(false);
-    expect(n.startsWith("0x")).toBe(false);
+describe("canonicalIntentId", () => {
+  it("returns 64 lowercase hex chars (32-byte BLAKE3 output)", () => {
+    const id = canonicalIntentId({
+      chainId: 21022,
+      transfers: [],
+      action: { type: "deposit", recipient: RECIPIENT },
+      recipientForHash: RECIPIENT,
+    });
+    expect(id).toHaveLength(64);
+    expect(id).toMatch(/^[0-9a-f]{64}$/);
   });
 
-  it("produces distinct values on successive calls", () => {
-    const seen = new Set<string>();
-    for (let i = 0; i < 64; i++) {
-      seen.add(generateProofNonce());
-    }
-    expect(seen.size).toBe(64);
+  it("changes when the action recipient changes", () => {
+    const a = canonicalIntentId({
+      chainId: 21022,
+      transfers: [],
+      action: { type: "deposit", recipient: RECIPIENT },
+      recipientForHash: RECIPIENT,
+    });
+    const otherRecipient = "0x" + "02".repeat(20);
+    const b = canonicalIntentId({
+      chainId: 21022,
+      transfers: [],
+      action: { type: "deposit", recipient: otherRecipient },
+      recipientForHash: otherRecipient,
+    });
+    expect(a).not.toEqual(b);
+  });
+
+  it("is stable across `depositProof` field changes (proof not in preimage)", () => {
+    const action: CanonicalIntentAction = {
+      type: "deposit",
+      recipient: RECIPIENT,
+    };
+    const baseTransfer: CanonicalTransferEntry = {
+      transferId: "a1b2c3d4e5f60718a1b2c3d4e5f60718",
+      amount: "0x186a0",
+      asset: { type: "NATIVE_SATS" },
+      depositProof: PLACEHOLDER_DEPOSIT_PROOF,
+    };
+    const withProof: CanonicalTransferEntry = {
+      ...baseTransfer,
+      depositProof: SAMPLE_PROOF,
+    };
+    const a = canonicalIntentId({
+      chainId: 21022,
+      transfers: [baseTransfer],
+      action,
+      recipientForHash: RECIPIENT,
+    });
+    const b = canonicalIntentId({
+      chainId: 21022,
+      transfers: [withProof],
+      action,
+      recipientForHash: RECIPIENT,
+    });
+    expect(a).toEqual(b);
   });
 });
 
 describe("VerifyDeposit type round-trips", () => {
   it("a request body shaped per the OpenAPI contract type-checks", () => {
     const req: VerifyDepositsRequest = {
-      nonce: generateProofNonce(),
+      intentId: "0".repeat(64),
       transfers: [
         { sparkTransferId: "a1b2c3d4e5f60718a1b2c3d4e5f60718" },
         { sparkTransferId: "0x" + "ab".repeat(32) },
       ],
     };
     expect(req.transfers).toHaveLength(2);
+    expect(req.intentId).toHaveLength(64);
   });
 
   it("a response body with mixed proofs and rejections type-checks", () => {
@@ -122,7 +170,7 @@ describe("ExecutionClient.deposit auto-attach flow", () => {
     return client;
   }
 
-  it("calls /verifyDeposit and attaches each proof before /execute", async () => {
+  it("calls /verifyDeposit with the canonical intentId and attaches each proof before /execute", async () => {
     const verifyResp: VerifyDepositsResponse = {
       proofs: [{ index: 0, proof: SAMPLE_PROOF }],
       rejections: [],
@@ -149,7 +197,7 @@ describe("ExecutionClient.deposit auto-attach flow", () => {
           amount: 100_000n,
         },
       ],
-      recipient: "0x" + "01".repeat(20),
+      recipient: RECIPIENT,
     });
 
     expect(result.submissionId).toBe("sub-1");
@@ -163,15 +211,37 @@ describe("ExecutionClient.deposit auto-attach flow", () => {
     const init = executeCall[1] as RequestInit;
     const body = JSON.parse(String(init.body));
     expect(body.deposits[0].depositProof).toEqual(SAMPLE_PROOF);
-    // Same nonce on both the /verifyDeposit call and the signed body.
+    // Wire shape: amount is U256 hex, asset uses SCREAMING_SNAKE_CASE tag.
+    expect(body.deposits[0].amount).toBe("0x186a0");
+    expect(body.deposits[0].asset).toEqual({ type: "NATIVE_SATS" });
+    // No top-level `nonce` field — replay defense is structural via intent_id.
+    expect(body.nonce).toBeUndefined();
+
+    // /verifyDeposit body carries the canonical intentId, not a random nonce.
     const verifyCall = fetchMock.mock.calls.find((c) =>
       String(c[0]).endsWith("/api/v1/verifyDeposit")
     );
     if (!verifyCall) throw new Error("/verifyDeposit was not called");
     const verifyBody = JSON.parse(String((verifyCall[1] as RequestInit).body));
-    expect(verifyBody.nonce).toBe(body.nonce);
-    // And the nonce conforms to the 16-byte hex shape.
-    expect(verifyBody.nonce).toMatch(/^[0-9a-f]{32}$/);
+    expect(verifyBody.nonce).toBeUndefined();
+    expect(verifyBody.intentId).toMatch(/^[0-9a-f]{64}$/);
+
+    // The intentId in the verify body matches what the SDK would compute
+    // from the same canonical preimage.
+    const expectedIntentId = canonicalIntentId({
+      chainId: EXEC_CONFIG.chainId,
+      transfers: [
+        {
+          transferId: "a1b2c3d4e5f60718a1b2c3d4e5f60718",
+          amount: "0x186a0",
+          asset: { type: "NATIVE_SATS" },
+          depositProof: PLACEHOLDER_DEPOSIT_PROOF,
+        },
+      ],
+      action: { type: "deposit", recipient: RECIPIENT.toLowerCase() },
+      recipientForHash: RECIPIENT.toLowerCase(),
+    });
+    expect(verifyBody.intentId).toEqual(expectedIntentId);
   });
 
   it("skips /verifyDeposit when every deposit arrives with a proof", async () => {
@@ -188,7 +258,6 @@ describe("ExecutionClient.deposit auto-attach flow", () => {
 
     const client = authenticatedClient(fetchMock);
     await client.deposit({
-      nonce: "ffeeddccbbaa99887766554433221100",
       deposits: [
         {
           sparkTransferId: "a1b2c3d4e5f60718a1b2c3d4e5f60718",
@@ -197,14 +266,14 @@ describe("ExecutionClient.deposit auto-attach flow", () => {
           depositProof: SAMPLE_PROOF,
         },
       ],
-      recipient: "0x" + "01".repeat(20),
+      recipient: RECIPIENT,
     });
 
     expect(fetchMock).toHaveBeenCalledTimes(1);
     expect(String(fetchMock.mock.calls[0]![0])).toContain("/api/v1/execute");
   });
 
-  it("falls back to proofless /execute when /verifyDeposit returns 503", async () => {
+  it("falls back to /execute with a placeholder proof when /verifyDeposit returns 503", async () => {
     const executeResp = {
       submissionId: "sub-3",
       intentId: "0xfeed",
@@ -226,7 +295,7 @@ describe("ExecutionClient.deposit auto-attach flow", () => {
           amount: 100_000n,
         },
       ],
-      recipient: "0x" + "01".repeat(20),
+      recipient: RECIPIENT,
     });
 
     expect(result.submissionId).toBe("sub-3");
@@ -235,7 +304,10 @@ describe("ExecutionClient.deposit auto-attach flow", () => {
     );
     if (!executeCall) throw new Error("/execute was not called");
     const body = JSON.parse(String((executeCall[1] as RequestInit).body));
-    expect(body.deposits[0].depositProof).toBeUndefined();
+    // On 503 the placeholder shape is sent — the gateway's
+    // has_valid_shape() treats it as "not configured" and falls through
+    // to the legacy admission path.
+    expect(body.deposits[0].depositProof).toEqual(PLACEHOLDER_DEPOSIT_PROOF);
   });
 
   it("rejects with a typed VerifyDepositRejectedError carrying structured rejections", async () => {
@@ -265,7 +337,7 @@ describe("ExecutionClient.deposit auto-attach flow", () => {
             amount: 100_000n,
           },
         ],
-        recipient: "0x" + "01".repeat(20),
+        recipient: RECIPIENT,
       });
     } catch (e) {
       caught = e;
@@ -302,7 +374,6 @@ describe("ExecutionClient.deposit auto-attach flow", () => {
     const client = authenticatedClient(fetchMock);
 
     await client.deposit({
-      nonce: "ffeeddccbbaa99887766554433221100",
       deposits: [
         {
           sparkTransferId: "a1b2c3d4e5f60718a1b2c3d4e5f60718",
@@ -311,7 +382,7 @@ describe("ExecutionClient.deposit auto-attach flow", () => {
           depositProof: SAMPLE_PROOF_0X,
         },
       ],
-      recipient: "0x" + "01".repeat(20),
+      recipient: RECIPIENT,
     });
 
     expect(fetchMock).toHaveBeenCalledTimes(1);
@@ -343,39 +414,19 @@ describe("ExecutionClient.deposit auto-attach flow", () => {
           amount: 100_000n,
         },
       ],
-      recipient: "0x" + "01".repeat(20),
+      recipient: RECIPIENT,
     });
 
     expect(fetchMock).toHaveBeenCalledTimes(1);
     expect(String(fetchMock.mock.calls[0]![0])).toContain("/api/v1/execute");
-  });
-
-  it("throws when pre-attached proofs are passed without a matching nonce", async () => {
-    // The SDK cannot reconstruct the nonce that minted a pre-attached
-    // proof, so it must come from the caller. Catch this before
-    // signing rather than letting the gateway reject for a binding
-    // mismatch at submit time.
-    const fetchMock = jest.fn(async (_input: unknown, _init?: unknown) =>
-      okResponse({})
+    // manualProofs skips /verifyDeposit, but the wire requires a
+    // `depositProof` field on every Deposit. The SDK fills missing
+    // proofs with the placeholder shape — has_valid_shape() returns
+    // false, so the gateway falls through to legacy admission.
+    const body = JSON.parse(
+      String((fetchMock.mock.calls[0]![1] as RequestInit).body)
     );
-    const client = authenticatedClient(fetchMock);
-
-    await expect(
-      client.deposit({
-        deposits: [
-          {
-            sparkTransferId: "a1b2c3d4e5f60718a1b2c3d4e5f60718",
-            asset: { type: "btc" },
-            amount: 100_000n,
-            depositProof: SAMPLE_PROOF,
-          },
-        ],
-        recipient: "0x" + "01".repeat(20),
-      })
-    ).rejects.toThrow(/pre-attached depositProof entries but no nonce/);
-
-    // No HTTP call escaped the SDK.
-    expect(fetchMock).not.toHaveBeenCalled();
+    expect(body.deposits[0].depositProof).toEqual(PLACEHOLDER_DEPOSIT_PROOF);
   });
 
   it("throws on a malformed pre-attached proof signature", async () => {
@@ -384,7 +435,6 @@ describe("ExecutionClient.deposit auto-attach flow", () => {
 
     await expect(
       client.deposit({
-        nonce: "ffeeddccbbaa99887766554433221100",
         deposits: [
           {
             sparkTransferId: "a1b2c3d4e5f60718a1b2c3d4e5f60718",
@@ -393,7 +443,7 @@ describe("ExecutionClient.deposit auto-attach flow", () => {
             depositProof: { payloadBytes: "deadbeef", signature: "tooshort" },
           },
         ],
-        recipient: "0x" + "01".repeat(20),
+        recipient: RECIPIENT,
       })
     ).rejects.toThrow(/signature must be 64 hex bytes/);
 

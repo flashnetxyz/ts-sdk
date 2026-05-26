@@ -37,9 +37,12 @@ import type { LocalAccount } from "viem/accounts";
 import { encodeWithdrawSats, encodeWithdrawToken } from "./gateway";
 import { fetchNonce, fetchEip1559Fees } from "./evm";
 import {
-  generateProofNonce,
+  PLACEHOLDER_DEPOSIT_PROOF,
+  canonicalIntentId,
+  depositAssetToWire,
   isTerminalIntentStatus,
   resolveExpiresAt,
+  u256Hex,
 } from "./types";
 import type {
   CanonicalIntentAction,
@@ -170,13 +173,6 @@ export interface DepositParams extends IntentExpiry, ProofOptOut {
   deposits: Deposit[];
   /** EVM address to credit. If omitted, credits the identity key's EVM address. */
   recipient?: string;
-  /**
-   * Optional explicit nonce (32 lowercase hex chars, no `0x`). When
-   * omitted the SDK generates one with {@link generateProofNonce}.
-   * Provide this only when the caller already holds matching
-   * `depositProof` values that were minted under a specific nonce.
-   */
-  nonce?: string;
 }
 
 /**
@@ -184,15 +180,15 @@ export interface DepositParams extends IntentExpiry, ProofOptOut {
  *
  * This is the modular escape hatch - most callers should let
  * `deposit` / `execute` handle proof fetching automatically.
+ *
+ * `intentId` is the canonical BLAKE3 hash of the intent the caller is
+ * about to submit. Compute it via {@link canonicalIntentId} from the
+ * exact canonical transfers + action you intend to sign — the gateway
+ * binds the returned proofs to this value and a mismatch on `/execute`
+ * is a hard rejection.
  */
 export interface VerifyDepositParams {
-  /**
-   * 16-byte nonce as 32 lowercase hex chars (no `0x`). Use
-   * {@link generateProofNonce} to generate one, then keep it for the
-   * subsequent `/execute` call. UUID-shaped nonces are not accepted on
-   * this endpoint.
-   */
-  nonce: string;
+  intentId: string;
   /**
    * Spark transfer ids to verify. Accepts dashed UUID, plain hex, or
    * `0x`-prefixed hex; the gateway canonicalises before lookup.
@@ -242,13 +238,6 @@ export interface ExecuteParams extends IntentExpiry, ProofOptOut {
   deposits?: Deposit[];
   /** Hex-encoded signed EVM transaction (RLP-serialized, 0x-prefixed). */
   signedTx: string;
-  /**
-   * Optional explicit nonce (32 lowercase hex chars, no `0x`). When
-   * omitted the SDK generates one. Provide this only when the caller
-   * already holds matching `depositProof` values that were minted
-   * under a specific nonce.
-   */
-  nonce?: string;
 }
 
 /**
@@ -400,8 +389,8 @@ export class ExecutionClient {
    * into the request the gateway receives. Pass `params.manualProofs:
    * true` to take over the proof flow (e.g., to inspect rejections,
    * cache proofs, or submit unproven), or pre-populate
-   * `deposits[i].depositProof` and `params.nonce` if proofs were
-   * fetched out of band.
+   * `deposits[i].depositProof` if proofs were fetched out of band
+   * against the same canonical intent.
    *
    * If the gateway has not enabled proof verification yet (returns
    * 503) the call falls back to the legacy proofless path. Any
@@ -414,16 +403,17 @@ export class ExecutionClient {
     validateDeposits(params.deposits);
 
     const recipient = params.recipient ?? (await this.getEvmAddress());
+    const recipientLower = recipient.toLowerCase();
 
     const action: CanonicalIntentAction = {
       type: "deposit",
-      recipient: recipient.toLowerCase(),
+      recipient: recipientLower,
     };
 
     return this.submitIntent(params.deposits, action, {
-      recipient: recipient.toLowerCase(),
+      recipient: recipientLower,
+      recipientForHash: recipientLower,
       expiresAt: params.expiresAt,
-      nonce: params.nonce,
       manualProofs: params.manualProofs,
     });
   }
@@ -446,14 +436,14 @@ export class ExecutionClient {
     params: VerifyDepositParams
   ): Promise<VerifyDepositsResponse> {
     this.requireAuth();
-    if (!params.nonce || params.nonce.trim() === "") {
-      throw new Error("nonce is required");
+    if (!params.intentId || params.intentId.trim() === "") {
+      throw new Error("intentId is required");
     }
     if (!Array.isArray(params.sparkTransferIds) || params.sparkTransferIds.length === 0) {
       throw new Error("sparkTransferIds must contain at least one entry");
     }
     const body: VerifyDepositsRequest = {
-      nonce: params.nonce,
+      intentId: params.intentId,
       transfers: params.sparkTransferIds.map((sparkTransferId) => ({
         sparkTransferId,
       })),
@@ -466,28 +456,24 @@ export class ExecutionClient {
   /**
    * Auto-attach proofs for any deposit that arrives without one.
    *
-   * Returns the (possibly mutated) deposit list plus the nonce that
-   * was used. The nonce contract is strict:
+   * Returns the (possibly mutated) deposit list. Pre-attached proofs
+   * are kept as-is; the caller is responsible for ensuring they were
+   * minted against the same canonical intent (same `intentId`). The
+   * gateway will reject mismatched bindings on `/execute`.
    *
-   * - Any pre-attached `depositProof` must have been minted under a
-   *   specific nonce. The caller MUST supply that nonce as
-   *   `explicitNonce`; otherwise we throw before signing rather than
-   *   let the gateway reject the intent for a binding mismatch.
-   * - When no proofs are pre-attached and we have to fetch them, we
-   *   either honour `explicitNonce` or generate a fresh value via
-   *   `generateProofNonce()`.
-   *
-   * On 503 from the gateway (proof verification not yet enabled), the
-   * call returns the inputs unchanged so the intent can be submitted
-   * on the legacy path. Any other failure - including a non-empty
-   * `rejections[]` - throws to surface the issue before the intent
-   * is signed.
+   * On 503 from the gateway (proof verification not yet enabled), each
+   * deposit without a pre-attached proof receives the placeholder
+   * shape so the canonical preimage still includes a `depositProof`
+   * field. The gateway's `has_valid_shape()` check treats placeholders
+   * as "not configured" and falls through to the legacy polling
+   * admission. Any other failure - including a non-empty `rejections[]`
+   * - throws to surface the issue before the intent is signed.
    */
   private async resolveProofs(
     deposits: Deposit[],
-    explicitNonce: string | undefined,
+    intentId: string,
     manualProofs: boolean | undefined
-  ): Promise<{ deposits: Deposit[]; nonce: string | undefined }> {
+  ): Promise<Deposit[]> {
     // Validate the shape of any pre-attached proof so a malformed
     // `depositProof` (wrong-length signature, etc.) fails here with a
     // clear message rather than being rejected by the gateway after
@@ -507,41 +493,25 @@ export class ExecutionClient {
       }
     }
 
-    const hasPreAttached = deposits.some((d) => Boolean(d.depositProof));
-
-    // Pre-attached proofs are bound to a specific nonce the caller
-    // chose when fetching them. We cannot reconstruct that nonce from
-    // the opaque payload bytes, so the caller must thread it through
-    // explicitly. Catching this here avoids a confusing
-    // `ProofBindingMismatch` rejection at submit time.
-    if (hasPreAttached && (!explicitNonce || explicitNonce.trim() === "")) {
-      throw new Error(
-        "deposits include pre-attached depositProof entries but no nonce was supplied. " +
-          "Pass the same nonce that was used when fetching the proofs (e.g. via verifyDeposit)."
-      );
-    }
-
     // Manual mode (BYO proofs): pass the caller's list through
-    // verbatim. They're responsible for any verification and for
-    // wiring up the nonce.
+    // verbatim. They're responsible for any verification.
     if (manualProofs || deposits.length === 0) {
-      return { deposits, nonce: explicitNonce };
+      return deposits;
     }
 
     // All deposits already have a proof - nothing to fetch.
     if (deposits.every((d) => Boolean(d.depositProof))) {
-      return { deposits, nonce: explicitNonce };
+      return deposits;
     }
 
     const missing = deposits
       .map((d, i) => (d.depositProof ? -1 : i))
       .filter((i) => i >= 0);
 
-    const nonce = explicitNonce ?? generateProofNonce();
     let response: VerifyDepositsResponse;
     try {
       response = await this.verifyDeposit({
-        nonce,
+        intentId,
         sparkTransferIds: missing.map((i) => deposits[i]!.sparkTransferId),
       });
     } catch (err) {
@@ -549,9 +519,9 @@ export class ExecutionClient {
       // /verifyDeposit it returns 503. Fall through to the legacy
       // proofless path instead of failing the caller's intent. Any
       // pre-attached proofs flow through unchanged - the legacy path
-      // ignores `depositProof`.
+      // ignores the placeholder shape via `has_valid_shape()`.
       if (isGatewayUnavailable(err)) {
-        return { deposits, nonce: explicitNonce };
+        return deposits;
       }
       throw err;
     }
@@ -588,7 +558,7 @@ export class ExecutionClient {
       }
       out[originalIndex] = { ...out[originalIndex]!, depositProof: proof };
     }
-    return { deposits: out, nonce };
+    return out;
   }
 
   /**
@@ -619,6 +589,7 @@ export class ExecutionClient {
 
     return this.submitIntent([], { type: "execute", signedTxHash: viemKeccak256(signedTx) }, {
       evmTransaction: signedTx,
+      recipientForHash: account.address,
       expiresAt: params.expiresAt,
     });
   }
@@ -653,6 +624,7 @@ export class ExecutionClient {
 
     return this.submitIntent([], { type: "execute", signedTxHash: viemKeccak256(signedTx) }, {
       evmTransaction: signedTx,
+      recipientForHash: account.address,
       expiresAt: params.expiresAt,
     });
   }
@@ -677,6 +649,11 @@ export class ExecutionClient {
       : `0x${params.signedTx}`;
     const txHash = viemKeccak256(txHex as `0x${string}`);
 
+    // The canonical recipient for the BLAKE3 intent_id is the recovered
+    // signer of the signed tx. For self-signed flows (the SDK signs with
+    // its own identity key) that is the SDK's own EVM address.
+    const account = await this.getEvmAccount();
+
     // Pass the normalized txHex to the gateway, not the raw input. If the
     // server recomputes the hash from evmTransaction (it does, for
     // signature verification) the hashes must match — passing the
@@ -687,8 +664,8 @@ export class ExecutionClient {
       { type: "execute", signedTxHash: txHash },
       {
         evmTransaction: txHex,
+        recipientForHash: account.address,
         expiresAt: params.expiresAt,
-        nonce: params.nonce,
         manualProofs: params.manualProofs,
       }
     );
@@ -854,52 +831,66 @@ export class ExecutionClient {
     requestAction: {
       recipient?: string;
       evmTransaction?: string;
+      /**
+       * Canonical recipient used in the BLAKE3 intent-id preimage. For
+       * Deposit it equals `requestAction.recipient`; for Execute it is
+       * the recovered ECDSA signer of `evmTransaction` (for self-signed
+       * flows that is the SDK's own EVM address). Ignored for Clawback.
+       */
+      recipientForHash: string;
       expiresAt?: number;
-      nonce?: string;
       manualProofs?: boolean;
     }
   ): Promise<ExecuteResponse> {
-    // Auto-attach proofs for any deposit that arrives without one.
-    // Falls through silently on a 503 from /verifyDeposit (soft-mode
-    // gateway), and throws on any per-transfer rejection.
-    const { deposits, nonce: resolvedNonce } = await this.resolveProofs(
+    const expiresAt = resolveExpiresAt(requestAction.expiresAt);
+
+    // Build wire-shaped transfers (no proofs yet). The intent_id BLAKE3
+    // preimage does NOT cover `depositProof` or `expiresAt`, so we can
+    // compute the canonical intent id from a proof-less projection and
+    // attach proofs afterwards. See `canonicalIntentId` in ./types.
+    const placeholderTransfers: CanonicalTransferEntry[] = rawDeposits.map((d) => {
+      const amountBig =
+        typeof d.amount === "bigint" ? d.amount : BigInt(d.amount);
+      if (amountBig < 0n) {
+        throw new Error(`deposits[${d.sparkTransferId}].amount must be non-negative`);
+      }
+      return {
+        transferId: d.sparkTransferId,
+        amount: u256Hex(amountBig),
+        asset: depositAssetToWire(d.asset),
+        depositProof: d.depositProof ?? PLACEHOLDER_DEPOSIT_PROOF,
+      };
+    });
+
+    const intentId = canonicalIntentId({
+      chainId: this.config.chainId,
+      transfers: placeholderTransfers,
+      action,
+      recipientForHash: requestAction.recipientForHash,
+      signedTxHex: requestAction.evmTransaction,
+    });
+
+    // Auto-attach proofs for any deposit that arrives without one. The
+    // returned `Deposit[]` is the same caller-facing shape with
+    // `depositProof` populated. Falls through silently on a 503 from
+    // /verifyDeposit (soft-mode gateway), and throws on any
+    // per-transfer rejection.
+    const deposits = await this.resolveProofs(
       rawDeposits,
-      requestAction.nonce,
+      intentId,
       requestAction.manualProofs
     );
 
-    // Default to the 16-byte hex format. UUIDs are still accepted by the
-    // gateway on the proofless legacy path, but the proof flow requires
-    // 32 lowercase hex chars - using the proof-compatible shape for all
-    // new intents lets the same nonce flow into `/verifyDeposit` when
-    // proofs are added.
-    const nonce = resolvedNonce ?? generateProofNonce();
-    const expiresAt = resolveExpiresAt(requestAction.expiresAt);
-
+    // Final canonical transfers with resolved proofs (or placeholders).
     const transfers: CanonicalTransferEntry[] = deposits.map((d) => {
-      // Preserve full u64 precision by carrying bigint all the way to the
-      // canonical JSON. Number() casting would lose precision for any
-      // 18-decimal token amount (1e18 > 2^53). We validate the amount fits
-      // in u64 here; the custom serializer below emits bigints as JSON
-      // numeric literals (which Rust's serde_json parses to u64).
       const amountBig =
         typeof d.amount === "bigint" ? d.amount : BigInt(d.amount);
-      if (amountBig < 0n || amountBig > U64_MAX) {
-        throw new Error(
-          `deposit amount ${d.amount} out of u64 range [0, ${U64_MAX}]`
-        );
-      }
-      const entry: CanonicalTransferEntry = {
+      return {
         transferId: d.sparkTransferId,
-        // Store as bigint so the custom serializer emits it as a numeric
-        // literal preserving full precision.
-        amountSats: amountBig,
-        assetType: d.asset.type === "btc" ? "NativeSats" : "SparkToken",
+        amount: u256Hex(amountBig),
+        asset: depositAssetToWire(d.asset),
+        depositProof: d.depositProof ?? PLACEHOLDER_DEPOSIT_PROOF,
       };
-      if (d.asset.type === "token") {
-        entry.tokenId = d.asset.tokenId;
-      }
-      return entry;
     });
 
     // IMPORTANT: Field order here MUST match the declaration order of
@@ -913,35 +904,29 @@ export class ExecutionClient {
       chainId: this.config.chainId,
       transfers,
       action,
-      nonce,
       expiresAt,
     };
 
     const messageJson = stringifyWithBigint(canonicalMessage);
     const signature = await this.signer.signMessage(messageJson);
 
-    // Body mirrors the Rust `ExecuteRequest` struct. `amount` is u64 on
-    // the Rust side; we emit bigints as numeric literals (not strings)
-    // so serde_json parses them as u64 without any serde override.
+    // Body mirrors the Rust `ExecuteRequest` struct. `amount` is U256
+    // hex on the Rust side; we emit `0x`-prefixed lowercase hex
+    // matching alloy's serde shape.
     //
-    // Each deposit may optionally carry a `depositProof` populated by
-    // an earlier `/verifyDeposit` call. The gateway re-verifies attached
-    // proofs in line; missing proofs fall through to the legacy path.
+    // Each deposit carries a `depositProof` (either the gateway-signed
+    // value from /verifyDeposit, a caller-supplied pre-attached proof,
+    // or the {payloadBytes:"0x", signature:"0x"} placeholder that the
+    // gateway treats as "not configured" via has_valid_shape()).
     const body: Record<string, unknown> = {
       chainId: this.config.chainId,
-      deposits: deposits.map((d) => {
-        const entry: Record<string, unknown> = {
-          sparkTransferId: d.sparkTransferId,
-          asset: d.asset,
-          amount: d.amount,
-        };
-        if (d.depositProof) {
-          entry.depositProof = d.depositProof;
-        }
-        return entry;
-      }),
+      deposits: transfers.map((t) => ({
+        sparkTransferId: t.transferId,
+        amount: t.amount,
+        asset: t.asset,
+        depositProof: t.depositProof,
+      })),
       signature,
-      nonce,
       expiresAt,
     };
 

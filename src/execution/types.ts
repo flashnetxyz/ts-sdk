@@ -5,6 +5,8 @@
  * These map directly to the Rust gateway API types in flashnet-execution.
  */
 
+import { blake3 } from "@noble/hashes/blake3";
+
 /** Asset type for a deposit from Spark into the EVM. */
 export type DepositAsset =
   | { type: "btc" }
@@ -22,10 +24,10 @@ export interface Deposit {
    * Optional signed deposit proof obtained from `POST /api/v1/verifyDeposit`.
    *
    * When present, the gateway re-verifies the proof on `/execute` before
-   * forwarding the intent. When absent, the intent falls back to the
-   * legacy admission path that polls the operator side until confirmation.
-   * Higher-level callers should prefer {@link ExecutionClient.deposit},
-   * which auto-fetches and attaches proofs before submitting the intent.
+   * forwarding the intent. When absent, the SDK either fetches one
+   * automatically (the default) or sends a placeholder shape that the
+   * gateway treats as "not configured" and falls through to the legacy
+   * admission path.
    */
   depositProof?: SignedDepositProof;
 }
@@ -48,18 +50,18 @@ export interface SignedDepositProof {
 /**
  * Request body for `POST /api/v1/verifyDeposit`.
  *
- * `nonce` is a 16-byte random value as 32 lowercase hex chars (no `0x`).
- * The same nonce MUST be used when the intent is later submitted via
- * `/execute` - the gateway binds the proof to it at sign time and
- * rechecks it on submission. Use {@link generateProofNonce} to produce
- * a compatible value.
+ * `intentId` is the canonical 32-byte BLAKE3 hash of the intent the SDK
+ * is about to submit on `/execute`. The returned proofs bind to this
+ * value, so a proof minted for intent A cannot be re-attached to a
+ * request whose body hashes to intent B. Compute it via
+ * {@link canonicalIntentId} from the message you intend to sign.
  *
  * Each transfer's `sparkTransferId` may be supplied as a dashed UUID, a
  * raw hex string (with or without `0x`), or a 64-char hex string for
  * token transfers. The gateway canonicalises before lookup.
  */
 export interface VerifyDepositsRequest {
-  nonce: string;
+  intentId: string;
   transfers: VerifyDepositTransfer[];
 }
 
@@ -268,34 +270,58 @@ export interface ExecutionSigner {
 }
 
 /**
+ * On-the-wire asset variant for canonical transfer entries and
+ * `/execute` request deposits.
+ *
+ * Tagged enum with SCREAMING_SNAKE_CASE variant names, matching the
+ * Rust `Asset` serde shape (`crates/types/intent/src/lib.rs`).
+ */
+export type Asset =
+  | { type: "NATIVE_SATS" }
+  | { type: "SPARK_TOKEN"; tokenId: string };
+
+/**
  * Canonical transfer entry in the signed intent message.
- * Must match the Rust CanonicalTransferEntry serialization (camelCase).
+ *
+ * Mirrors Rust `CanonicalTransferEntry` (camelCase, serde declaration
+ * order: `transferId`, `amount`, `asset`, `depositProof`). The deposit
+ * proof is part of the signed preimage — omitting it on the SDK side
+ * breaks signature verification.
+ *
+ * `amount` is the alloy `U256` JSON shape: `0x`-prefixed lowercase hex
+ * with no leading zeros (`"0x0"` for zero).
  */
 export interface CanonicalTransferEntry {
   transferId: string;
-  amountSats: number | bigint;
-  assetType: "NativeSats" | "SparkToken";
-  tokenId?: string;
+  amount: string;
+  asset: Asset;
+  depositProof: SignedDepositProof;
 }
 
 /**
  * Canonical intent action in the signed intent message.
- * Must match the Rust CanonicalIntentAction serialization
- * (camelCase, internally tagged with "type").
+ *
+ * Internally tagged with `"type"`, lowercase tag names — matches Rust
+ * `CanonicalIntentAction` serde shape (`tag = "type"`, `rename_all =
+ * "camelCase"`).
  */
 export type CanonicalIntentAction =
   | { type: "deposit"; recipient: string }
-  | { type: "execute"; signedTxHash: string };
+  | { type: "execute"; signedTxHash: string }
+  | { type: "clawback"; sparkTxid: string };
 
 /**
  * Canonical intent message that gets signed by the client.
- * Must match the Rust CanonicalIntentMessage serialization (camelCase).
+ *
+ * Field order MUST match Rust `CanonicalIntentMessage` declaration
+ * order: `chainId`, `transfers`, `action`, `expiresAt`. There is no
+ * `nonce` field — replay defense is structural via `intents.intent_id`
+ * uniqueness in the gateway DB (migration 0008).
  */
 export interface CanonicalIntentMessage {
   chainId: number;
   transfers: CanonicalTransferEntry[];
   action: CanonicalIntentAction;
-  nonce: string;
   /**
    * Absolute unix-millisecond timestamp past which the sequencer refuses
    * to admit, include, or settle this intent. Part of the signed preimage
@@ -326,17 +352,234 @@ export function resolveExpiresAt(expiresAt?: number): number {
 }
 
 /**
- * Generate a 16-byte random nonce as 32 lowercase hex chars (no `0x`
- * prefix, no dashes).
+ * Encode a `U256` as the alloy JSON form: `0x` + lowercase hex with no
+ * leading zeros. `0n` is encoded as `"0x0"`.
  *
- * Use this for any intent that will carry signed deposit proofs - the
- * `/verifyDeposit` endpoint requires exactly this shape and the same
- * value must flow through to `/execute`. UUID-shaped nonces are still
- * accepted for proofless intents on the legacy path but cannot be used
- * with the proof flow.
+ * Negative bigints are rejected — `U256` is unsigned.
  */
-export function generateProofNonce(): string {
-  const bytes = new Uint8Array(16);
-  crypto.getRandomValues(bytes);
-  return Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
+export function u256Hex(value: number | bigint): string {
+  const n = typeof value === "bigint" ? value : BigInt(value);
+  if (n < 0n) throw new Error(`u256Hex: negative value ${value}`);
+  return `0x${n.toString(16)}`;
+}
+
+/**
+ * Convert the SDK's user-facing {@link DepositAsset} (lowercase tag) to
+ * the wire {@link Asset} (SCREAMING_SNAKE_CASE tag). The wire `tokenId`
+ * is required to be `0x`-prefixed lowercase 32-byte hex; if the caller
+ * supplies a bare-hex value we prepend `0x`.
+ */
+export function depositAssetToWire(asset: DepositAsset): Asset {
+  if (asset.type === "btc") return { type: "NATIVE_SATS" };
+  const tokenIdHex = asset.tokenId.startsWith("0x")
+    ? asset.tokenId.toLowerCase()
+    : `0x${asset.tokenId.toLowerCase()}`;
+  return { type: "SPARK_TOKEN", tokenId: tokenIdHex };
+}
+
+/**
+ * Placeholder {@link SignedDepositProof} used on the legacy/soft-mode
+ * admission path. The gateway treats any proof that fails
+ * `has_valid_shape()` (empty payload OR non-64-byte signature) as
+ * "not configured" and falls through to the polling admission. The
+ * SDK uses this when `/verifyDeposit` returns 503 or when
+ * `manualProofs: true` is set without an attached proof.
+ */
+export const PLACEHOLDER_DEPOSIT_PROOF: SignedDepositProof = {
+  payloadBytes: "0x",
+  signature: "0x",
+};
+
+/**
+ * Lowercase hex (no `0x`) representation of a byte array.
+ */
+function bytesToLowerHex(bytes: Uint8Array): string {
+  let out = "";
+  for (const b of bytes) out += b.toString(16).padStart(2, "0");
+  return out;
+}
+
+/**
+ * Decode hex string to bytes. Accepts optional `0x` prefix.
+ */
+function hexToBytes(hex: string): Uint8Array {
+  const s = hex.startsWith("0x") || hex.startsWith("0X") ? hex.slice(2) : hex;
+  if (s.length % 2 !== 0) throw new Error(`hex string has odd length: ${hex}`);
+  const out = new Uint8Array(s.length / 2);
+  for (let i = 0; i < out.length; i++) {
+    out[i] = parseInt(s.slice(i * 2, i * 2 + 2), 16);
+  }
+  return out;
+}
+
+/**
+ * Compute the canonical intent id for {@link VerifyDepositsRequest.intentId}
+ * and the on-chain `intents.intent_id` value. BLAKE3 hash of the canonical
+ * preimage described in `crates/types/intent/src/lib.rs:500-548`:
+ *
+ *   tag    = b"FLASHNET_INTENT_V2" (no length prefix)
+ *   chain  = u64 big-endian (8 bytes)
+ *   recipient_for_hash = 20 bytes
+ *     - Deposit  → the recipient address (20 bytes from the 0x-prefixed hex)
+ *     - Execute  → recovered ECDSA signer of the signed tx (provided by caller)
+ *     - Clawback → 20 zero bytes
+ *   transferCount = u32 big-endian (4 bytes)
+ *   for each transfer (declaration order):
+ *     transferId.canonical_bytes:
+ *        0x00 + 16 raw bytes (Bitcoin 32-hex-char id), OR
+ *        0x01 + 32 raw bytes (Token 64-hex-char id)
+ *     amount.to_be_bytes::<32>() = U256 32-byte big-endian
+ *     asset.tag_byte = 0x00 (NativeSats) | 0x01 (SparkToken)
+ *     if SparkToken: 0x01 + 32 raw token-id bytes; else 0x00
+ *   action discriminator + body:
+ *     Deposit   → 0x00
+ *     Execute   → 0x01 + blake3(signedTx-bytes) (32 bytes)
+ *     Clawback  → 0x02 + sparkTxid.canonical_bytes (tag + bytes)
+ *
+ * Note: `expiresAt` and per-transfer `depositProof` are NOT part of the
+ * BLAKE3 preimage — they live only on the JSON signed-preimage.
+ *
+ * `recipientForHash` must be the canonical 20-byte recipient determined
+ * by the action variant — the caller is responsible for recovering the
+ * ECDSA signer for Execute actions; pass `0x` + 40 zero hex for Clawback.
+ */
+export function canonicalIntentId(args: {
+  chainId: number | bigint;
+  transfers: CanonicalTransferEntry[];
+  action: CanonicalIntentAction;
+  /**
+   * For Deposit: the 0x-prefixed recipient address.
+   * For Execute: the ECDSA-recovered signer of the signed transaction (0x-prefixed 20-byte hex).
+   * For Clawback: ignored; the canonical recipient is the zero address.
+   */
+  recipientForHash: string;
+  /**
+   * For Execute: the raw signed-transaction bytes (hex, with or without
+   * `0x`). Hashed with BLAKE3 to form the action body. Ignored for
+   * Deposit / Clawback.
+   */
+  signedTxHex?: string;
+}): string {
+  const parts: Uint8Array[] = [];
+  parts.push(new TextEncoder().encode("FLASHNET_INTENT_V2"));
+
+  const chain = BigInt(args.chainId);
+  if (chain < 0n || chain > 0xffffffffffffffffn) {
+    throw new Error(`chainId out of u64 range: ${args.chainId}`);
+  }
+  const chainBuf = new Uint8Array(8);
+  new DataView(chainBuf.buffer).setBigUint64(0, chain, false);
+  parts.push(chainBuf);
+
+  // recipient_for_hash: 20 bytes
+  let recipientBytes: Uint8Array;
+  if (args.action.type === "clawback") {
+    recipientBytes = new Uint8Array(20);
+  } else {
+    const rec = args.recipientForHash;
+    const recHex = rec.startsWith("0x") || rec.startsWith("0X") ? rec.slice(2) : rec;
+    if (recHex.length !== 40) {
+      throw new Error(`recipientForHash must be 20 bytes (40 hex chars): got ${rec}`);
+    }
+    recipientBytes = hexToBytes(recHex);
+  }
+  parts.push(recipientBytes);
+
+  // transferCount: u32 BE
+  const cntBuf = new Uint8Array(4);
+  new DataView(cntBuf.buffer).setUint32(0, args.transfers.length, false);
+  parts.push(cntBuf);
+
+  for (const t of args.transfers) {
+    // SparkTransferId canonical_bytes: tag + raw bytes.
+    const idHex = t.transferId.startsWith("0x") || t.transferId.startsWith("0X")
+      ? t.transferId.slice(2)
+      : t.transferId;
+    let idTag: number;
+    let idBytes: Uint8Array;
+    if (idHex.length === 32) {
+      idTag = 0x00;
+      idBytes = hexToBytes(idHex);
+    } else if (idHex.length === 64) {
+      idTag = 0x01;
+      idBytes = hexToBytes(idHex);
+    } else {
+      throw new Error(
+        `transferId must be 16 bytes (32 hex chars) or 32 bytes (64 hex chars): got ${t.transferId}`
+      );
+    }
+    parts.push(new Uint8Array([idTag]));
+    parts.push(idBytes);
+
+    // amount: u256 32-byte BE
+    const amtHex = t.amount.startsWith("0x") || t.amount.startsWith("0X")
+      ? t.amount.slice(2)
+      : t.amount;
+    const amt = amtHex === "" ? 0n : BigInt(`0x${amtHex}`);
+    if (amt < 0n) throw new Error(`amount negative: ${t.amount}`);
+    const amtBuf = new Uint8Array(32);
+    let n = amt;
+    for (let i = 31; i >= 0; i--) {
+      amtBuf[i] = Number(n & 0xffn);
+      n >>= 8n;
+    }
+    if (n !== 0n) throw new Error(`amount exceeds 32 bytes: ${t.amount}`);
+    parts.push(amtBuf);
+
+    // asset tag + optional token id
+    if (t.asset.type === "NATIVE_SATS") {
+      parts.push(new Uint8Array([0x00]));
+      parts.push(new Uint8Array([0x00])); // no token id present
+    } else {
+      parts.push(new Uint8Array([0x01]));
+      parts.push(new Uint8Array([0x01]));
+      const tokenIdHex = t.asset.tokenId.startsWith("0x") || t.asset.tokenId.startsWith("0X")
+        ? t.asset.tokenId.slice(2)
+        : t.asset.tokenId;
+      if (tokenIdHex.length !== 64) {
+        throw new Error(`SparkToken tokenId must be 32 bytes (64 hex chars): got ${t.asset.tokenId}`);
+      }
+      parts.push(hexToBytes(tokenIdHex));
+    }
+  }
+
+  // action discriminator + body
+  if (args.action.type === "deposit") {
+    parts.push(new Uint8Array([0x00]));
+  } else if (args.action.type === "execute") {
+    if (!args.signedTxHex) {
+      throw new Error(`canonicalIntentId: execute action requires signedTxHex`);
+    }
+    parts.push(new Uint8Array([0x01]));
+    const txHex = args.signedTxHex.startsWith("0x") || args.signedTxHex.startsWith("0X")
+      ? args.signedTxHex.slice(2)
+      : args.signedTxHex;
+    const txBytes = hexToBytes(txHex);
+    parts.push(blake3(txBytes));
+  } else {
+    parts.push(new Uint8Array([0x02]));
+    const idHex = args.action.sparkTxid.startsWith("0x") || args.action.sparkTxid.startsWith("0X")
+      ? args.action.sparkTxid.slice(2)
+      : args.action.sparkTxid;
+    if (idHex.length === 32) {
+      parts.push(new Uint8Array([0x00]));
+      parts.push(hexToBytes(idHex));
+    } else if (idHex.length === 64) {
+      parts.push(new Uint8Array([0x01]));
+      parts.push(hexToBytes(idHex));
+    } else {
+      throw new Error(`clawback sparkTxid must be 16 or 32 bytes: got ${args.action.sparkTxid}`);
+    }
+  }
+
+  // Concatenate and BLAKE3-hash.
+  let total = 0;
+  for (const p of parts) total += p.length;
+  const buf = new Uint8Array(total);
+  let off = 0;
+  for (const p of parts) {
+    buf.set(p, off);
+    off += p.length;
+  }
+  return bytesToLowerHex(blake3(buf));
 }

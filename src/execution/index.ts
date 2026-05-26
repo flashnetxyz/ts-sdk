@@ -97,6 +97,7 @@ export {
 
 // Types
 export type {
+  Asset,
   CanonicalIntentAction,
   CanonicalIntentMessage,
   CanonicalTransferEntry,
@@ -119,9 +120,12 @@ export type {
 export {
   DEFAULT_INTENT_TTL_MS,
   TERMINAL_INTENT_STATUSES,
-  generateProofNonce,
+  PLACEHOLDER_DEPOSIT_PROOF,
+  canonicalIntentId,
+  depositAssetToWire,
   isTerminalIntentStatus,
   resolveExpiresAt,
+  u256Hex,
 } from "./types";
 
 // Revert reason decoding
