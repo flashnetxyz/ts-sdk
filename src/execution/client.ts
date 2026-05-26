@@ -35,7 +35,7 @@ import { bytesToHex } from "@noble/curves/abstract/utils";
 import { sparkWalletToEvmAccount, getWalletSigner, type SparkWalletInput } from "./spark-evm-account";
 import type { LocalAccount } from "viem/accounts";
 import { encodeWithdrawSats, encodeWithdrawToken } from "./gateway";
-import { fetchNonce, fetchEip1559Fees } from "./evm";
+import { fetchNonce, fetchEip1559Fees, fetchNativeBalance } from "./evm";
 import {
   PLACEHOLDER_DEPOSIT_PROOF,
   canonicalIntentId,
@@ -571,6 +571,29 @@ export class ExecutionClient {
   async withdraw(params: WithdrawParams): Promise<ExecuteResponse> {
     this.requireAuth();
     const account = await this.getEvmAccount();
+
+    // Pre-flight balance guard. A native withdraw moves
+    // `amount * WEI_PER_SAT` wei; gas is zero on Flashnet. If the EVM
+    // balance can't cover the value, the sequencer drops the tx for
+    // "lack of funds" and the intent EXPIRES — but the gateway keeps the
+    // EXPIRED row under the `intent_id` UNIQUE constraint and the EVM
+    // nonce never advances (the tx was never included). The result is a
+    // permanent 409 ("intent_id already submitted") on every identical
+    // retry. Refuse here with a clear message so a withdraw submitted
+    // before its funding deposit has FINALIZED can be retried later
+    // instead of burning its intent_id. (Most common cause: withdrawing
+    // before the deposit credited the recipient.)
+    const value = params.amount * WEI_PER_SAT;
+    const balance = await fetchNativeBalance(this.config.rpcUrl, account.address);
+    if (balance < value) {
+      throw new Error(
+        `insufficient EVM balance for withdraw: have ${balance} wei ` +
+          `(${balance / WEI_PER_SAT} sats), need ${value} wei (${params.amount} sats). ` +
+          `If you just deposited, wait for the deposit intent to reach FINALIZED ` +
+          `(getIntentStatus / waitForIntent) before withdrawing.`
+      );
+    }
+
     const sparkRecipient = await this.getSparkRecipientHex();
     const calldata = encodeWithdrawSats(sparkRecipient);
     const nonce = await fetchNonce(this.config.rpcUrl, account.address);
