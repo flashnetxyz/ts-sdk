@@ -41,6 +41,7 @@ import {
   canonicalIntentId,
   depositAssetToWire,
   isTerminalIntentStatus,
+  normalizeIntentStatus,
   resolveExpiresAt,
   u256Hex,
 } from "./types";
@@ -694,11 +695,17 @@ export class ExecutionClient {
         `gateway ${path} returned HTTP ${resp.status}: ${text}`
       );
     }
+    let parsed: IntentStatusResponse;
     try {
-      return JSON.parse(text) as IntentStatusResponse;
+      parsed = JSON.parse(text) as IntentStatusResponse;
     } catch {
       throw new Error(`gateway ${path} response is not valid JSON: ${text}`);
     }
+    // Canonicalize to SCREAMING_SNAKE_CASE — the gateway is internally
+    // inconsistent (POST /execute emits lowercase "accepted", GET emits
+    // uppercase) and consumers compare against IntentStatus.
+    parsed.status = normalizeIntentStatus(parsed.status as unknown as string);
+    return parsed;
   }
 
   /**
@@ -937,9 +944,13 @@ export class ExecutionClient {
       body.evmTransaction = requestAction.evmTransaction;
     }
 
-    return this.post<ExecuteResponse>("/api/v1/execute", body, {
+    const resp = await this.post<ExecuteResponse>("/api/v1/execute", body, {
       Authorization: `Bearer ${this.accessToken}`,
     });
+    // POST /execute returns the initial status as lowercase "accepted";
+    // canonicalize so callers always see SCREAMING_SNAKE_CASE.
+    resp.status = normalizeIntentStatus(resp.status as unknown as string);
+    return resp;
   }
 
   private requireAuth(): void {

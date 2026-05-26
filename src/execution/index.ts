@@ -124,6 +124,7 @@ export {
   canonicalIntentId,
   depositAssetToWire,
   isTerminalIntentStatus,
+  normalizeIntentStatus,
   resolveExpiresAt,
   u256Hex,
 } from "./types";

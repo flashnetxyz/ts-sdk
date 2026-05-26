@@ -201,6 +201,8 @@ describe("ExecutionClient.deposit auto-attach flow", () => {
     });
 
     expect(result.submissionId).toBe("sub-1");
+    // POST /execute returns lowercase "accepted"; the SDK canonicalizes it.
+    expect(result.status).toBe("ACCEPTED");
     expect(fetchMock).toHaveBeenCalledTimes(2);
 
     // Inspect the /execute body to confirm the proof was forwarded.

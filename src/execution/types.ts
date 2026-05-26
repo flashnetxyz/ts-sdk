@@ -144,38 +144,55 @@ export interface ExecuteResponse {
 /**
  * Lifecycle status of an intent on the execution gateway.
  *
- * Wire format mirrors the Rust enum (snake_case strings). Use this as the
- * source of truth when polling — `getIntentStatus()` and `waitForIntent()`
- * both return / target values from this set.
+ * Wire format mirrors the Rust `IntentStatus` enum, which serializes as
+ * SCREAMING_SNAKE_CASE (`crates/storage/execution-store/src/lib.rs`). The
+ * authoritative `GET /api/v1/intents/{id}` endpoint returns exactly these
+ * four values.
  *
- * Lifecycle order under the happy path is roughly:
- *   `accepted → oracle_pending? → included_pending_finality → finalized`
+ * Lifecycle order under the happy path:
+ *   `ACCEPTED → INCLUDED_PENDING_FINALITY → FINALIZED`
  *
- * Terminal failure states are `rejected` and `expired`. `oracle_pending` is
- * only entered for deposit-shaped intents waiting on Spark operator-DB
- * confirmation; pure-execute intents skip it.
+ * `EXPIRED` is the single terminal failure state. The v1 `REJECTED` and
+ * `ORACLE_PENDING` sub-states were collapsed in migration 0008 (rejected →
+ * `EXPIRED` with the original failure kind carried in `statusMessage`;
+ * oracle-pending → `ACCEPTED`).
+ *
+ * Note: `POST /api/v1/execute` returns the initial status as the lowercase
+ * string `"accepted"`. The SDK normalizes every status it surfaces to the
+ * canonical SCREAMING_SNAKE_CASE form via {@link normalizeIntentStatus}.
  */
 export type IntentStatus =
-  | "accepted"
-  | "oracle_pending"
-  | "included_pending_finality"
-  | "finalized"
-  | "rejected"
-  | "expired";
+  | "ACCEPTED"
+  | "INCLUDED_PENDING_FINALITY"
+  | "FINALIZED"
+  | "EXPIRED";
 
 /** Statuses that represent terminal lifecycle states (no further updates). */
 export const TERMINAL_INTENT_STATUSES = [
-  "finalized",
-  "rejected",
-  "expired",
+  "FINALIZED",
+  "EXPIRED",
 ] as const satisfies readonly IntentStatus[];
+
+/**
+ * Normalize a raw status string from any gateway endpoint to the canonical
+ * {@link IntentStatus} (SCREAMING_SNAKE_CASE). Tolerates the lowercase
+ * `"accepted"` that `POST /execute` returns and any case the gateway emits.
+ * Unknown values are upper-cased and returned as-is so forward-compatible
+ * statuses don't throw.
+ */
+export function normalizeIntentStatus(raw: string): IntentStatus {
+  return raw.toUpperCase() as IntentStatus;
+}
 
 /**
  * Returns true when the status is a terminal lifecycle state — i.e. the
  * intent has reached a final outcome and will receive no further updates.
+ * Accepts any case; normalizes before comparing.
  */
-export function isTerminalIntentStatus(status: IntentStatus): boolean {
-  return (TERMINAL_INTENT_STATUSES as readonly string[]).includes(status);
+export function isTerminalIntentStatus(status: string): boolean {
+  return (TERMINAL_INTENT_STATUSES as readonly string[]).includes(
+    status.toUpperCase()
+  );
 }
 
 /**

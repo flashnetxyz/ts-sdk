@@ -166,7 +166,7 @@ async function main(): Promise<void> {
       "response.intentId is a non-empty string"
     );
     assert(
-      ["accepted", "oracle_pending", "included_pending_finality", "finalized"].includes(
+      ["ACCEPTED", "INCLUDED_PENDING_FINALITY", "FINALIZED"].includes(
         resp.status
       ),
       `response.status is one of the lifecycle values (got: "${resp.status}")`
