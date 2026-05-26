@@ -96,41 +96,50 @@ describe("stringifyWithBigint", () => {
   // Golden-vector regression guarding the field ordering on the signed
   // canonical intent message. The validator hashes the JSON output
   // byte-for-byte and the signed bytes must match the Rust
-  // CanonicalIntentMessage struct (chainId, transfers, action, nonce, expiresAt),
-  // with each CanonicalTransferEntry in the order
-  // (transferId, amountSats, assetType, tokenId?). If someone reorders
-  // the TS interface, the Rust struct, or the object literal in
+  // CanonicalIntentMessage struct (chainId, transfers, action,
+  // expiresAt — no `nonce` since migration 0008), with each
+  // CanonicalTransferEntry in the order
+  // (transferId, amount, asset, depositProof). If someone reorders the
+  // TS interface, the Rust struct, or the object literal in
   // ExecutionClient.submitIntent, this test will fail loudly instead of
   // breaking signature verification at runtime.
   it("canonical intent message matches the Rust struct field order", () => {
     const transfers: CanonicalTransferEntry[] = [
       {
         transferId: "transfer-1",
-        amountSats: 1000n,
-        assetType: "NativeSats",
+        amount: "0x3e8",
+        asset: { type: "NATIVE_SATS" },
+        depositProof: { payloadBytes: "0x", signature: "0x" },
       },
       {
         transferId: "transfer-2",
-        amountSats: 2500n,
-        assetType: "SparkToken",
-        tokenId: "btkn1foo",
+        amount: "0x9c4",
+        asset: {
+          type: "SPARK_TOKEN",
+          tokenId:
+            "0x0000000000000000000000000000000000000000000000000000000000000001",
+        },
+        depositProof: {
+          payloadBytes: "0xdeadbeef",
+          signature: "0x" + "ab".repeat(64),
+        },
       },
     ];
     const message: CanonicalIntentMessage = {
       chainId: 21022,
       transfers,
       action: { type: "deposit", recipient: "0xabc" },
-      nonce: "nonce-xyz",
       expiresAt: 1_893_456_000_000,
     };
     expect(stringifyWithBigint(message)).toEqual(
       '{"chainId":21022,' +
         '"transfers":[' +
-        '{"transferId":"transfer-1","amountSats":1000,"assetType":"NativeSats"},' +
-        '{"transferId":"transfer-2","amountSats":2500,"assetType":"SparkToken","tokenId":"btkn1foo"}' +
+        '{"transferId":"transfer-1","amount":"0x3e8","asset":{"type":"NATIVE_SATS"},"depositProof":{"payloadBytes":"0x","signature":"0x"}},' +
+        '{"transferId":"transfer-2","amount":"0x9c4","asset":{"type":"SPARK_TOKEN","tokenId":"0x0000000000000000000000000000000000000000000000000000000000000001"},"depositProof":{"payloadBytes":"0xdeadbeef","signature":"0x' +
+        "ab".repeat(64) +
+        '"}}' +
         "]," +
         '"action":{"type":"deposit","recipient":"0xabc"},' +
-        '"nonce":"nonce-xyz",' +
         '"expiresAt":1893456000000}'
     );
   });
