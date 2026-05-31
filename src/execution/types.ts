@@ -232,10 +232,9 @@ export interface IntentStatusResponse {
  * `ExecutionClient.getNetworkInfo()` once per session (memoized, 60s TTL)
  * and read fields here instead of hard-coding them in environment config.
  *
- * Trading-stack contract addresses are intentionally absent from this
- * surface — they live in `AMMConfig` / `AMM_ENVIRONMENT_CONFIGS`. The
- * compile-time guardrail just below {@link ExecutionNetworkInfo} enforces
- * this (flashnet-execution#554).
+ * Trading-stack contract addresses are intentionally absent — they live in
+ * `AMMConfig`, and the compile-time guardrail below
+ * {@link ExecutionNetworkInfo} keeps them off this surface.
  */
 export interface NetworkInfo {
   spark: SparkNetworkInfo;
@@ -270,27 +269,18 @@ export interface ExecutionNetworkInfo {
 }
 
 /**
- * Guardrail — trading-stack addresses stay out of `/network/info`
- * (flashnet-execution#554).
+ * Guardrail: trading-stack addresses stay off `/network/info`.
  *
- * `/api/v1/network/info` publishes *execution* concerns only: the Spark
- * deposit address, the SparkGateway/bridge contract, the chain id, the
- * paused flag, and the advisory minimum deposit. Trading-stack contract
- * addresses — Conductor, WBTC, the Uniswap V3 factory, the
- * NonfungiblePositionManager, and Permit2 — move on the trading stack's own
- * release cadence, independent of the gateway lifecycle. They live in
- * `AMMConfig` / `AMM_ENVIRONMENT_CONFIGS` keyed by `ClientEnvironment`, never
- * on this typed surface. If the gateway ever returns one, the SDK ignores it
- * instead of projecting it here.
- *
- * The aliases below fail `tsc --noEmit` (and thus `build`) if a trading-stack
- * address field is ever added to {@link NetworkInfo},
- * {@link ExecutionNetworkInfo}, or {@link SparkNetworkInfo}. They are erased
- * at runtime. The runtime counterpart lives in
- * `network-info-address-invariant.spec.ts`.
+ * The gateway publishes execution concerns only (Spark deposit address, bridge
+ * contract, chain id, paused flag, min deposit). Conductor / WBTC / factory /
+ * NonfungiblePositionManager / Permit2 addresses live in `AMMConfig`, because
+ * they move on the trading stack's own release cadence. The aliases below fail
+ * `tsc` if any such field is added to {@link NetworkInfo},
+ * {@link ExecutionNetworkInfo}, or {@link SparkNetworkInfo}; they are erased at
+ * runtime. Runtime counterpart: `network-info-address-invariant.spec.ts`.
  */
 type ForbiddenTradingAddressKey =
-  // The canonical set the issue calls out.
+  // Known trading-stack address fields.
   | "conductorAddress"
   | "wbtcAddress"
   | "factoryAddress"
@@ -306,15 +296,11 @@ type ForbiddenTradingAddressKey =
   | "v3FactoryAddress";
 
 /**
- * `true` when `T` carries no forbidden trading-stack address key.
+ * `true` when `T` has no forbidden trading-stack address key.
  *
- * Scope: this inspects only the *top-level* `keyof T` of each interface as a
- * flat literal-key union — matching the gateway's flat wire shape. It does not
- * recurse into sub-objects, and an index signature (`[k: string]: unknown`)
- * would widen `keyof T` to `string` and make the check vacuously `true`.
- * Neither is how these response interfaces are written; introducing either is
- * a deliberate, reviewable change. Keep the wire shape flat and literal-keyed
- * so this guard stays meaningful.
+ * Checks top-level literal keys only (matching the flat wire shape) — it does
+ * not recurse, and an index signature would make it vacuously `true`. Keep the
+ * response interfaces flat and literal-keyed so the guard stays meaningful.
  */
 type HasNoTradingAddress<T> = Extract<
   keyof T,
@@ -326,9 +312,8 @@ type HasNoTradingAddress<T> = Extract<
 /** Resolves only when `T` is exactly `true`; any other input is a compile error. */
 type AssertTrue<T extends true> = T;
 
-// Adding e.g. `conductorAddress` to any of these interfaces flips its
-// `HasNoTradingAddress` result to `false`, violating the `AssertTrue`
-// constraint and failing the build. See the doc block above.
+// Adding a forbidden key to any interface flips its check to `false` and
+// fails the build via the AssertTrue constraint.
 type _NetworkInfoHasNoTradingAddress = AssertTrue<
   HasNoTradingAddress<NetworkInfo>
 >;

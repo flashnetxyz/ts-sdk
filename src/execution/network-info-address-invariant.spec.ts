@@ -1,17 +1,10 @@
 /**
- * Guardrail tests — trading-stack addresses stay out of `/network/info`
- * (flashnet-execution#554).
+ * Guardrail tests: trading-stack addresses stay off `/network/info`.
  *
- * The gateway's network-info surface publishes execution concerns only. The
- * Conductor / WBTC / Uniswap V3 factory / NonfungiblePositionManager /
- * Permit2 addresses move on the trading stack's own release cadence and live
- * in `AMMConfig` / `AMM_ENVIRONMENT_CONFIGS`, never on `NetworkInfo`.
- *
- * The *compile-time* enforcement lives next to the type definitions in
- * `types.ts` (the `AssertTrue<HasNoTradingAddress<...>>` aliases) and fails
- * `tsc --noEmit` if a forbidden field is ever added. These runtime tests are
- * the executable counterpart: they pin the wire shape the gateway is expected
- * to return and assert no trading-stack key has crept in at any level.
+ * Compile-time enforcement lives in `types.ts`; these runtime tests are the
+ * executable counterpart, pinning the expected wire shape and asserting no
+ * trading-stack key (Conductor / WBTC / factory / NPM / Permit2) appears at
+ * any level.
  */
 
 import { secp256k1 } from "@noble/curves/secp256k1";
@@ -75,7 +68,7 @@ afterEach(() => {
   jest.restoreAllMocks();
 });
 
-describe("NetworkInfo trading-address guardrail (flashnet-execution#554)", () => {
+describe("NetworkInfo trading-address guardrail", () => {
   it("exposes only execution-discovery concerns at the top level", () => {
     expect(keysOf(NETWORK_INFO).sort()).toEqual(
       ["execution", "minDepositSats", "paused", "spark"].sort()
@@ -106,15 +99,11 @@ describe("NetworkInfo trading-address guardrail (flashnet-execution#554)", () =>
   });
 
   it("returns the gateway response verbatim — trading addresses stay off the typed surface (compile-time enforced)", async () => {
-    // Honest scope: `getNetworkInfo()` does NOT strip unknown fields — it
-    // returns the parsed JSON verbatim, so a polluted `conductorAddress`
-    // physically survives at runtime. The guarantee this test documents is the
-    // *contract*: the SDK never grows a code path that reads a trading address
-    // off the result, and the typed surface makes such a read impossible
-    // without an `as`-cast escape hatch. That typed-surface guarantee is
-    // enforced at compile time by the `AssertTrue<HasNoTradingAddress<...>>`
-    // aliases in types.ts; here we just pin that the documented fields survive
-    // an unexpected, extra-field response unchanged.
+    // `getNetworkInfo()` returns the parsed JSON verbatim — it does not strip
+    // unknown fields, so a polluted `conductorAddress` survives at runtime.
+    // The real guarantee is the typed surface (enforced at compile time in
+    // types.ts): reading a trading address requires an `as`-cast. Here we just
+    // pin that the documented fields survive an extra-field response unchanged.
     const polluted = {
       ...NETWORK_INFO,
       execution: {
