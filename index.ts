@@ -70,8 +70,22 @@ export type {
 } from "./src/execution";
 
 // AMM client (wraps ExecutionClient for DEX operations)
-export { AMMClient } from "./src/amm";
-export type { AMMConfig, SwapParams as AMMSwapParams, SwapResult as AMMSwapResult } from "./src/amm";
+export { AMMClient, satsToWei, weiToSats } from "./src/amm";
+export type {
+  AMMConfig,
+  SwapParams as AMMSwapParams,
+  SwapResult as AMMSwapResult,
+  AddLiquidityParams,
+  IncreaseParams,
+  DecreaseParams,
+  CollectParams,
+  ModifyParams,
+  LpWriteResult,
+  MintResult,
+  IncreaseResult,
+  WithdrawResult,
+  PositionInfo,
+} from "./src/amm";
 
 export type { RequestOptions } from "./src/api/client";
 // Export API client and typed endpoints
