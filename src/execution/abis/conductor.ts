@@ -191,14 +191,11 @@ export const conductorAbi = [
     ],
     outputs: [{ name: "amountOut", type: "uint256" }],
   },
-  // ── Liquidity management (single-intent + auto-withdraw) ──────
+  // ── Liquidity management ──────────────────────────────────────
   //
-  // ERC20 legs are authorized via Permit2 (`ISignatureTransfer.PermitTransferFrom`
-  // + detached signature). Operations on an existing position NFT take an
-  // `ERC721PermitSig` (the NPM `permit(spender, tokenId, deadline, v, r, s)`
-  // tuple); the Conductor calls `NPM.permit` itself before acting as the
-  // approved spender. `*BTC` variants are payable — `msg.value` funds the WBTC
-  // leg (1:1 wei→WBTC). Unused dust and proceeds route back to Spark.
+  // ERC20 legs use Permit2 (permit tuple + detached signature). Ops on an
+  // existing position take an `ERC721PermitSig`. `*BTC` variants are payable —
+  // `msg.value` funds the WBTC leg (1:1 wei). Dust and proceeds route to Spark.
   {
     type: "function",
     name: "addLiquidity",

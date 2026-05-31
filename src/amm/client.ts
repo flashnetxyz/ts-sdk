@@ -169,8 +169,7 @@ export interface AMMConfig {
   wbtcAddress?: string;
   /**
    * Uniswap V3 Factory address. Used by pool read helpers (`getPoolAddress`).
-   * Trading-stack address — see flashnet-execution#554 for why it lives here
-   * and not on the gateway's `NetworkInfo`.
+   * A trading-stack address, so it lives here rather than on `NetworkInfo`.
    */
   factoryAddress?: string;
   /**
@@ -1198,21 +1197,18 @@ export class AMMClient {
 
   // ══ Liquidity management ═══════════════════════════════════════
   //
-  // Every write method mirrors the swap template: single intent, ERC20 legs
+  // Each write method mirrors the swap template: one intent, ERC20 legs
   // authorized via Permit2, existing-position ops gated by a one-shot ERC-721
-  // `permit`, all fungible output (dust, proceeds, fees) auto-withdrawn to
-  // Spark. The position NFT itself stays on the caller's EVM identity address.
+  // `permit`, and all fungible output (dust, proceeds, fees) auto-withdrawn to
+  // Spark. The position NFT stays on the caller's EVM identity address.
   //
-  // Amounts are in each token's base units. The WBTC leg is in wei (1 sat =
-  // 1e10 wei; see satsToWei). BTC-paired pools are detected by matching a leg
-  // against `AMMConfig.wbtcAddress`, which routes to the Conductor's payable
-  // `*BTC` entry point with `msg.value` funded from the WBTC-leg amount.
+  // Amounts are base units; the WBTC leg is in wei (1 sat = 1e10 wei, see
+  // satsToWei). A leg matching `AMMConfig.wbtcAddress` routes to the payable
+  // `*BTC` entry point with `msg.value` funded from that leg.
   //
-  // Permit2 prerequisite: the Conductor pulls ERC20 legs through Permit2, so
-  // the caller's EVM address must hold a standing Permit2 allowance on each
-  // ERC20. Grant it once per token via `ensurePermit2Approval` before the
-  // first liquidity op (this is a separate intent — Permit2 cannot be
-  // approved inside the same tx that spends through it).
+  // ERC20 legs are pulled via Permit2, so the caller needs a standing Permit2
+  // allowance per token — grant it once with `ensurePermit2Approval` (a
+  // separate intent) before the first op.
 
   /** Read a single position's full state from the NonfungiblePositionManager. */
   async getPosition(tokenId: bigint | string): Promise<PositionInfo> {

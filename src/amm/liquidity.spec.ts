@@ -1,5 +1,5 @@
 /**
- * Unit tests for AMMClient liquidity-management methods (#553).
+ * Unit tests for AMMClient liquidity-management methods.
  *
  * Strategy: drive each method end-to-end against a stubbed JSON-RPC + gateway,
  * capture the signed EVM transaction the SDK hands to `/execute`, then decode
