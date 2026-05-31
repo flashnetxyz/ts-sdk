@@ -231,6 +231,11 @@ export interface IntentStatusResponse {
  * and where on-chain transactions go (execution side). Clients call
  * `ExecutionClient.getNetworkInfo()` once per session (memoized, 60s TTL)
  * and read fields here instead of hard-coding them in environment config.
+ *
+ * Trading-stack contract addresses are intentionally absent from this
+ * surface — they live in `AMMConfig` / `AMM_ENVIRONMENT_CONFIGS`. The
+ * compile-time guardrail just below {@link ExecutionNetworkInfo} enforces
+ * this (flashnet-execution#554).
  */
 export interface NetworkInfo {
   spark: SparkNetworkInfo;
@@ -263,6 +268,58 @@ export interface ExecutionNetworkInfo {
   /** Execution-chain chain id. */
   chainId: number;
 }
+
+/**
+ * Guardrail — trading-stack addresses stay out of `/network/info`
+ * (flashnet-execution#554).
+ *
+ * `/api/v1/network/info` publishes *execution* concerns only: the Spark
+ * deposit address, the SparkGateway/bridge contract, the chain id, the
+ * paused flag, and the advisory minimum deposit. Trading-stack contract
+ * addresses — Conductor, WBTC, the Uniswap V3 factory, the
+ * NonfungiblePositionManager, and Permit2 — move on the trading stack's own
+ * release cadence, independent of the gateway lifecycle. They live in
+ * `AMMConfig` / `AMM_ENVIRONMENT_CONFIGS` keyed by `ClientEnvironment`, never
+ * on this typed surface. If the gateway ever returns one, the SDK ignores it
+ * instead of projecting it here.
+ *
+ * The aliases below fail `tsc --noEmit` (and thus `build`) if a trading-stack
+ * address field is ever added to {@link NetworkInfo},
+ * {@link ExecutionNetworkInfo}, or {@link SparkNetworkInfo}. They are erased
+ * at runtime. The runtime counterpart lives in
+ * `network-info-address-invariant.spec.ts`.
+ */
+type ForbiddenTradingAddressKey =
+  | "conductorAddress"
+  | "wbtcAddress"
+  | "factoryAddress"
+  | "positionManagerAddress"
+  | "permit2Address"
+  | "uniswapFactoryAddress";
+
+/** `true` when `T` carries no forbidden trading-stack address key. */
+type HasNoTradingAddress<T> = Extract<
+  keyof T,
+  ForbiddenTradingAddressKey
+> extends never
+  ? true
+  : false;
+
+/** Resolves only when `T` is exactly `true`; any other input is a compile error. */
+type AssertTrue<T extends true> = T;
+
+// Adding e.g. `conductorAddress` to any of these interfaces flips its
+// `HasNoTradingAddress` result to `false`, violating the `AssertTrue`
+// constraint and failing the build. See the doc block above.
+type _NetworkInfoHasNoTradingAddress = AssertTrue<
+  HasNoTradingAddress<NetworkInfo>
+>;
+type _ExecutionNetworkInfoHasNoTradingAddress = AssertTrue<
+  HasNoTradingAddress<ExecutionNetworkInfo>
+>;
+type _SparkNetworkInfoHasNoTradingAddress = AssertTrue<
+  HasNoTradingAddress<SparkNetworkInfo>
+>;
 
 /**
  * Signer interface for the execution client.
