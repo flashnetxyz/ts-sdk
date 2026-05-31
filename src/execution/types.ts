@@ -290,14 +290,32 @@ export interface ExecutionNetworkInfo {
  * `network-info-address-invariant.spec.ts`.
  */
 type ForbiddenTradingAddressKey =
+  // The canonical set the issue calls out.
   | "conductorAddress"
   | "wbtcAddress"
   | "factoryAddress"
   | "positionManagerAddress"
   | "permit2Address"
-  | "uniswapFactoryAddress";
+  | "uniswapFactoryAddress"
+  // Defensive synonyms a future contributor might reach for instead.
+  | "nonfungiblePositionManagerAddress"
+  | "npmAddress"
+  | "routerAddress"
+  | "swapRouterAddress"
+  | "quoterAddress"
+  | "v3FactoryAddress";
 
-/** `true` when `T` carries no forbidden trading-stack address key. */
+/**
+ * `true` when `T` carries no forbidden trading-stack address key.
+ *
+ * Scope: this inspects only the *top-level* `keyof T` of each interface as a
+ * flat literal-key union — matching the gateway's flat wire shape. It does not
+ * recurse into sub-objects, and an index signature (`[k: string]: unknown`)
+ * would widen `keyof T` to `string` and make the check vacuously `true`.
+ * Neither is how these response interfaces are written; introducing either is
+ * a deliberate, reviewable change. Keep the wire shape flat and literal-keyed
+ * so this guard stays meaningful.
+ */
 type HasNoTradingAddress<T> = Extract<
   keyof T,
   ForbiddenTradingAddressKey

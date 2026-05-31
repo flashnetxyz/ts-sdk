@@ -105,12 +105,16 @@ describe("NetworkInfo trading-address guardrail (flashnet-execution#554)", () =>
     }
   });
 
-  it("getNetworkInfo() never reads a trading-stack address off the response", async () => {
-    // The gateway could, in principle, start returning extra fields. The SDK
-    // must not grow a code path that reads a trading address off the result.
-    // We stub a deliberately *polluted* response and assert the SDK still
-    // returns it verbatim (no projection) — the contract is "ignore extras",
-    // enforced for the typed surface by the compile-time guard in types.ts.
+  it("returns the gateway response verbatim — trading addresses stay off the typed surface (compile-time enforced)", async () => {
+    // Honest scope: `getNetworkInfo()` does NOT strip unknown fields — it
+    // returns the parsed JSON verbatim, so a polluted `conductorAddress`
+    // physically survives at runtime. The guarantee this test documents is the
+    // *contract*: the SDK never grows a code path that reads a trading address
+    // off the result, and the typed surface makes such a read impossible
+    // without an `as`-cast escape hatch. That typed-surface guarantee is
+    // enforced at compile time by the `AssertTrue<HasNoTradingAddress<...>>`
+    // aliases in types.ts; here we just pin that the documented fields survive
+    // an unexpected, extra-field response unchanged.
     const polluted = {
       ...NETWORK_INFO,
       execution: {
