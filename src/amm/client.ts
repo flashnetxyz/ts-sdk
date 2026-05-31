@@ -382,7 +382,7 @@ export interface AddLiquidityParams extends LpFundingInputs {
 }
 
 /** Parameters for {@link AMMClient.increaseLiquidity} (grow an existing position). */
-export interface IncreaseParams extends LpFundingInputs {
+export interface IncreaseLiquidityParams extends LpFundingInputs {
   /** The position NFT id. */
   tokenId: bigint | string;
   amount0Desired: string;
@@ -392,7 +392,7 @@ export interface IncreaseParams extends LpFundingInputs {
 }
 
 /** Parameters for {@link AMMClient.decreaseLiquidity}. */
-export interface DecreaseParams {
+export interface DecreaseLiquidityParams {
   /** The position NFT id. */
   tokenId: bigint | string;
   /** Liquidity units to remove. */
@@ -406,7 +406,7 @@ export interface DecreaseParams {
 }
 
 /** Parameters for {@link AMMClient.collectFees}. */
-export interface CollectParams {
+export interface CollectFeesParams {
   /** The position NFT id. */
   tokenId: bigint | string;
   /** Absolute unix-seconds deadline for the NFT permit. Default: now + 30 minutes. */
@@ -416,7 +416,7 @@ export interface CollectParams {
 }
 
 /** Parameters for {@link AMMClient.modifyPosition} (reposition to a new tick range). */
-export interface ModifyParams extends LpFundingInputs {
+export interface ModifyPositionParams extends LpFundingInputs {
   /** The position NFT id to reposition. */
   tokenId: bigint | string;
   newTickLower: number;
@@ -1356,7 +1356,7 @@ export class AMMClient {
    * `increaseLiquidity` is open to any caller). `amount0`/`amount1`
    * correspond to the position's `token0`/`token1` (see {@link getPosition}).
    */
-  async increaseLiquidity(params: IncreaseParams): Promise<IncreaseResult> {
+  async increaseLiquidity(params: IncreaseLiquidityParams): Promise<IncreaseResult> {
     const tokenId = BigInt(params.tokenId);
     const position = await this.readPosition(tokenId);
     const token0 = position.token0 as `0x${string}`;
@@ -1432,7 +1432,7 @@ export class AMMClient {
    * an ERC-721 `permit` over the tokenId (signed here with the identity key).
    * No Permit2 / ERC20 approval is involved — this path only moves funds out.
    */
-  async decreaseLiquidity(params: DecreaseParams): Promise<WithdrawResult> {
+  async decreaseLiquidity(params: DecreaseLiquidityParams): Promise<WithdrawResult> {
     const tokenId = BigInt(params.tokenId);
     const liquidity = BigInt(params.liquidity);
     if (liquidity <= 0n) {
@@ -1469,7 +1469,7 @@ export class AMMClient {
    * underlying liquidity untouched (never burns). Requires an ERC-721 permit.
    * No Permit2 / ERC20 approval is involved — this path only moves funds out.
    */
-  async collectFees(params: CollectParams): Promise<WithdrawResult> {
+  async collectFees(params: CollectFeesParams): Promise<WithdrawResult> {
     const tokenId = BigInt(params.tokenId);
     const deadline = this.resolveDeadline(params.deadline);
     const sparkRecipient = (params.sparkRecipient ??
@@ -1496,7 +1496,7 @@ export class AMMClient {
    * principal plus any optional `additionalAmount*` capital. Dust → Spark.
    * Requires an ERC-721 permit over the old tokenId.
    */
-  async modifyPosition(params: ModifyParams): Promise<MintResult> {
+  async modifyPosition(params: ModifyPositionParams): Promise<MintResult> {
     const tokenId = BigInt(params.tokenId);
     const position = await this.readPosition(tokenId);
     const token0 = position.token0 as `0x${string}`;
