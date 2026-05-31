@@ -70,6 +70,8 @@ interface StubPosition {
 }
 let stubPosition: StubPosition;
 let stubBalance: bigint;
+/** Permit2 allowance the `allowance()` stub returns; default effectively-infinite. */
+let stubAllowance: bigint;
 
 function mockWallet(opts?: {
   onTransfer?: (a: unknown) => void;
@@ -203,6 +205,10 @@ function rpcResult(rpc: { method: string; params: unknown[] }): unknown {
           result: stubBalance,
         });
       }
+      if (selector === "0xdd62ed3e") {
+        // allowance(owner, spender) → uint256 (Permit2 pre-flight check)
+        return `0x${stubAllowance.toString(16).padStart(64, "0")}`;
+      }
       throw new Error(`unexpected eth_call selector ${selector}`);
     }
     default:
@@ -252,6 +258,7 @@ async function makeClient(
 beforeEach(() => {
   executeBodies = [];
   stubBalance = 0n;
+  stubAllowance = (1n << 256n) - 1n;
   stubPosition = {
     nonce: 7n,
     token0: TOKEN_A,
@@ -361,6 +368,37 @@ describe("AMMClient.addLiquidity (ERC20/ERC20)", () => {
     expect(body?.deposits).toHaveLength(2);
     expect(res.inboundSparkTransferIds).toHaveLength(2);
     expect(decodeLastCall().functionName).toBe("addLiquidity");
+  });
+
+  it("refuses the Spark-funded ERC20 path when Permit2 is not approved, before transferring", async () => {
+    stubAllowance = 0n; // no standing Permit2 allowance
+    let tokenTransfers = 0;
+    const amm = await makeClient({ onTransferTokens: () => tokenTransfers++ });
+    await expect(
+      amm.addLiquidity({
+        token0: TOKEN_A,
+        token1: TOKEN_B,
+        fee: 3000,
+        tickLower: -60,
+        tickUpper: 60,
+        amount0Desired: "1000",
+        amount1Desired: "2000",
+        amount0Min: "0",
+        amount1Min: "0",
+        useAvailableBalance: true,
+        token0SparkId: encodeSparkHumanReadableTokenIdentifier(
+          "aa".repeat(32),
+          "REGTEST"
+        ),
+        token1SparkId: encodeSparkHumanReadableTokenIdentifier(
+          "bb".repeat(32),
+          "REGTEST"
+        ),
+      })
+    ).rejects.toThrow(/Permit2 allowance/);
+    // The guard must run BEFORE any Spark transfer so funds aren't stranded.
+    expect(tokenTransfers).toBe(0);
+    expect(executeBodies).toHaveLength(0);
   });
 });
 
