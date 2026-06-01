@@ -121,6 +121,9 @@ const DEFAULT_SWAP_GAS_LIMIT = 1_000_000n;
 const DEFAULT_APPROVE_GAS_LIMIT = 100_000n;
 const DEFAULT_LP_GAS_LIMIT = 1_500_000n;
 
+/** Timeout for the read-only gateway swap-quote HTTP request. */
+const QUOTE_TIMEOUT_MS = 10_000;
+
 /** Conversion factor: 1 sat = 10^10 wei on Flashnet's EVM. */
 const WEI_PER_SAT = 10_000_000_000n;
 
@@ -139,6 +142,19 @@ function splitSignature(signature: Hex): { v: number; r: Hex; s: Hex } {
   const s = ("0x" + signature.slice(66, 130)) as Hex;
   const v = parseInt(signature.slice(130, 132), 16);
   return { v, r, s };
+}
+
+/**
+ * Parse a base-10 integer amount returned by the gateway, rejecting anything
+ * non-numeric. The result is used as an on-chain `minAmountOut` floor, so a
+ * malformed response must fail loudly here rather than slip through or blow
+ * up far from its cause.
+ */
+function parseQuoteAmount(value: unknown, field: string): bigint {
+  if (typeof value !== "string" || !/^\d+$/.test(value)) {
+    throw new Error(`quote: gateway returned a non-numeric ${field}.`);
+  }
+  return BigInt(value);
 }
 
 /**
@@ -222,12 +238,13 @@ export interface SwapParams {
   /** Amount in (sats if BTC, base units if token). String to match FlashnetClient convention. */
   amountIn: string;
   /**
-   * Minimum acceptable output amount (base units). String.
+   * Minimum acceptable output amount (base units; sats if the output is
+   * BTC). String.
    *
-   * The caller is responsible for computing this from their own quote
-   * and slippage tolerance — the SDK does not fetch quotes on your
-   * behalf. `"0"` disables slippage protection and exposes you to
-   * sandwich attacks; set a realistic bound for any non-test code.
+   * Compute it with {@link AMMClient.quote}, which returns a ready-to-use
+   * `minAmountOut` for your slippage tolerance, or supply your own. `"0"`
+   * disables slippage protection and exposes you to sandwich attacks; set a
+   * realistic bound for any non-test code.
    */
   minAmountOut: string;
   /** Uniswap V3 fee tier (500, 3000, 10000). */
@@ -283,6 +300,61 @@ export interface SwapResult {
    * for the legacy no-deposit paths.
    */
   inboundSparkTransferId?: string;
+}
+
+/** Parameters for {@link AMMClient.quote}. */
+export interface QuoteParams {
+  /** Input asset address, or "btc" for native BTC. */
+  assetInAddress: string;
+  /** Output asset address, or "btc" for native BTC. */
+  assetOutAddress: string;
+  /**
+   * Amount in. Sats if the input is BTC, base units if a token. String, to
+   * match {@link SwapParams.amountIn}.
+   */
+  amountIn: string;
+  /** Uniswap V3 fee tier (500, 3000, 10000). */
+  fee: number;
+  /**
+   * Slippage tolerance in basis points, used to derive `minAmountOut`. Omit
+   * to use the gateway's default. Must be between 0 and 10000.
+   */
+  slippageBps?: number;
+}
+
+/** Result of {@link AMMClient.quote}. */
+export interface QuoteResult {
+  /**
+   * Estimated output. Sats if the output is BTC, base units if a token.
+   * Exact per the on-chain QuoterV2 at quote time; the Conductor adds no
+   * fee on top today.
+   */
+  amountOut: string;
+  /**
+   * `amountOut` reduced by the slippage tolerance. Pass straight to
+   * {@link SwapParams.minAmountOut}.
+   */
+  minAmountOut: string;
+  /**
+   * Pool mid-price move caused by the swap, in basis points. Undefined when
+   * the gateway could not read the pool's pre-trade price (e.g. its factory
+   * address is unconfigured).
+   */
+  priceImpactBps?: number;
+  /** Effective slippage tolerance applied (basis points). */
+  slippageBps: number;
+  /** Echoed Uniswap V3 fee tier. */
+  fee: number;
+}
+
+/** Raw shape of the gateway `POST /api/v1/swap/quote` response. */
+interface GatewaySwapQuoteResponse {
+  amountOut: string;
+  minAmountOut: string;
+  priceImpactBps?: number;
+  sqrtPriceX96After: string;
+  feeTier: number;
+  slippageBps: number;
 }
 
 // ── Liquidity management ───────────────────────────────────────
@@ -543,7 +615,14 @@ export class AMMClient {
 
     const integrator = params.integratorPublicKey ?? ZERO_ADDRESS;
     const amountIn = BigInt(params.amountIn);
-    const minAmountOut = BigInt(params.minAmountOut);
+    // A BTC output's on-chain `minAmountOut` is the Uniswap WBTC floor, in
+    // wei. The product API denominates BTC in sats, so convert here —
+    // mirroring the `amountIn * WEI_PER_SAT` the BTC-input path applies
+    // below. Without this, a sats floor is enforced as wei (~1e10x too
+    // small) and slippage protection silently vanishes.
+    const minAmountOut = isBtcOut
+      ? BigInt(params.minAmountOut) * WEI_PER_SAT
+      : BigInt(params.minAmountOut);
     const execConfig = this.execClient.getConfig();
     const account = await this.execClient.getEvmAccount();
     // sparkRecipient is only needed for *AndWithdraw variants.
@@ -623,6 +702,194 @@ export class AMMClient {
     );
     const signedTx = await this.signConductorTx(calldata, 0n);
     return this.submitSwapIntent(signedTx);
+  }
+
+  /**
+   * Fetch a pre-trade quote for a single-pool swap. The gateway reads the
+   * on-chain Uniswap V3 `QuoterV2`; this returns the estimated output, a
+   * slippage-adjusted `minAmountOut` you can pass straight to {@link swap},
+   * and the pool price impact.
+   *
+   * BTC legs are quoted against the configured WBTC pool token: a `"btc"`
+   * input amount (sats) is converted to WBTC wei for the quote, and a
+   * `"btc"` output is converted back to whole sats (the Conductor unwraps
+   * WBTC and withdraws sats, flooring sub-sat dust). Either `"btc"` leg
+   * requires `wbtcAddress` in {@link AMMConfig}.
+   *
+   * Requires the gateway to expose `POST /api/v1/swap/quote` with a QuoterV2
+   * address configured; if it does not, the gateway returns 503 and this
+   * throws.
+   */
+  async quote(params: QuoteParams): Promise<QuoteResult> {
+    const isBtcIn = params.assetInAddress.toLowerCase() === "btc";
+    const isBtcOut = params.assetOutAddress.toLowerCase() === "btc";
+    if (isBtcIn && isBtcOut) {
+      throw new Error(
+        'quote: BTC → BTC is not a valid swap. Both assetInAddress and ' +
+          'assetOutAddress are "btc".'
+      );
+    }
+
+    const trimmedAmountIn = params.amountIn.trim();
+    if (!/^\d+$/.test(trimmedAmountIn)) {
+      throw new Error(
+        "quote: amountIn must be a base-10 integer string (token base " +
+          "units, or sats when the input is BTC)."
+      );
+    }
+    const amountInRaw = BigInt(trimmedAmountIn);
+    if (amountInRaw <= 0n) {
+      throw new Error("quote: amountIn must be greater than zero.");
+    }
+    if (
+      params.slippageBps !== undefined &&
+      (!Number.isInteger(params.slippageBps) ||
+        params.slippageBps < 0 ||
+        params.slippageBps > 10_000)
+    ) {
+      throw new Error(
+        "quote: slippageBps must be an integer between 0 and 10000."
+      );
+    }
+
+    const tokenIn = isBtcIn
+      ? this.requireWbtcAddress()
+      : params.assetInAddress;
+    const tokenOut = isBtcOut
+      ? this.requireWbtcAddress()
+      : params.assetOutAddress;
+    // BTC input is denominated in sats; the WBTC pool leg is in wei. Forward
+    // the normalized decimal for token legs too, so a quirky-but-valid input
+    // reaches the gateway canonicalized.
+    const amountIn = isBtcIn
+      ? (amountInRaw * WEI_PER_SAT).toString()
+      : amountInRaw.toString();
+
+    const res = await this.postSwapQuote({
+      tokenIn,
+      tokenOut,
+      fee: params.fee,
+      amountIn,
+      ...(params.slippageBps !== undefined
+        ? { slippageBps: params.slippageBps }
+        : {}),
+    });
+
+    // Don't blindly trust the gateway with a value the caller will use as an
+    // on-chain floor: require numeric amounts with a sane relationship, and
+    // confirm the requested slippage was actually honored.
+    const grossOut = parseQuoteAmount(res.amountOut, "amountOut");
+    const floorOut = parseQuoteAmount(res.minAmountOut, "minAmountOut");
+    if (floorOut > grossOut) {
+      throw new Error(
+        "quote: gateway returned minAmountOut greater than amountOut."
+      );
+    }
+    if (
+      params.slippageBps !== undefined &&
+      res.slippageBps !== params.slippageBps
+    ) {
+      throw new Error(
+        `quote: gateway applied slippageBps=${res.slippageBps}, expected ` +
+          `${params.slippageBps}.`
+      );
+    }
+
+    // A BTC output is reported back in whole sats to match `swap`'s units.
+    const amountOut = isBtcOut
+      ? weiToSats(grossOut).toString()
+      : grossOut.toString();
+    // A positive WBTC-wei floor that rounds down to 0 sats would tell swap()
+    // to accept any output, silently dropping the slippage protection the
+    // caller asked for. That only happens for sub-sat (dust) BTC outputs;
+    // fail loudly rather than hand back a misleading "0".
+    if (isBtcOut && floorOut > 0n && weiToSats(floorOut) === 0n) {
+      throw new Error(
+        "quote: the slippage-adjusted minAmountOut is below 1 sat and would " +
+          "floor to 0, which disables slippage protection. The BTC output is " +
+          "too small for sat-granular protection at this slippageBps."
+      );
+    }
+    const minAmountOut = isBtcOut
+      ? weiToSats(floorOut).toString()
+      : floorOut.toString();
+
+    return {
+      amountOut,
+      minAmountOut,
+      priceImpactBps:
+        typeof res.priceImpactBps === "number" ? res.priceImpactBps : undefined,
+      slippageBps: res.slippageBps,
+      fee: res.feeTier,
+    };
+  }
+
+  /** Resolve the WBTC pool token for a `"btc"` leg, or throw if unconfigured. */
+  private requireWbtcAddress(): string {
+    if (!this.config.wbtcAddress) {
+      throw new Error(
+        'quote: a "btc" leg requires wbtcAddress in AMMConfig — the WBTC ' +
+          "contract the pool is paired against."
+      );
+    }
+    return this.config.wbtcAddress;
+  }
+
+  /** POST the gateway swap-quote endpoint and parse its response. */
+  private async postSwapQuote(body: {
+    tokenIn: string;
+    tokenOut: string;
+    fee: number;
+    amountIn: string;
+    slippageBps?: number;
+  }): Promise<GatewaySwapQuoteResponse> {
+    const { gatewayUrl } = this.execClient.getConfig();
+    const url = `${gatewayUrl}/api/v1/swap/quote`;
+
+    // Bound the whole request (including the body read) so a slow or stalled
+    // gateway can't hang quote() indefinitely.
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), QUOTE_TIMEOUT_MS);
+    try {
+      let resp: Response;
+      try {
+        resp = await fetch(url, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(body),
+          signal: controller.signal,
+        });
+      } catch (err) {
+        const reason =
+          err instanceof Error && err.name === "AbortError"
+            ? `timed out after ${QUOTE_TIMEOUT_MS}ms`
+            : err instanceof Error
+              ? err.message
+              : String(err);
+        throw new Error(
+          `quote: could not reach the gateway quote endpoint at ${url}: ${reason}`
+        );
+      }
+
+      if (!resp.ok) {
+        // The gateway returns RFC-7807 problem+json; surface its detail.
+        let detail = `HTTP ${resp.status}`;
+        try {
+          const problem = (await resp.json()) as {
+            detail?: string;
+            title?: string;
+          };
+          detail = problem.detail ?? problem.title ?? detail;
+        } catch {
+          // Non-JSON error body — keep the status-only detail.
+        }
+        throw new Error(`quote: gateway rejected the request: ${detail}`);
+      }
+
+      return (await resp.json()) as GatewaySwapQuoteResponse;
+    } finally {
+      clearTimeout(timer);
+    }
   }
 
   /**
@@ -782,7 +1049,11 @@ export class AMMClient {
 
     const integrator = params.integratorPublicKey ?? ZERO_ADDRESS;
     const amountIn = BigInt(params.amountIn);
-    const minAmountOut = BigInt(params.minAmountOut);
+    // See `swap`: a BTC output's on-chain floor is WBTC wei, but the API
+    // takes sats, so convert here too.
+    const minAmountOut = isBtcOut
+      ? BigInt(params.minAmountOut) * WEI_PER_SAT
+      : BigInt(params.minAmountOut);
     const sparkRecipient = await this.execClient.getSparkRecipientHex();
     // Pull the current Spark deposit address from the gateway — always
     // in sync with the current threshold key, no stale env var in the app.

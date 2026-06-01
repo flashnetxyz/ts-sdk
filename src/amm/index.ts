@@ -11,6 +11,8 @@ export {
   type AMMConfig,
   type SwapParams,
   type SwapResult,
+  type QuoteParams,
+  type QuoteResult,
   // Liquidity management
   satsToWei,
   weiToSats,

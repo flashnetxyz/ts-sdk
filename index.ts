@@ -75,6 +75,8 @@ export type {
   AMMConfig,
   SwapParams as AMMSwapParams,
   SwapResult as AMMSwapResult,
+  QuoteParams as AMMQuoteParams,
+  QuoteResult as AMMQuoteResult,
   AddLiquidityParams,
   IncreaseLiquidityParams,
   DecreaseLiquidityParams,

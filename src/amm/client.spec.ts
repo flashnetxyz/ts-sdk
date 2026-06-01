@@ -1,6 +1,8 @@
 import { secp256k1 } from "@noble/curves/secp256k1";
+import { decodeFunctionData } from "viem";
 import { AMMClient } from "./client";
 import { ExecutionClient } from "../execution/client";
+import { conductorAbi } from "../execution/abis/conductor";
 import type { SparkWalletInput } from "../execution/spark-evm-account";
 
 // Deterministic test key — private key = 1 (well-known test scalar).
@@ -95,10 +97,13 @@ function stubNetworkInfoFetch(): void {
   }) as unknown as typeof fetch;
 }
 
+// Capture the real fetch so each test fully undoes `global.fetch = jest.fn`.
+// `jest.restoreAllMocks()` only restores `jest.spyOn` mocks, not direct
+// global assignments.
+const originalFetch = global.fetch;
 afterEach(() => {
-  // jest.fn() assigned to global.fetch — clear so individual tests don't
-  // leak mock state to each other.
   jest.restoreAllMocks();
+  global.fetch = originalFetch;
 });
 
 describe("AMMClient.swap — useAvailableBalance validation", () => {
@@ -207,5 +212,107 @@ describe("AMMClient.swap — BTC → token deposit wiring", () => {
     expect(observed).not.toBeNull();
     expect(observed.amountSats).toBe(250000);
     expect(observed.receiverSparkAddress).toBe(TEST_DEPOSIT_ADDRESS);
+  });
+});
+
+describe("AMMClient.swap — minAmountOut unit handling", () => {
+  const WBTC = "0x5555555555555555555555555555555555555555";
+  const TOKEN_A = "0x4444444444444444444444444444444444444444";
+  const TOKEN_B = "0x2222222222222222222222222222222222222222";
+  const WEI_PER_SAT = 10_000_000_000n;
+
+  // Mock the side-effecting internals so we can decode the calldata the swap
+  // would have signed, with no RPC or signing. `getEvmAccount`'s result is
+  // unused on these paths; it only needs to not throw.
+  function captureSignedSwap(
+    amm: AMMClient,
+    client: ExecutionClient
+  ): jest.SpyInstance {
+    jest
+      .spyOn(client, "getEvmAccount")
+      .mockResolvedValue({
+        address: "0x00000000000000000000000000000000000000ab",
+      } as any);
+    jest
+      .spyOn(client, "getSparkRecipientHex")
+      .mockResolvedValue(`0x02${"aa".repeat(32)}`);
+    jest.spyOn(amm as any, "ensureAllowance").mockResolvedValue(undefined);
+    jest.spyOn(amm as any, "submitSwapIntent").mockResolvedValue({
+      submissionId: "s",
+      intentId: "i",
+      status: "accepted",
+      evmTxHash: "0x00",
+    });
+    return jest
+      .spyOn(amm as any, "signConductorTx")
+      .mockResolvedValue("0xsigned");
+  }
+
+  function decodeSigned(sign: jest.SpyInstance) {
+    const calldata = sign.mock.calls[0][0] as `0x${string}`;
+    return decodeFunctionData({ abi: conductorAbi, data: calldata });
+  }
+
+  it("token→BTC converts minAmountOut from sats to WBTC wei (C1 regression)", async () => {
+    const client = new ExecutionClient(mockWallet(), EXEC_CONFIG);
+    const amm = new AMMClient(client, {
+      conductorAddress: AMM_CONFIG.conductorAddress,
+      wbtcAddress: WBTC,
+    });
+    const sign = captureSignedSwap(amm, client);
+
+    await amm.swap({
+      assetInAddress: TOKEN_A,
+      assetOutAddress: "btc",
+      amountIn: "1000000",
+      minAmountOut: "49750000", // sats
+      fee: 3000,
+    });
+
+    const decoded = decodeSigned(sign);
+    expect(decoded.functionName).toBe("swapAndWithdrawBTC");
+    // inputs: [tokenIn, fee, amountIn, minAmountOut, sparkRecipient, integrator]
+    expect(decoded.args[3]).toBe(49750000n * WEI_PER_SAT);
+  });
+
+  it("token→token passes minAmountOut through unchanged", async () => {
+    const client = new ExecutionClient(mockWallet(), EXEC_CONFIG);
+    const amm = new AMMClient(client, AMM_CONFIG);
+    const sign = captureSignedSwap(amm, client);
+
+    await amm.swap({
+      assetInAddress: TOKEN_A,
+      assetOutAddress: TOKEN_B,
+      amountIn: "1000000",
+      minAmountOut: "995000",
+      fee: 3000,
+    });
+
+    const decoded = decodeSigned(sign);
+    expect(decoded.functionName).toBe("swapAndWithdraw");
+    // inputs: [tokenIn, tokenOut, fee, amountIn, minAmountOut, ...]
+    expect(decoded.args[4]).toBe(995000n);
+  });
+
+  it("BTC→token leaves minAmountOut in the output token's base units", async () => {
+    const client = new ExecutionClient(mockWallet(), EXEC_CONFIG);
+    const amm = new AMMClient(client, {
+      conductorAddress: AMM_CONFIG.conductorAddress,
+      wbtcAddress: WBTC,
+    });
+    const sign = captureSignedSwap(amm, client);
+
+    await amm.swap({
+      assetInAddress: "btc",
+      assetOutAddress: TOKEN_B,
+      amountIn: "250000",
+      minAmountOut: "995000",
+      fee: 3000,
+    });
+
+    const decoded = decodeSigned(sign);
+    expect(decoded.functionName).toBe("swapBTCAndWithdraw");
+    // inputs: [tokenOut, fee, minAmountOut, sparkRecipient, integrator]
+    expect(decoded.args[2]).toBe(995000n);
   });
 });
