@@ -97,10 +97,13 @@ function stubNetworkInfoFetch(): void {
   }) as unknown as typeof fetch;
 }
 
+// Capture the real fetch so each test fully undoes `global.fetch = jest.fn`.
+// `jest.restoreAllMocks()` only restores `jest.spyOn` mocks, not direct
+// global assignments.
+const originalFetch = global.fetch;
 afterEach(() => {
-  // jest.fn() assigned to global.fetch — clear so individual tests don't
-  // leak mock state to each other.
   jest.restoreAllMocks();
+  global.fetch = originalFetch;
 });
 
 describe("AMMClient.swap — useAvailableBalance validation", () => {

@@ -121,6 +121,9 @@ const DEFAULT_SWAP_GAS_LIMIT = 1_000_000n;
 const DEFAULT_APPROVE_GAS_LIMIT = 100_000n;
 const DEFAULT_LP_GAS_LIMIT = 1_500_000n;
 
+/** Timeout for the read-only gateway swap-quote HTTP request. */
+const QUOTE_TIMEOUT_MS = 10_000;
+
 /** Conversion factor: 1 sat = 10^10 wei on Flashnet's EVM. */
 const WEI_PER_SAT = 10_000_000_000n;
 
@@ -796,6 +799,17 @@ export class AMMClient {
     const amountOut = isBtcOut
       ? weiToSats(grossOut).toString()
       : grossOut.toString();
+    // A positive WBTC-wei floor that rounds down to 0 sats would tell swap()
+    // to accept any output, silently dropping the slippage protection the
+    // caller asked for. That only happens for sub-sat (dust) BTC outputs;
+    // fail loudly rather than hand back a misleading "0".
+    if (isBtcOut && floorOut > 0n && weiToSats(floorOut) === 0n) {
+      throw new Error(
+        "quote: the slippage-adjusted minAmountOut is below 1 sat and would " +
+          "floor to 0, which disables slippage protection. The BTC output is " +
+          "too small for sat-granular protection at this slippageBps."
+      );
+    }
     const minAmountOut = isBtcOut
       ? weiToSats(floorOut).toString()
       : floorOut.toString();
@@ -832,36 +846,50 @@ export class AMMClient {
     const { gatewayUrl } = this.execClient.getConfig();
     const url = `${gatewayUrl}/api/v1/swap/quote`;
 
-    let resp: Response;
+    // Bound the whole request (including the body read) so a slow or stalled
+    // gateway can't hang quote() indefinitely.
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), QUOTE_TIMEOUT_MS);
     try {
-      resp = await fetch(url, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(body),
-      });
-    } catch (err) {
-      const reason = err instanceof Error ? err.message : String(err);
-      throw new Error(
-        `quote: could not reach the gateway quote endpoint at ${url}: ${reason}`
-      );
-    }
-
-    if (!resp.ok) {
-      // The gateway returns RFC-7807 problem+json; surface its detail.
-      let detail = `HTTP ${resp.status}`;
+      let resp: Response;
       try {
-        const problem = (await resp.json()) as {
-          detail?: string;
-          title?: string;
-        };
-        detail = problem.detail ?? problem.title ?? detail;
-      } catch {
-        // Non-JSON error body — keep the status-only detail.
+        resp = await fetch(url, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(body),
+          signal: controller.signal,
+        });
+      } catch (err) {
+        const reason =
+          err instanceof Error && err.name === "AbortError"
+            ? `timed out after ${QUOTE_TIMEOUT_MS}ms`
+            : err instanceof Error
+              ? err.message
+              : String(err);
+        throw new Error(
+          `quote: could not reach the gateway quote endpoint at ${url}: ${reason}`
+        );
       }
-      throw new Error(`quote: gateway rejected the request: ${detail}`);
-    }
 
-    return (await resp.json()) as GatewaySwapQuoteResponse;
+      if (!resp.ok) {
+        // The gateway returns RFC-7807 problem+json; surface its detail.
+        let detail = `HTTP ${resp.status}`;
+        try {
+          const problem = (await resp.json()) as {
+            detail?: string;
+            title?: string;
+          };
+          detail = problem.detail ?? problem.title ?? detail;
+        } catch {
+          // Non-JSON error body — keep the status-only detail.
+        }
+        throw new Error(`quote: gateway rejected the request: ${detail}`);
+      }
+
+      return (await resp.json()) as GatewaySwapQuoteResponse;
+    } finally {
+      clearTimeout(timer);
+    }
   }
 
   /**

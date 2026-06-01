@@ -92,8 +92,14 @@ function newAmm(config: Record<string, unknown> = AMM_CONFIG): AMMClient {
   );
 }
 
+// Capture the real fetch so each test fully undoes `global.fetch = jest.fn`.
+// `jest.restoreAllMocks()` only restores `jest.spyOn` mocks, not direct
+// global assignments, so a test that forgot to stub would otherwise inherit
+// a stale mock from a previous run.
+const originalFetch = global.fetch;
 afterEach(() => {
   jest.restoreAllMocks();
+  global.fetch = originalFetch;
 });
 
 describe("AMMClient.quote", () => {
@@ -348,5 +354,42 @@ describe("AMMClient.quote — input + response hardening", () => {
       fee: 3000,
     });
     expect(q2.priceImpactBps).toBeUndefined();
+  });
+
+  it("throws when a BTC-out minAmountOut floors below 1 sat (no silent 0)", async () => {
+    // ~1.05 sat out; the slippage floor is just under 1 sat, so weiToSats
+    // would floor it to 0 — which would silently disable protection.
+    stubQuoteFetch({
+      ...GATEWAY_OK,
+      amountOut: (WEI_PER_SAT + 500_000_000n).toString(),
+      minAmountOut: (WEI_PER_SAT - 1n).toString(),
+    });
+    const amm = newAmm();
+    await expect(
+      amm.quote({
+        assetInAddress: TOKEN_A,
+        assetOutAddress: "btc",
+        amountIn: "1000000",
+        fee: 3000,
+        slippageBps: 50,
+      })
+    ).rejects.toThrow(/disables slippage protection/);
+  });
+
+  it("reports a timeout when the gateway request aborts", async () => {
+    global.fetch = jest.fn(async () => {
+      const err = new Error("aborted");
+      err.name = "AbortError";
+      throw err;
+    }) as unknown as typeof fetch;
+    const amm = newAmm();
+    await expect(
+      amm.quote({
+        assetInAddress: TOKEN_A,
+        assetOutAddress: TOKEN_B,
+        amountIn: "1000000",
+        fee: 3000,
+      })
+    ).rejects.toThrow(/timed out after \d+ms/);
   });
 });
