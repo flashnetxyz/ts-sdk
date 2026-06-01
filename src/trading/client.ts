@@ -246,7 +246,7 @@ export interface SwapResult {
  * until then callers must pass an explicit {@link TradingConfig}. Note: the
  * "staging" environment lives under `regtest` here.
  */
-const AMM_ENVIRONMENT_CONFIGS: Partial<Record<ClientEnvironment, TradingConfig>> = {
+const TRADING_ENVIRONMENT_CONFIGS: Partial<Record<ClientEnvironment, TradingConfig>> = {
   // Populate once contracts are deployed:
   // regtest: { conductorAddress: "0x..." },
 };
@@ -273,9 +273,9 @@ export class TradingClient {
   }
 
   private static resolveEnvironment(env: ClientEnvironment): TradingConfig {
-    const preset = AMM_ENVIRONMENT_CONFIGS[env];
+    const preset = TRADING_ENVIRONMENT_CONFIGS[env];
     if (!preset) {
-      const deployed = Object.keys(AMM_ENVIRONMENT_CONFIGS);
+      const deployed = Object.keys(TRADING_ENVIRONMENT_CONFIGS);
       throw new Error(
         `TradingClient: no AMM deployment for environment "${env}". ` +
           (deployed.length === 0

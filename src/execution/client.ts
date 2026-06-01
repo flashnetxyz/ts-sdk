@@ -183,6 +183,16 @@ function resolveExecutionConfig(
   wallet: SparkWalletInput,
   override?: Partial<ExecutionClientConfig>
 ): ExecutionClientConfig {
+  // A complete override needs no preset, so don't probe the wallet's
+  // network at all. This keeps callers that pass an explicit config from
+  // depending on the private, untyped `config.getNetworkType()` accessor.
+  if (override?.gatewayUrl && override.rpcUrl && override.chainId !== undefined) {
+    return {
+      gatewayUrl: override.gatewayUrl,
+      rpcUrl: override.rpcUrl,
+      chainId: override.chainId,
+    };
+  }
   const network = (wallet as unknown as SparkWalletWithConfig).config.getNetworkType();
   const preset = EXECUTION_NETWORK_CONFIGS[network];
   const merged = { ...preset, ...override } as Partial<ExecutionClientConfig>;
