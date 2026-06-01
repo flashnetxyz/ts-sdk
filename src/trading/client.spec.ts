@@ -1,5 +1,5 @@
 import { secp256k1 } from "@noble/curves/secp256k1";
-import { TradingClient } from "./client";
+import { TradingClient, SwapDepositStrandedError } from "./client";
 import { ExecutionClient } from "../execution/client";
 import type { SparkWalletInput } from "../execution/spark-evm-account";
 
@@ -190,11 +190,12 @@ describe("TradingClient.swap — BTC → token deposit wiring", () => {
     const client = new ExecutionClient(wallet, EXEC_CONFIG);
     const trading = new TradingClient(client, AMM_CONFIG);
 
-    // The call will throw when it reaches `fetchNonce` (no RPC running).
-    // That's fine — by then `wallet.transfer` has already run and we can
-    // assert on `observed`.
-    await expect(
-      trading.swap({
+    // The call throws when it reaches `fetchNonce` (no RPC running) — but
+    // by then `wallet.transfer` has already committed the deposit. The
+    // failure must surface as a SwapDepositStrandedError carrying the
+    // transferId so the stranded deposit stays recoverable.
+    const err = await trading
+      .swap({
         assetInAddress: "btc",
         assetOutAddress: "0x4444444444444444444444444444444444444444",
         amountIn: "250000",
@@ -202,7 +203,13 @@ describe("TradingClient.swap — BTC → token deposit wiring", () => {
         fee: 3000,
         useAvailableBalance: true,
       })
-    ).rejects.toBeDefined();
+      .then(
+        () => null,
+        (e) => e
+      );
+
+    expect(err).toBeInstanceOf(SwapDepositStrandedError);
+    expect((err as SwapDepositStrandedError).transferId).toBe("abc123");
 
     expect(observed).not.toBeNull();
     expect(observed.amountSats).toBe(250000);

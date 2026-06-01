@@ -70,7 +70,7 @@ export type {
 } from "./src/execution";
 
 // Trading client (wraps ExecutionClient for DEX operations)
-export { TradingClient } from "./src/trading";
+export { TradingClient, SwapDepositStrandedError } from "./src/trading";
 export type { TradingConfig, SwapParams as TradingSwapParams, SwapResult as TradingSwapResult } from "./src/trading";
 
 export type { RequestOptions } from "./src/api/client";

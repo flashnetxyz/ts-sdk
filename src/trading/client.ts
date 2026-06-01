@@ -252,6 +252,28 @@ const TRADING_ENVIRONMENT_CONFIGS: Partial<Record<ClientEnvironment, TradingConf
 };
 
 /**
+ * Thrown when a `useAvailableBalance` swap fails AFTER its funding Spark
+ * transfer has already committed. The deposit is sitting at the gateway
+ * deposit address; `transferId` lets the caller build a recovery deposit
+ * intent instead of losing track of it. `cause` is the underlying failure
+ * (nonce/fee RPC error, permit signing, gateway rejection, etc.).
+ */
+export class SwapDepositStrandedError extends Error {
+  readonly transferId: string;
+  constructor(transferId: string, cause: unknown) {
+    const reason = cause instanceof Error ? cause.message : String(cause);
+    super(
+      `swap funding transfer ${transferId} committed but the swap failed ` +
+        `before the intent was submitted: ${reason}. The deposit is at the ` +
+        `gateway deposit address — build a recovery intent with this transferId.`,
+      { cause }
+    );
+    this.name = "SwapDepositStrandedError";
+    this.transferId = transferId;
+  }
+}
+
+/**
  * High-level trading client for Flashnet DEX operations.
  *
  * Wraps the Conductor contract interactions and delegates to
@@ -598,68 +620,78 @@ export class TradingClient {
           },
         ];
 
-    // Step 2: build calldata.
-    let calldata: string;
-    let value: bigint = 0n;
-    if (isBtcIn) {
-      // BTC in: the gateway credits native BTC to our EVM address via the
-      // deposit, then swapBTCAndWithdraw consumes it as msg.value. No
-      // permit needed.
-      calldata = encodeFunctionData({
-        abi: conductorAbi,
-        functionName: "swapBTCAndWithdraw",
-        args: [
-          params.assetOutAddress as `0x${string}`,
-          params.fee,
-          minAmountOut,
-          sparkRecipient as `0x${string}`,
-          integrator as `0x${string}`,
-        ],
-      });
-      value = amountIn * WEI_PER_SAT;
-    } else {
-      // ERC-20 in: sign an EIP-2612 permit against the freshly-minted
-      // Spark token and use the *WithEIP2612 Conductor variants so
-      // no standing allowance is required.
-      const permit = await this.signEip2612Permit(
-        params.assetInAddress,
-        amountIn
-      );
-      if (isBtcOut) {
+    // The funding transfer has committed. Everything past this point can
+    // still fail (EIP-2612 permit signing, nonce/fee RPC inside
+    // signConductorTx, and the gateway POST in submitSwapIntent). Wrap it
+    // so any failure surfaces `transferId` via SwapDepositStrandedError —
+    // otherwise the deposit is stranded at the gateway with no way to
+    // build a recovery intent.
+    try {
+      // Step 2: build calldata.
+      let calldata: string;
+      let value: bigint = 0n;
+      if (isBtcIn) {
+        // BTC in: the gateway credits native BTC to our EVM address via the
+        // deposit, then swapBTCAndWithdraw consumes it as msg.value. No
+        // permit needed.
         calldata = encodeFunctionData({
           abi: conductorAbi,
-          functionName: "swapAndWithdrawBTCWithEIP2612",
+          functionName: "swapBTCAndWithdraw",
           args: [
-            params.assetInAddress as `0x${string}`,
-            params.fee,
-            amountIn,
-            minAmountOut,
-            sparkRecipient as `0x${string}`,
-            integrator as `0x${string}`,
-            permit,
-          ],
-        });
-      } else {
-        calldata = encodeFunctionData({
-          abi: conductorAbi,
-          functionName: "swapAndWithdrawWithEIP2612",
-          args: [
-            params.assetInAddress as `0x${string}`,
             params.assetOutAddress as `0x${string}`,
             params.fee,
-            amountIn,
             minAmountOut,
             sparkRecipient as `0x${string}`,
             integrator as `0x${string}`,
-            permit,
           ],
         });
+        value = amountIn * WEI_PER_SAT;
+      } else {
+        // ERC-20 in: sign an EIP-2612 permit against the freshly-minted
+        // Spark token and use the *WithEIP2612 Conductor variants so
+        // no standing allowance is required.
+        const permit = await this.signEip2612Permit(
+          params.assetInAddress,
+          amountIn
+        );
+        if (isBtcOut) {
+          calldata = encodeFunctionData({
+            abi: conductorAbi,
+            functionName: "swapAndWithdrawBTCWithEIP2612",
+            args: [
+              params.assetInAddress as `0x${string}`,
+              params.fee,
+              amountIn,
+              minAmountOut,
+              sparkRecipient as `0x${string}`,
+              integrator as `0x${string}`,
+              permit,
+            ],
+          });
+        } else {
+          calldata = encodeFunctionData({
+            abi: conductorAbi,
+            functionName: "swapAndWithdrawWithEIP2612",
+            args: [
+              params.assetInAddress as `0x${string}`,
+              params.assetOutAddress as `0x${string}`,
+              params.fee,
+              amountIn,
+              minAmountOut,
+              sparkRecipient as `0x${string}`,
+              integrator as `0x${string}`,
+              permit,
+            ],
+          });
+        }
       }
-    }
 
-    // Step 3: sign + submit bundled intent.
-    const signedTx = await this.signConductorTx(calldata, value);
-    return this.submitSwapIntent(signedTx, deposits, transferId);
+      // Step 3: sign + submit bundled intent.
+      const signedTx = await this.signConductorTx(calldata, value);
+      return await this.submitSwapIntent(signedTx, deposits, transferId);
+    } catch (err) {
+      throw new SwapDepositStrandedError(transferId, err);
+    }
   }
 
   /**
