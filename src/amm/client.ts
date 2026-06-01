@@ -320,14 +320,20 @@ export interface QuoteParams {
    * to use the gateway's default. Must be between 0 and 10000.
    */
   slippageBps?: number;
+  /**
+   * Integrator fee in basis points the Conductor will charge on this swap.
+   * Folded into the quote so `amountOut`/`minAmountOut` stay net of it. Must
+   * be 0..=1000. Only applied when the gateway has the Conductor address.
+   */
+  integratorBps?: number;
 }
 
 /** Result of {@link AMMClient.quote}. */
 export interface QuoteResult {
   /**
-   * Estimated output. Sats if the output is BTC, base units if a token.
-   * Exact per the on-chain QuoterV2 at quote time; the Conductor adds no
-   * fee on top today.
+   * Estimated output the caller receives, net of the Conductor fee. Sats if
+   * the output is BTC, base units if a token. Exact per the on-chain QuoterV2
+   * at quote time.
    */
   amountOut: string;
   /**
@@ -345,6 +351,23 @@ export interface QuoteResult {
   slippageBps: number;
   /** Echoed Uniswap V3 fee tier. */
   fee: number;
+  /**
+   * Total Conductor fee folded into `amountOut`, in basis points
+   * (host + integrator + protocol). 0 when no Conductor fee applies (or the
+   * gateway has no Conductor address configured).
+   */
+  conductorFeeBps: number;
+  /**
+   * The Conductor fee amount. For the WBTC fee asset this is whole sats
+   * (floored) to match `amountOut`'s units; for any other asset it is that
+   * token's base units. "0" when no fee applies.
+   */
+  conductorFeeAmount: string;
+  /**
+   * Asset the Conductor fee is denominated in (0x address). Undefined when no
+   * fee applies.
+   */
+  conductorFeeAsset?: string;
 }
 
 /** Raw shape of the gateway `POST /api/v1/swap/quote` response. */
@@ -355,6 +378,9 @@ interface GatewaySwapQuoteResponse {
   sqrtPriceX96After: string;
   feeTier: number;
   slippageBps: number;
+  conductorFeeBps: number;
+  conductorFeeAmount: string;
+  conductorFeeAsset?: string;
 }
 
 // ── Liquidity management ───────────────────────────────────────
@@ -751,6 +777,16 @@ export class AMMClient {
         "quote: slippageBps must be an integer between 0 and 10000."
       );
     }
+    if (
+      params.integratorBps !== undefined &&
+      (!Number.isInteger(params.integratorBps) ||
+        params.integratorBps < 0 ||
+        params.integratorBps > 1_000)
+    ) {
+      throw new Error(
+        "quote: integratorBps must be an integer between 0 and 1000."
+      );
+    }
 
     const tokenIn = isBtcIn
       ? this.requireWbtcAddress()
@@ -772,6 +808,9 @@ export class AMMClient {
       amountIn,
       ...(params.slippageBps !== undefined
         ? { slippageBps: params.slippageBps }
+        : {}),
+      ...(params.integratorBps !== undefined
+        ? { integratorBps: params.integratorBps }
         : {}),
     });
 
@@ -814,6 +853,18 @@ export class AMMClient {
       ? weiToSats(floorOut).toString()
       : floorOut.toString();
 
+    // The Conductor fee asset is whatever the gateway resolved (WBTC, USDB, or
+    // the output token). Convert a WBTC fee to sats so it matches amountOut's
+    // units; leave any other asset in its base units.
+    const feeIsWbtc =
+      res.conductorFeeAsset !== undefined &&
+      this.config.wbtcAddress !== undefined &&
+      res.conductorFeeAsset.toLowerCase() ===
+        this.config.wbtcAddress.toLowerCase();
+    const conductorFeeAmount = feeIsWbtc
+      ? weiToSats(res.conductorFeeAmount).toString()
+      : res.conductorFeeAmount;
+
     return {
       amountOut,
       minAmountOut,
@@ -821,6 +872,9 @@ export class AMMClient {
         typeof res.priceImpactBps === "number" ? res.priceImpactBps : undefined,
       slippageBps: res.slippageBps,
       fee: res.feeTier,
+      conductorFeeBps: res.conductorFeeBps,
+      conductorFeeAmount,
+      conductorFeeAsset: res.conductorFeeAsset,
     };
   }
 
@@ -842,6 +896,7 @@ export class AMMClient {
     fee: number;
     amountIn: string;
     slippageBps?: number;
+    integratorBps?: number;
   }): Promise<GatewaySwapQuoteResponse> {
     const { gatewayUrl } = this.execClient.getConfig();
     const url = `${gatewayUrl}/api/v1/swap/quote`;
