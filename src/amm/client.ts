@@ -612,7 +612,14 @@ export class AMMClient {
 
     const integrator = params.integratorPublicKey ?? ZERO_ADDRESS;
     const amountIn = BigInt(params.amountIn);
-    const minAmountOut = BigInt(params.minAmountOut);
+    // A BTC output's on-chain `minAmountOut` is the Uniswap WBTC floor, in
+    // wei. The product API denominates BTC in sats, so convert here —
+    // mirroring the `amountIn * WEI_PER_SAT` the BTC-input path applies
+    // below. Without this, a sats floor is enforced as wei (~1e10x too
+    // small) and slippage protection silently vanishes.
+    const minAmountOut = isBtcOut
+      ? BigInt(params.minAmountOut) * WEI_PER_SAT
+      : BigInt(params.minAmountOut);
     const execConfig = this.execClient.getConfig();
     const account = await this.execClient.getEvmAccount();
     // sparkRecipient is only needed for *AndWithdraw variants.
@@ -1014,7 +1021,11 @@ export class AMMClient {
 
     const integrator = params.integratorPublicKey ?? ZERO_ADDRESS;
     const amountIn = BigInt(params.amountIn);
-    const minAmountOut = BigInt(params.minAmountOut);
+    // See `swap`: a BTC output's on-chain floor is WBTC wei, but the API
+    // takes sats, so convert here too.
+    const minAmountOut = isBtcOut
+      ? BigInt(params.minAmountOut) * WEI_PER_SAT
+      : BigInt(params.minAmountOut);
     const sparkRecipient = await this.execClient.getSparkRecipientHex();
     // Pull the current Spark deposit address from the gateway — always
     // in sync with the current threshold key, no stale env var in the app.
