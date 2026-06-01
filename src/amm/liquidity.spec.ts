@@ -43,6 +43,39 @@ const TOKEN_C = "0xcccccccccccccccccccccccccccccccccccccccc";
 const PERMIT2 = "0x000000000022d473030f116ddee9f6b43ac78ba3";
 const CONDUCTOR = "0x9999999999999999999999999999999999999999";
 const NPM = "0x8888888888888888888888888888888888888888";
+// Canonical Multicall3 (configured in src/execution/rpc.ts); listPositions
+// batches its NPM reads through aggregate3 on this address.
+const MULTICALL3 = "0xcA11bde05977b3631167028862bE2a173976CA11";
+
+/** Minimal Multicall3 surface the stub needs to answer `client.multicall`. */
+const multicall3Abi = [
+  {
+    type: "function",
+    name: "aggregate3",
+    stateMutability: "payable",
+    inputs: [
+      {
+        name: "calls",
+        type: "tuple[]",
+        components: [
+          { name: "target", type: "address" },
+          { name: "allowFailure", type: "bool" },
+          { name: "callData", type: "bytes" },
+        ],
+      },
+    ],
+    outputs: [
+      {
+        name: "returnData",
+        type: "tuple[]",
+        components: [
+          { name: "success", type: "bool" },
+          { name: "returnData", type: "bytes" },
+        ],
+      },
+    ],
+  },
+] as const;
 
 const AMM_CONFIG = {
   conductorAddress: CONDUCTOR,
@@ -72,6 +105,10 @@ let stubPosition: StubPosition;
 let stubBalance: bigint;
 /** Permit2 allowance the `allowance()` stub returns; default effectively-infinite. */
 let stubAllowance: bigint;
+/** Token ids the `tokenOfOwnerByIndex(owner, i)` stub returns, by index. */
+let stubTokenIds: bigint[];
+/** Per-tokenId positions for the multi-position enumeration path; falls back to `stubPosition`. */
+let stubPositionsById: Map<string, StubPosition>;
 
 function mockWallet(opts?: {
   onTransfer?: (a: unknown) => void;
@@ -113,19 +150,23 @@ function mockWallet(opts?: {
  */
 let executeBodies: Array<{ deposits: unknown[]; evmTransaction: string }>;
 
-function encodePositions(): `0x${string}` {
+function positionFor(tokenId: bigint): StubPosition {
+  return stubPositionsById.get(tokenId.toString()) ?? stubPosition;
+}
+
+function encodePositions(pos: StubPosition): `0x${string}` {
   return encodeFunctionResult({
     abi: nonfungiblePositionManagerAbi,
     functionName: "positions",
     result: [
-      stubPosition.nonce,
+      pos.nonce,
       "0x0000000000000000000000000000000000000000",
-      stubPosition.token0 as `0x${string}`,
-      stubPosition.token1 as `0x${string}`,
-      stubPosition.fee,
+      pos.token0 as `0x${string}`,
+      pos.token1 as `0x${string}`,
+      pos.fee,
       -60,
       60,
-      stubPosition.liquidity,
+      pos.liquidity,
       0n,
       0n,
       0n,
@@ -187,33 +228,83 @@ function rpcResult(rpc: { method: string; params: unknown[] }): unknown {
       return "0x1";
     case "eth_call": {
       const call = rpc.params[0] as { to: string; data: `0x${string}` };
-      const selector = call.data.slice(0, 10).toLowerCase();
-      if (selector === "0x99fbab88") {
-        return encodePositions(); // positions
-      }
-      if (selector === "0x06fdde03") {
-        return encodeFunctionResult({
-          abi: nonfungiblePositionManagerAbi,
-          functionName: "name",
-          result: "Uniswap V3 Positions NFT-V1",
-        });
-      }
-      if (selector === "0x70a08231") {
-        return encodeFunctionResult({
-          abi: nonfungiblePositionManagerAbi,
-          functionName: "balanceOf",
-          result: stubBalance,
-        });
-      }
-      if (selector === "0xdd62ed3e") {
-        // allowance(owner, spender) → uint256 (Permit2 pre-flight check)
-        return `0x${stubAllowance.toString(16).padStart(64, "0")}`;
-      }
-      throw new Error(`unexpected eth_call selector ${selector}`);
+      return ethCallReturn(call.to, call.data);
     }
     default:
       throw new Error(`unexpected rpc method ${rpc.method}`);
   }
+}
+
+/**
+ * Resolve a single `eth_call`. Recurses through Multicall3 `aggregate3` so the
+ * `client.multicall` batches in `listPositions` resolve to their per-call
+ * results. Dispatches NPM reads by selector.
+ */
+function ethCallReturn(to: string, data: `0x${string}`): `0x${string}` {
+  const selector = data.slice(0, 10).toLowerCase();
+
+  if (
+    to.toLowerCase() === MULTICALL3.toLowerCase() &&
+    selector === "0x82ad56cb"
+  ) {
+    const [calls] = decodeFunctionData({ abi: multicall3Abi, data })
+      .args as readonly [
+      readonly {
+        target: string;
+        allowFailure: boolean;
+        callData: `0x${string}`;
+      }[],
+    ];
+    const results = calls.map((c) => ({
+      success: true,
+      returnData: ethCallReturn(c.target, c.callData),
+    }));
+    return encodeFunctionResult({
+      abi: multicall3Abi,
+      functionName: "aggregate3",
+      result: results,
+    });
+  }
+
+  if (selector === "0x99fbab88") {
+    // positions(tokenId)
+    const [tokenId] = decodeFunctionData({
+      abi: nonfungiblePositionManagerAbi,
+      data,
+    }).args as readonly [bigint];
+    return encodePositions(positionFor(tokenId));
+  }
+  if (selector === "0x06fdde03") {
+    return encodeFunctionResult({
+      abi: nonfungiblePositionManagerAbi,
+      functionName: "name",
+      result: "Uniswap V3 Positions NFT-V1",
+    });
+  }
+  if (selector === "0x70a08231") {
+    return encodeFunctionResult({
+      abi: nonfungiblePositionManagerAbi,
+      functionName: "balanceOf",
+      result: stubBalance,
+    });
+  }
+  if (selector === "0x2f745c59") {
+    // tokenOfOwnerByIndex(owner, index)
+    const args = decodeFunctionData({
+      abi: nonfungiblePositionManagerAbi,
+      data,
+    }).args as readonly [string, bigint];
+    return encodeFunctionResult({
+      abi: nonfungiblePositionManagerAbi,
+      functionName: "tokenOfOwnerByIndex",
+      result: stubTokenIds[Number(args[1])] ?? 0n,
+    });
+  }
+  if (selector === "0xdd62ed3e") {
+    // allowance(owner, spender) → uint256 (Permit2 pre-flight check)
+    return `0x${stubAllowance.toString(16).padStart(64, "0")}` as `0x${string}`;
+  }
+  throw new Error(`unexpected eth_call selector ${selector} to ${to}`);
 }
 
 function jsonResponse(body: unknown): Response {
@@ -259,6 +350,8 @@ beforeEach(() => {
   executeBodies = [];
   stubBalance = 0n;
   stubAllowance = (1n << 256n) - 1n;
+  stubTokenIds = [];
+  stubPositionsById = new Map();
   stubPosition = {
     nonce: 7n,
     token0: TOKEN_A,
@@ -426,6 +519,34 @@ describe("AMMClient.addLiquidity (BTC-paired)", () => {
     expect(permit.permitted.token.toLowerCase()).toBe(TOKEN_C);
     expect(permit.permitted.amount).toBe(5000n);
   });
+
+  it("refuses a funded BTC pair when the ERC20 leg lacks a Spark token id, before any transfer", async () => {
+    // The pre-flight must fire before the BTC leg's (irreversible) transfer, or
+    // the BTC funds land at custody with no submittable intent.
+    let btcTransfers = 0;
+    let tokenTransfers = 0;
+    const amm = await makeClient({
+      onTransfer: () => btcTransfers++,
+      onTransferTokens: () => tokenTransfers++,
+    });
+    await expect(
+      amm.addLiquidity({
+        token0: WBTC, // BTC leg (sorts first)
+        token1: TOKEN_C, // ERC20 leg, token1SparkId omitted on purpose
+        fee: 3000,
+        tickLower: -60,
+        tickUpper: 60,
+        amount0Desired: satsToWei(10_000).toString(),
+        amount1Desired: "5000",
+        amount0Min: "0",
+        amount1Min: "0",
+        useAvailableBalance: true,
+      })
+    ).rejects.toThrow(/Spark token id/);
+    expect(btcTransfers).toBe(0);
+    expect(tokenTransfers).toBe(0);
+    expect(executeBodies).toHaveLength(0);
+  });
 });
 
 describe("AMMClient.increaseLiquidity", () => {
@@ -555,6 +676,47 @@ describe("AMMClient position reads", () => {
     stubBalance = 0n;
     const amm = await makeClient();
     expect(await amm.listPositions()).toEqual([]);
+  });
+
+  it("listPositions enumerates and maps every owned position", async () => {
+    // balanceOf → tokenOfOwnerByIndex (multicall) → positions (multicall) → map.
+    stubBalance = 2n;
+    stubTokenIds = [101n, 202n];
+    stubPositionsById = new Map([
+      [
+        "101",
+        {
+          nonce: 1n,
+          token0: TOKEN_A,
+          token1: TOKEN_B,
+          fee: 500,
+          liquidity: 111n,
+        },
+      ],
+      [
+        "202",
+        {
+          nonce: 2n,
+          token0: TOKEN_A,
+          token1: TOKEN_C,
+          fee: 3000,
+          liquidity: 222n,
+        },
+      ],
+    ]);
+    const amm = await makeClient();
+    const positions = await amm.listPositions();
+
+    expect(positions).toHaveLength(2);
+    // Each tokenId must map to its own position (not a shared fixture).
+    expect(positions[0]?.tokenId).toBe(101n);
+    expect(positions[0]?.fee).toBe(500);
+    expect(positions[0]?.liquidity).toBe(111n);
+    expect(positions[0]?.token1.toLowerCase()).toBe(TOKEN_B);
+    expect(positions[1]?.tokenId).toBe(202n);
+    expect(positions[1]?.fee).toBe(3000);
+    expect(positions[1]?.liquidity).toBe(222n);
+    expect(positions[1]?.token1.toLowerCase()).toBe(TOKEN_C);
   });
 });
 

@@ -1328,8 +1328,10 @@ export class AMMClient {
         args: [struct, permit.permitTransfer, permit.signature],
       });
     } else {
-      const permitA = await this.buildPermit2Signature(token0, amount0);
-      const permitB = await this.buildPermit2Signature(token1, amount1);
+      const [permitA, permitB] = await Promise.all([
+        this.buildPermit2Signature(token0, amount0),
+        this.buildPermit2Signature(token1, amount1),
+      ]);
       calldata = encodeFunctionData({
         abi: conductorAbi,
         functionName: "addLiquidity",
@@ -1403,8 +1405,10 @@ export class AMMClient {
         args: [struct, permit.permitTransfer, permit.signature],
       });
     } else {
-      const permitA = await this.buildPermit2Signature(token0, amount0);
-      const permitB = await this.buildPermit2Signature(token1, amount1);
+      const [permitA, permitB] = await Promise.all([
+        this.buildPermit2Signature(token0, amount0),
+        this.buildPermit2Signature(token1, amount1),
+      ]);
       calldata = encodeFunctionData({
         abi: conductorAbi,
         functionName: "increaseLiquidity",
@@ -1552,8 +1556,10 @@ export class AMMClient {
       // The Conductor binds permitA/permitB to token0/token1 unconditionally
       // (even when the additional amount is zero), so always sign both with
       // the correct token; a zero-amount permit is a no-op on the pull.
-      const permitA = await this.buildPermit2Signature(token0, add0);
-      const permitB = await this.buildPermit2Signature(token1, add1);
+      const [permitA, permitB] = await Promise.all([
+        this.buildPermit2Signature(token0, add0),
+        this.buildPermit2Signature(token1, add1),
+      ]);
       calldata = encodeFunctionData({
         abi: conductorAbi,
         functionName: "modifyPosition",
@@ -1692,21 +1698,25 @@ export class AMMClient {
     const account = await this.execClient.getEvmAccount();
     const client = getClient(execConfig.rpcUrl);
 
-    const nonce =
-      knownNonce ??
-      ((
-        (await client.readContract({
-          address: npm as Address,
-          abi: nonfungiblePositionManagerAbi,
-          functionName: "positions",
-          args: [tokenId],
-        })) as PositionsTuple
-      )[0]);
-    const npmName = await client.readContract({
-      address: npm as Address,
-      abi: nonfungiblePositionManagerAbi,
-      functionName: "name",
-    });
+    // Read the nonce (unless the caller already has it) and the NPM name in
+    // parallel — they're independent.
+    const [nonce, npmName] = await Promise.all([
+      knownNonce !== undefined
+        ? Promise.resolve(knownNonce)
+        : client
+            .readContract({
+              address: npm as Address,
+              abi: nonfungiblePositionManagerAbi,
+              functionName: "positions",
+              args: [tokenId],
+            })
+            .then((t) => (t as PositionsTuple)[0]),
+      client.readContract({
+        address: npm as Address,
+        abi: nonfungiblePositionManagerAbi,
+        functionName: "name",
+      }),
+    ]);
 
     const signature = await account.signTypedData({
       domain: {
@@ -1740,12 +1750,13 @@ export class AMMClient {
    * Spark transfer to the gateway-advertised deposit address and a matching
    * `Deposit` for the bundled intent. Returns empty arrays when funding is off.
    *
-   * Pre-flights the Permit2 allowance for every ERC20 leg *before* any Spark
-   * transfer: the Spark transfer is effectively irreversible, but the bundled
-   * LP tx reverts at the Conductor's `_pullViaPermit2` when no standing Permit2
-   * allowance exists — which would credit the funds to the EVM identity
-   * address with no position to show for it. Failing here keeps the caller's
-   * Spark balance intact and points them at `ensurePermit2Approval`.
+   * Pre-flights every leg's fundability *before* any Spark transfer (transfers
+   * are effectively irreversible). BTC legs must be whole-sat; ERC20 legs must
+   * carry a Spark token id and already hold a Permit2 allowance. Without the
+   * up-front check, a failure on the second leg (or a revert at the Conductor's
+   * `_pullViaPermit2`) would strand the first leg's transfer at custody with
+   * the intent never submitted. Validating first keeps the Spark balance intact
+   * and points the caller at `ensurePermit2Approval` when an allowance is missing.
    */
   private async fundTwoLegs(opts: {
     useAvailableBalance: boolean | undefined;
@@ -1759,9 +1770,19 @@ export class AMMClient {
     token1SparkId?: string;
   }): Promise<{ deposits: Deposit[]; inboundIds: string[] }> {
     if (!opts.useAvailableBalance) return { deposits: [], inboundIds: [] };
-    await this.assertErc20LegsPermit2Approved([
-      { isBtc: opts.isToken0Btc, token: opts.token0Address, amount: opts.amount0 },
-      { isBtc: opts.isToken1Btc, token: opts.token1Address, amount: opts.amount1 },
+    await this.assertLegsFundable([
+      {
+        isBtc: opts.isToken0Btc,
+        token: opts.token0Address,
+        amount: opts.amount0,
+        sparkTokenId: opts.token0SparkId,
+      },
+      {
+        isBtc: opts.isToken1Btc,
+        token: opts.token1Address,
+        amount: opts.amount1,
+        sparkTokenId: opts.token1SparkId,
+      },
     ]);
     const network = await this.execClient.getNetworkInfo();
     const custody = network.spark.depositAddress;
@@ -1791,15 +1812,39 @@ export class AMMClient {
   }
 
   /**
-   * Assert each ERC20 leg sourced from Spark already holds a standing Permit2
-   * allowance sufficient for its amount. Throws (before any transfer) with a
-   * pointer to `ensurePermit2Approval` otherwise. BTC legs and zero-amount
-   * legs are skipped (they aren't pulled via Permit2).
+   * Validate that both legs can be funded from Spark before any (irreversible)
+   * transfer runs. BTC legs must be whole-sat (the Spark transfer is in sats);
+   * ERC20 legs must carry a Spark token id and already hold a Permit2 allowance
+   * covering their amount. Throwing here, rather than mid-sequence inside
+   * `fundLpLeg`, prevents a failure on one leg from stranding a transfer
+   * already made for the other. Zero-amount legs are skipped.
    */
-  private async assertErc20LegsPermit2Approved(
-    legs: { isBtc: boolean; token: string; amount: bigint }[]
+  private async assertLegsFundable(
+    legs: {
+      isBtc: boolean;
+      token: string;
+      amount: bigint;
+      sparkTokenId?: string;
+    }[]
   ): Promise<void> {
-    const erc20Legs = legs.filter((l) => !l.isBtc && l.amount > 0n);
+    const active = legs.filter((l) => l.amount > 0n);
+    for (const leg of active) {
+      if (leg.isBtc) {
+        if (leg.amount % WEI_PER_SAT !== 0n) {
+          throw new Error(
+            `BTC leg amount ${leg.amount} wei is not a whole number of sats ` +
+              `(must be a multiple of ${WEI_PER_SAT}). Round to whole sats.`
+          );
+        }
+      } else if (!leg.sparkTokenId) {
+        throw new Error(
+          `useAvailableBalance requires a Spark token id (bech32m btkn…) for ` +
+            `the ERC20 leg ${leg.token}.`
+        );
+      }
+    }
+
+    const erc20Legs = active.filter((l) => !l.isBtc);
     if (erc20Legs.length === 0) return;
     const permit2 = this.config.permit2Address;
     if (!permit2) {
@@ -1810,23 +1855,25 @@ export class AMMClient {
     }
     const execConfig = this.execClient.getConfig();
     const account = await this.execClient.getEvmAccount();
-    for (const leg of erc20Legs) {
-      const allowance = await fetchAllowance(
-        execConfig.rpcUrl,
-        leg.token,
-        account.address,
-        permit2
-      );
-      if (allowance < leg.amount) {
-        throw new Error(
-          `Permit2 allowance for ${leg.token} (${allowance}) is below the ` +
-            `funded amount (${leg.amount}). Call ensurePermit2Approval("${leg.token}") ` +
-            `once before sourcing this leg from Spark — otherwise the Spark ` +
-            `transfer would credit your EVM address but the liquidity tx would ` +
-            `revert, leaving the funds stranded there.`
+    await Promise.all(
+      erc20Legs.map(async (leg) => {
+        const allowance = await fetchAllowance(
+          execConfig.rpcUrl,
+          leg.token,
+          account.address,
+          permit2
         );
-      }
-    }
+        if (allowance < leg.amount) {
+          throw new Error(
+            `Permit2 allowance for ${leg.token} (${allowance}) is below the ` +
+              `funded amount (${leg.amount}). Call ensurePermit2Approval("${leg.token}") ` +
+              `once before sourcing this leg from Spark, or the Spark transfer ` +
+              `would credit your EVM address while the liquidity tx reverts, ` +
+              `leaving the funds stranded there.`
+          );
+        }
+      })
+    );
   }
 
   /** Make the Spark transfer for one LP leg and build its bundled deposit. */
