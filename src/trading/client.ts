@@ -1,26 +1,25 @@
 /**
- * Flashnet AMM Client
+ * Flashnet Trading Client
  *
  * High-level client for DEX operations through the Conductor contract.
  * Wraps ExecutionClient for intent submission and EVM signing.
  *
  * @example
  * ```typescript
- * import { ExecutionClient } from "@flashnet/sdk";
- * import { AMMClient } from "@flashnet/sdk/amm";
+ * import { ExecutionClient, TradingClient } from "@flashnet/sdk";
  *
  * const execClient = new ExecutionClient(sparkWallet, { ... });
  * await execClient.authenticate();
  *
  * // Use a built-in environment preset (addresses baked into the SDK):
- * const amm = new AMMClient(execClient, "regtest");
+ * const trading = new TradingClient(execClient, "regtest");
  *
  * // Or pass an explicit config (e.g. for localnet / custom deploys):
- * const amm = new AMMClient(execClient, {
+ * const trading = new TradingClient(execClient, {
  *   conductorAddress: "0x...",
  * });
  *
- * await amm.swap({
+ * await trading.swap({
  *   assetInAddress: "btc",
  *   assetOutAddress: "0x...",
  *   amountIn: "1000",
@@ -59,7 +58,7 @@ import type { ClientEnvironment, SparkNetworkType } from "../types";
  * payload as a 64-char lowercase hex string (32 bytes, no `0x` prefix).
  *
  * We require the bech32m form as input: given a hex string we could
- * re-encode to bech32m only if we knew the Spark network, and the AMM
+ * re-encode to bech32m only if we knew the Spark network, and the trading
  * client intentionally doesn't carry that. The bech32m prefix
  * (`btkn`/`btknt`/`btkns`/`btknrt`) tells us the network unambiguously.
  */
@@ -123,12 +122,12 @@ const DEFAULT_APPROVE_GAS_LIMIT = 100_000n;
 const WEI_PER_SAT = 10_000_000_000n;
 
 /**
- * AMM-specific configuration.
+ * Configuration for the {@link TradingClient}.
  *
- * For known networks pass a preset name (see {@link AMMNetwork}) instead
- * of building this object by hand.
+ * For known networks pass a preset name (see {@link ClientEnvironment})
+ * instead of building this object by hand.
  */
-export interface AMMConfig {
+export interface TradingConfig {
   /** Conductor proxy contract address. */
   conductorAddress: string;
   /**
@@ -139,7 +138,7 @@ export interface AMMConfig {
    */
   permit2Address?: string;
   // NOTE: the Spark deposit address used when `useAvailableBalance: true`
-  // is no longer configured here. AMMClient resolves it at call time via
+  // is no longer configured here. TradingClient resolves it at call time via
   // `executionClient.getNetworkInfo()` so consumers always track the
   // gateway's current view.
   /**
@@ -192,7 +191,7 @@ export interface SwapParams {
   /** Whether to withdraw output back to Spark. Default true. */
   withdraw?: boolean;
   /**
-   * When true, AMMClient sources `amountIn` from the caller's Spark
+   * When true, TradingClient sources `amountIn` from the caller's Spark
    * balance: it makes the Spark transfer to the gateway-advertised
    * deposit address (resolved via `executionClient.getNetworkInfo()`) and
    * bundles the resulting `transferId` into the execute intent as a
@@ -244,44 +243,66 @@ export interface SwapResult {
  * {@link CLIENT_NETWORK_CONFIGS}.
  *
  * Populate an entry once a network's contracts are deployed and stable;
- * until then callers must pass an explicit {@link AMMConfig}. Note: the
+ * until then callers must pass an explicit {@link TradingConfig}. Note: the
  * "staging" environment lives under `regtest` here.
  */
-const AMM_ENVIRONMENT_CONFIGS: Partial<Record<ClientEnvironment, AMMConfig>> = {
+const TRADING_ENVIRONMENT_CONFIGS: Partial<Record<ClientEnvironment, TradingConfig>> = {
   // Populate once contracts are deployed:
   // regtest: { conductorAddress: "0x..." },
 };
 
 /**
- * High-level AMM client for Flashnet DEX operations.
+ * Thrown when a `useAvailableBalance` swap fails AFTER its funding Spark
+ * transfer has already committed. The deposit is sitting at the gateway
+ * deposit address; `transferId` lets the caller build a recovery deposit
+ * intent instead of losing track of it. `cause` is the underlying failure
+ * (nonce/fee RPC error, permit signing, gateway rejection, etc.).
+ */
+export class SwapDepositStrandedError extends Error {
+  readonly transferId: string;
+  constructor(transferId: string, cause: unknown) {
+    const reason = cause instanceof Error ? cause.message : String(cause);
+    super(
+      `swap funding transfer ${transferId} committed but the swap failed ` +
+        `before the intent was submitted: ${reason}. The deposit is at the ` +
+        `gateway deposit address — build a recovery intent with this transferId.`,
+      { cause }
+    );
+    this.name = "SwapDepositStrandedError";
+    this.transferId = transferId;
+  }
+}
+
+/**
+ * High-level trading client for Flashnet DEX operations.
  *
  * Wraps the Conductor contract interactions and delegates to
  * ExecutionClient for intent submission and EVM signing.
  */
-export class AMMClient {
+export class TradingClient {
   private readonly execClient: ExecutionClient;
-  private readonly config: AMMConfig;
+  private readonly config: TradingConfig;
 
   constructor(
     execClient: ExecutionClient,
-    environmentOrConfig: ClientEnvironment | AMMConfig
+    environmentOrConfig: ClientEnvironment | TradingConfig
   ) {
     this.execClient = execClient;
     this.config =
       typeof environmentOrConfig === "string"
-        ? AMMClient.resolveEnvironment(environmentOrConfig)
+        ? TradingClient.resolveEnvironment(environmentOrConfig)
         : environmentOrConfig;
   }
 
-  private static resolveEnvironment(env: ClientEnvironment): AMMConfig {
-    const preset = AMM_ENVIRONMENT_CONFIGS[env];
+  private static resolveEnvironment(env: ClientEnvironment): TradingConfig {
+    const preset = TRADING_ENVIRONMENT_CONFIGS[env];
     if (!preset) {
-      const deployed = Object.keys(AMM_ENVIRONMENT_CONFIGS);
+      const deployed = Object.keys(TRADING_ENVIRONMENT_CONFIGS);
       throw new Error(
-        `AMMClient: no AMM deployment for environment "${env}". ` +
+        `TradingClient: no AMM deployment for environment "${env}". ` +
           (deployed.length === 0
-            ? "No environments have AMM contracts deployed yet — pass an explicit AMMConfig."
-            : `Deployed: ${deployed.join(", ")}. Pass an explicit AMMConfig for others.`)
+            ? "No environments have AMM contracts deployed yet — pass an explicit TradingConfig."
+            : `Deployed: ${deployed.join(", ")}. Pass an explicit TradingConfig for others.`)
       );
     }
     return preset;
@@ -323,7 +344,7 @@ export class AMMClient {
       );
     }
 
-    // Round-trip path: AMMClient owns the full Spark→EVM→Spark dance in
+    // Round-trip path: TradingClient owns the full Spark→EVM→Spark dance in
     // one intent. Dispatch to the dedicated helper so the classic paths
     // below stay readable.
     if (params.useAvailableBalance) {
@@ -438,7 +459,7 @@ export class AMMClient {
   }> {
     if (!this.config.permit2Address) {
       throw new Error(
-        "approvalMode='permit2' requires permit2Address in AMMConfig. " +
+        "approvalMode='permit2' requires permit2Address in TradingConfig. " +
           "Pass the deployed Permit2 contract address."
       );
     }
@@ -599,68 +620,78 @@ export class AMMClient {
           },
         ];
 
-    // Step 2: build calldata.
-    let calldata: string;
-    let value: bigint = 0n;
-    if (isBtcIn) {
-      // BTC in: the gateway credits native BTC to our EVM address via the
-      // deposit, then swapBTCAndWithdraw consumes it as msg.value. No
-      // permit needed.
-      calldata = encodeFunctionData({
-        abi: conductorAbi,
-        functionName: "swapBTCAndWithdraw",
-        args: [
-          params.assetOutAddress as `0x${string}`,
-          params.fee,
-          minAmountOut,
-          sparkRecipient as `0x${string}`,
-          integrator as `0x${string}`,
-        ],
-      });
-      value = amountIn * WEI_PER_SAT;
-    } else {
-      // ERC-20 in: sign an EIP-2612 permit against the freshly-minted
-      // Spark token and use the *WithEIP2612 Conductor variants so
-      // no standing allowance is required.
-      const permit = await this.signEip2612Permit(
-        params.assetInAddress,
-        amountIn
-      );
-      if (isBtcOut) {
+    // The funding transfer has committed. Everything past this point can
+    // still fail (EIP-2612 permit signing, nonce/fee RPC inside
+    // signConductorTx, and the gateway POST in submitSwapIntent). Wrap it
+    // so any failure surfaces `transferId` via SwapDepositStrandedError —
+    // otherwise the deposit is stranded at the gateway with no way to
+    // build a recovery intent.
+    try {
+      // Step 2: build calldata.
+      let calldata: string;
+      let value: bigint = 0n;
+      if (isBtcIn) {
+        // BTC in: the gateway credits native BTC to our EVM address via the
+        // deposit, then swapBTCAndWithdraw consumes it as msg.value. No
+        // permit needed.
         calldata = encodeFunctionData({
           abi: conductorAbi,
-          functionName: "swapAndWithdrawBTCWithEIP2612",
+          functionName: "swapBTCAndWithdraw",
           args: [
-            params.assetInAddress as `0x${string}`,
-            params.fee,
-            amountIn,
-            minAmountOut,
-            sparkRecipient as `0x${string}`,
-            integrator as `0x${string}`,
-            permit,
-          ],
-        });
-      } else {
-        calldata = encodeFunctionData({
-          abi: conductorAbi,
-          functionName: "swapAndWithdrawWithEIP2612",
-          args: [
-            params.assetInAddress as `0x${string}`,
             params.assetOutAddress as `0x${string}`,
             params.fee,
-            amountIn,
             minAmountOut,
             sparkRecipient as `0x${string}`,
             integrator as `0x${string}`,
-            permit,
           ],
         });
+        value = amountIn * WEI_PER_SAT;
+      } else {
+        // ERC-20 in: sign an EIP-2612 permit against the freshly-minted
+        // Spark token and use the *WithEIP2612 Conductor variants so
+        // no standing allowance is required.
+        const permit = await this.signEip2612Permit(
+          params.assetInAddress,
+          amountIn
+        );
+        if (isBtcOut) {
+          calldata = encodeFunctionData({
+            abi: conductorAbi,
+            functionName: "swapAndWithdrawBTCWithEIP2612",
+            args: [
+              params.assetInAddress as `0x${string}`,
+              params.fee,
+              amountIn,
+              minAmountOut,
+              sparkRecipient as `0x${string}`,
+              integrator as `0x${string}`,
+              permit,
+            ],
+          });
+        } else {
+          calldata = encodeFunctionData({
+            abi: conductorAbi,
+            functionName: "swapAndWithdrawWithEIP2612",
+            args: [
+              params.assetInAddress as `0x${string}`,
+              params.assetOutAddress as `0x${string}`,
+              params.fee,
+              amountIn,
+              minAmountOut,
+              sparkRecipient as `0x${string}`,
+              integrator as `0x${string}`,
+              permit,
+            ],
+          });
+        }
       }
-    }
 
-    // Step 3: sign + submit bundled intent.
-    const signedTx = await this.signConductorTx(calldata, value);
-    return this.submitSwapIntent(signedTx, deposits, transferId);
+      // Step 3: sign + submit bundled intent.
+      const signedTx = await this.signConductorTx(calldata, value);
+      return await this.submitSwapIntent(signedTx, deposits, transferId);
+    } catch (err) {
+      throw new SwapDepositStrandedError(transferId, err);
+    }
   }
 
   /**

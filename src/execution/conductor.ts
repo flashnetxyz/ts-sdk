@@ -2,7 +2,7 @@
  * Conductor Contract ABI Encoding
  *
  * Low-level calldata encoding for the Conductor contract.
- * Used internally by AMMClient — consumers should use AMMClient.swap() instead.
+ * Used internally by TradingClient — consumers should use TradingClient.swap() instead.
  */
 
 import { encodeFunctionData } from "viem";
