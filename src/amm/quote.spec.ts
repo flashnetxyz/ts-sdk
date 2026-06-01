@@ -256,3 +256,97 @@ describe("AMMClient.quote", () => {
     ).rejects.toThrow(/no pool or insufficient liquidity/);
   });
 });
+
+describe("AMMClient.quote — input + response hardening", () => {
+  it("rejects amountIn that is not a base-10 integer", async () => {
+    stubQuoteFetch(GATEWAY_OK);
+    const amm = newAmm();
+    for (const bad of ["0x10", "1.5", "1e6", "100_000", "abc", "-5"]) {
+      await expect(
+        amm.quote({
+          assetInAddress: TOKEN_A,
+          assetOutAddress: TOKEN_B,
+          amountIn: bad,
+          fee: 3000,
+        })
+      ).rejects.toThrow(/amountIn/);
+    }
+  });
+
+  it("rejects a fractional slippageBps", async () => {
+    stubQuoteFetch(GATEWAY_OK);
+    const amm = newAmm();
+    await expect(
+      amm.quote({
+        assetInAddress: TOKEN_A,
+        assetOutAddress: TOKEN_B,
+        amountIn: "1000000",
+        fee: 3000,
+        slippageBps: 12.5,
+      })
+    ).rejects.toThrow(/integer between 0 and 10000/);
+  });
+
+  it("rejects a gateway minAmountOut greater than amountOut", async () => {
+    stubQuoteFetch({ ...GATEWAY_OK, amountOut: "1000", minAmountOut: "2000" });
+    const amm = newAmm();
+    await expect(
+      amm.quote({
+        assetInAddress: TOKEN_A,
+        assetOutAddress: TOKEN_B,
+        amountIn: "1000000",
+        fee: 3000,
+      })
+    ).rejects.toThrow(/minAmountOut greater than amountOut/);
+  });
+
+  it("rejects a non-numeric gateway amount", async () => {
+    stubQuoteFetch({ ...GATEWAY_OK, amountOut: "not-a-number" });
+    const amm = newAmm();
+    await expect(
+      amm.quote({
+        assetInAddress: TOKEN_A,
+        assetOutAddress: TOKEN_B,
+        amountIn: "1000000",
+        fee: 3000,
+      })
+    ).rejects.toThrow(/non-numeric amountOut/);
+  });
+
+  it("rejects when the gateway ignores the requested slippageBps", async () => {
+    stubQuoteFetch({ ...GATEWAY_OK, slippageBps: 25 });
+    const amm = newAmm();
+    await expect(
+      amm.quote({
+        assetInAddress: TOKEN_A,
+        assetOutAddress: TOKEN_B,
+        amountIn: "1000000",
+        fee: 3000,
+        slippageBps: 50,
+      })
+    ).rejects.toThrow(/gateway applied slippageBps=25/);
+  });
+
+  it("normalizes a missing or null priceImpactBps to undefined", async () => {
+    const omitted: Record<string, unknown> = { ...GATEWAY_OK };
+    delete omitted.priceImpactBps;
+    stubQuoteFetch(omitted);
+    const amm = newAmm();
+    const q1 = await amm.quote({
+      assetInAddress: TOKEN_A,
+      assetOutAddress: TOKEN_B,
+      amountIn: "1000000",
+      fee: 3000,
+    });
+    expect(q1.priceImpactBps).toBeUndefined();
+
+    stubQuoteFetch({ ...GATEWAY_OK, priceImpactBps: null });
+    const q2 = await amm.quote({
+      assetInAddress: TOKEN_A,
+      assetOutAddress: TOKEN_B,
+      amountIn: "1000000",
+      fee: 3000,
+    });
+    expect(q2.priceImpactBps).toBeUndefined();
+  });
+});

@@ -142,6 +142,19 @@ function splitSignature(signature: Hex): { v: number; r: Hex; s: Hex } {
 }
 
 /**
+ * Parse a base-10 integer amount returned by the gateway, rejecting anything
+ * non-numeric. The result is used as an on-chain `minAmountOut` floor, so a
+ * malformed response must fail loudly here rather than slip through or blow
+ * up far from its cause.
+ */
+function parseQuoteAmount(value: unknown, field: string): bigint {
+  if (typeof value !== "string" || !/^\d+$/.test(value)) {
+    throw new Error(`quote: gateway returned a non-numeric ${field}.`);
+  }
+  return BigInt(value);
+}
+
+/**
  * AMM-specific configuration.
  *
  * For known networks pass a preset name (see {@link AMMNetwork}) instead
@@ -707,15 +720,26 @@ export class AMMClient {
       );
     }
 
-    const amountInRaw = BigInt(params.amountIn);
+    const trimmedAmountIn = params.amountIn.trim();
+    if (!/^\d+$/.test(trimmedAmountIn)) {
+      throw new Error(
+        "quote: amountIn must be a base-10 integer string (token base " +
+          "units, or sats when the input is BTC)."
+      );
+    }
+    const amountInRaw = BigInt(trimmedAmountIn);
     if (amountInRaw <= 0n) {
       throw new Error("quote: amountIn must be greater than zero.");
     }
     if (
       params.slippageBps !== undefined &&
-      (params.slippageBps < 0 || params.slippageBps > 10_000)
+      (!Number.isInteger(params.slippageBps) ||
+        params.slippageBps < 0 ||
+        params.slippageBps > 10_000)
     ) {
-      throw new Error("quote: slippageBps must be between 0 and 10000.");
+      throw new Error(
+        "quote: slippageBps must be an integer between 0 and 10000."
+      );
     }
 
     const tokenIn = isBtcIn
@@ -724,10 +748,12 @@ export class AMMClient {
     const tokenOut = isBtcOut
       ? this.requireWbtcAddress()
       : params.assetOutAddress;
-    // BTC input is denominated in sats; the WBTC pool leg is in wei.
+    // BTC input is denominated in sats; the WBTC pool leg is in wei. Forward
+    // the normalized decimal for token legs too, so a quirky-but-valid input
+    // reaches the gateway canonicalized.
     const amountIn = isBtcIn
       ? (amountInRaw * WEI_PER_SAT).toString()
-      : params.amountIn;
+      : amountInRaw.toString();
 
     const res = await this.postSwapQuote({
       tokenIn,
@@ -739,18 +765,39 @@ export class AMMClient {
         : {}),
     });
 
+    // Don't blindly trust the gateway with a value the caller will use as an
+    // on-chain floor: require numeric amounts with a sane relationship, and
+    // confirm the requested slippage was actually honored.
+    const grossOut = parseQuoteAmount(res.amountOut, "amountOut");
+    const floorOut = parseQuoteAmount(res.minAmountOut, "minAmountOut");
+    if (floorOut > grossOut) {
+      throw new Error(
+        "quote: gateway returned minAmountOut greater than amountOut."
+      );
+    }
+    if (
+      params.slippageBps !== undefined &&
+      res.slippageBps !== params.slippageBps
+    ) {
+      throw new Error(
+        `quote: gateway applied slippageBps=${res.slippageBps}, expected ` +
+          `${params.slippageBps}.`
+      );
+    }
+
     // A BTC output is reported back in whole sats to match `swap`'s units.
     const amountOut = isBtcOut
-      ? weiToSats(res.amountOut).toString()
-      : res.amountOut;
+      ? weiToSats(grossOut).toString()
+      : grossOut.toString();
     const minAmountOut = isBtcOut
-      ? weiToSats(res.minAmountOut).toString()
-      : res.minAmountOut;
+      ? weiToSats(floorOut).toString()
+      : floorOut.toString();
 
     return {
       amountOut,
       minAmountOut,
-      priceImpactBps: res.priceImpactBps,
+      priceImpactBps:
+        typeof res.priceImpactBps === "number" ? res.priceImpactBps : undefined,
       slippageBps: res.slippageBps,
       fee: res.feeTier,
     };
@@ -786,10 +833,9 @@ export class AMMClient {
         body: JSON.stringify(body),
       });
     } catch (err) {
+      const reason = err instanceof Error ? err.message : String(err);
       throw new Error(
-        `quote: could not reach the gateway quote endpoint at ${url}: ${
-          (err as Error).message
-        }`
+        `quote: could not reach the gateway quote endpoint at ${url}: ${reason}`
       );
     }
 
