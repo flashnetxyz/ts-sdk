@@ -632,6 +632,20 @@ export class AMMClient {
       );
     }
 
+    // Integrator fee (bps) the Conductor charges on this swap. Validate up
+    // front so both the classic and round-trip (useAvailableBalance) paths get
+    // a checked value. Must match the Conductor's per-component 1000 bps cap.
+    const integratorBps = params.integratorFeeRateBps ?? 0;
+    if (
+      !Number.isInteger(integratorBps) ||
+      integratorBps < 0 ||
+      integratorBps > 1000
+    ) {
+      throw new Error(
+        "swap: integratorFeeRateBps must be an integer between 0 and 1000."
+      );
+    }
+
     // Round-trip path: AMMClient owns the full Spark→EVM→Spark dance in
     // one intent. Dispatch to the dedicated helper so the classic paths
     // below stay readable.
@@ -658,7 +672,7 @@ export class AMMClient {
 
     if (isBtcIn) {
       const calldata = this.encodeBtcSwap(
-        params.assetOutAddress, params.fee, minAmountOut, integrator, withdraw, sparkRecipient
+        params.assetOutAddress, params.fee, minAmountOut, integrator, integratorBps, withdraw, sparkRecipient
       );
       const signedTx = await this.signConductorTx(calldata, amountIn * WEI_PER_SAT);
       return this.submitSwapIntent(signedTx);
@@ -688,6 +702,7 @@ export class AMMClient {
               minAmountOut,
               sparkRecipient as `0x${string}`,
               integrator as `0x${string}`,
+              integratorBps,
               permit.permitTransfer,
               permit.signature,
             ],
@@ -703,6 +718,7 @@ export class AMMClient {
               minAmountOut,
               sparkRecipient as `0x${string}`,
               integrator as `0x${string}`,
+              integratorBps,
               permit.permitTransfer,
               permit.signature,
             ],
@@ -716,7 +732,7 @@ export class AMMClient {
 
     if (isBtcOut) {
       const calldata = this.encodeTokenToBtcSwap(
-        params.assetInAddress, params.fee, amountIn, minAmountOut, integrator, sparkRecipient
+        params.assetInAddress, params.fee, amountIn, minAmountOut, integrator, integratorBps, sparkRecipient
       );
       const signedTx = await this.signConductorTx(calldata, 0n);
       return this.submitSwapIntent(signedTx);
@@ -724,7 +740,7 @@ export class AMMClient {
 
     const calldata = this.encodeTokenSwap(
       params.assetInAddress, params.assetOutAddress, params.fee,
-      amountIn, minAmountOut, integrator, withdraw, sparkRecipient
+      amountIn, minAmountOut, integrator, integratorBps, withdraw, sparkRecipient
     );
     const signedTx = await this.signConductorTx(calldata, 0n);
     return this.submitSwapIntent(signedTx);
@@ -853,6 +869,17 @@ export class AMMClient {
       ? weiToSats(floorOut).toString()
       : floorOut.toString();
 
+    // Validate the gateway's fee fields like the other amounts: a bogus value
+    // would otherwise flow into a displayed/relied-on figure or throw a
+    // cryptic BigInt error far from its cause.
+    const conductorFeeBps = res.conductorFeeBps;
+    if (!Number.isInteger(conductorFeeBps) || conductorFeeBps < 0) {
+      throw new Error("quote: gateway returned an invalid conductorFeeBps.");
+    }
+    const conductorFeeRaw = parseQuoteAmount(
+      res.conductorFeeAmount,
+      "conductorFeeAmount"
+    );
     // The Conductor fee asset is whatever the gateway resolved (WBTC, USDB, or
     // the output token). Convert a WBTC fee to sats so it matches amountOut's
     // units; leave any other asset in its base units.
@@ -862,8 +889,8 @@ export class AMMClient {
       res.conductorFeeAsset.toLowerCase() ===
         this.config.wbtcAddress.toLowerCase();
     const conductorFeeAmount = feeIsWbtc
-      ? weiToSats(res.conductorFeeAmount).toString()
-      : res.conductorFeeAmount;
+      ? weiToSats(conductorFeeRaw).toString()
+      : conductorFeeRaw.toString();
 
     return {
       amountOut,
@@ -872,7 +899,7 @@ export class AMMClient {
         typeof res.priceImpactBps === "number" ? res.priceImpactBps : undefined,
       slippageBps: res.slippageBps,
       fee: res.feeTier,
-      conductorFeeBps: res.conductorFeeBps,
+      conductorFeeBps,
       conductorFeeAmount,
       conductorFeeAsset: res.conductorFeeAsset,
     };
@@ -1103,6 +1130,8 @@ export class AMMClient {
     }
 
     const integrator = params.integratorPublicKey ?? ZERO_ADDRESS;
+    // Validated in `swap()` before it dispatches here.
+    const integratorBps = params.integratorFeeRateBps ?? 0;
     const amountIn = BigInt(params.amountIn);
     // See `swap`: a BTC output's on-chain floor is WBTC wei, but the API
     // takes sats, so convert here too.
@@ -1156,6 +1185,7 @@ export class AMMClient {
           minAmountOut,
           sparkRecipient as `0x${string}`,
           integrator as `0x${string}`,
+          integratorBps,
         ],
       });
       value = amountIn * WEI_PER_SAT;
@@ -1178,6 +1208,7 @@ export class AMMClient {
             minAmountOut,
             sparkRecipient as `0x${string}`,
             integrator as `0x${string}`,
+            integratorBps,
             permit,
           ],
         });
@@ -1193,6 +1224,7 @@ export class AMMClient {
             minAmountOut,
             sparkRecipient as `0x${string}`,
             integrator as `0x${string}`,
+            integratorBps,
             permit,
           ],
         });
@@ -1429,6 +1461,7 @@ export class AMMClient {
     fee: number,
     minAmountOut: bigint,
     integrator: string,
+    integratorBps: number,
     withdraw: boolean,
     sparkRecipient: string
   ): string {
@@ -1442,6 +1475,7 @@ export class AMMClient {
           minAmountOut,
           sparkRecipient as `0x${string}`,
           integrator as `0x${string}`,
+          integratorBps,
         ],
       });
     }
@@ -1453,6 +1487,7 @@ export class AMMClient {
         fee,
         minAmountOut,
         integrator as `0x${string}`,
+        integratorBps,
       ],
     });
   }
@@ -1466,6 +1501,7 @@ export class AMMClient {
     amountIn: bigint,
     minAmountOut: bigint,
     integrator: string,
+    integratorBps: number,
     sparkRecipient: string
   ): string {
     return encodeFunctionData({
@@ -1478,6 +1514,7 @@ export class AMMClient {
         minAmountOut,
         sparkRecipient as `0x${string}`,
         integrator as `0x${string}`,
+        integratorBps,
       ],
     });
   }
@@ -1489,6 +1526,7 @@ export class AMMClient {
     amountIn: bigint,
     minAmountOut: bigint,
     integrator: string,
+    integratorBps: number,
     withdraw: boolean,
     sparkRecipient: string
   ): string {
@@ -1504,6 +1542,7 @@ export class AMMClient {
           minAmountOut,
           sparkRecipient as `0x${string}`,
           integrator as `0x${string}`,
+          integratorBps,
         ],
       });
     }
@@ -1517,6 +1556,7 @@ export class AMMClient {
         amountIn,
         minAmountOut,
         integrator as `0x${string}`,
+        integratorBps,
       ],
     });
   }
