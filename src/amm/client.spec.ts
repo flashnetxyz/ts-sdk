@@ -3,6 +3,7 @@ import { decodeFunctionData } from "viem";
 import { AMMClient } from "./client";
 import { ExecutionClient } from "../execution/client";
 import { conductorAbi } from "../execution/abis/conductor";
+import { encodeSparkHumanReadableTokenIdentifier } from "../utils/tokenAddress";
 import type { SparkWalletInput } from "../execution/spark-evm-account";
 
 // Deterministic test key — private key = 1 (well-known test scalar).
@@ -312,7 +313,170 @@ describe("AMMClient.swap — minAmountOut unit handling", () => {
 
     const decoded = decodeSigned(sign);
     expect(decoded.functionName).toBe("swapBTCAndWithdraw");
-    // inputs: [tokenOut, fee, minAmountOut, sparkRecipient, integrator]
+    // inputs: [tokenOut, fee, minAmountOut, sparkRecipient, integrator, integratorBps]
     expect(decoded.args[2]).toBe(995000n);
+  });
+
+  it("threads integratorFeeRateBps into the swap calldata", async () => {
+    const client = new ExecutionClient(mockWallet(), EXEC_CONFIG);
+    const amm = new AMMClient(client, AMM_CONFIG);
+    const sign = captureSignedSwap(amm, client);
+
+    await amm.swap({
+      assetInAddress: TOKEN_A,
+      assetOutAddress: TOKEN_B,
+      amountIn: "1000000",
+      minAmountOut: "995000",
+      fee: 3000,
+      integratorFeeRateBps: 25,
+    });
+
+    const decoded = decodeSigned(sign);
+    expect(decoded.functionName).toBe("swapAndWithdraw");
+    // swapAndWithdraw inputs end with integratorBps (the trailing arg).
+    expect(decoded.args[decoded.args.length - 1]).toBe(25);
+  });
+
+  it("rejects integratorFeeRateBps above the 1000 bps cap", async () => {
+    const client = new ExecutionClient(mockWallet(), EXEC_CONFIG);
+    const amm = new AMMClient(client, AMM_CONFIG);
+    await expect(
+      amm.swap({
+        assetInAddress: TOKEN_A,
+        assetOutAddress: TOKEN_B,
+        amountIn: "1000000",
+        minAmountOut: "0",
+        fee: 3000,
+        integratorFeeRateBps: 1001,
+      })
+    ).rejects.toThrow(/integratorFeeRateBps/);
+  });
+
+  it("permit2 token→BTC converts minAmountOut to wei and carries integratorBps", async () => {
+    const client = new ExecutionClient(mockWallet(), EXEC_CONFIG);
+    const amm = new AMMClient(client, {
+      conductorAddress: AMM_CONFIG.conductorAddress,
+      wbtcAddress: WBTC,
+      permit2Address: "0x6666666666666666666666666666666666666666",
+      approvalMode: "permit2",
+    });
+    const sign = captureSignedSwap(amm, client);
+    jest.spyOn(amm as any, "buildPermit2Signature").mockResolvedValue({
+      permitTransfer: {
+        permitted: { token: TOKEN_A, amount: 1_000_000n },
+        nonce: 1n,
+        deadline: 2n,
+      },
+      signature: `0x${"00".repeat(65)}`,
+    });
+
+    await amm.swap({
+      assetInAddress: TOKEN_A,
+      assetOutAddress: "btc",
+      amountIn: "1000000",
+      minAmountOut: "49750000", // sats
+      fee: 3000,
+      integratorFeeRateBps: 25,
+    });
+
+    const decoded = decodeSigned(sign);
+    expect(decoded.functionName).toBe("swapAndWithdrawBTCWithPermit2");
+    // [tokenIn, fee, amountIn, minAmountOut, sparkRecipient, integrator, integratorBps, permitTransfer, signature]
+    expect(decoded.args[3]).toBe(49750000n * WEI_PER_SAT);
+    expect(decoded.args[6]).toBe(25);
+  });
+
+  it("EIP-2612 (useAvailableBalance) token→BTC converts minAmountOut and carries integratorBps", async () => {
+    const client = new ExecutionClient(mockWallet(), EXEC_CONFIG);
+    const amm = new AMMClient(client, {
+      conductorAddress: AMM_CONFIG.conductorAddress,
+      wbtcAddress: WBTC,
+    });
+    const sign = captureSignedSwap(amm, client);
+    jest.spyOn(client, "getNetworkInfo").mockResolvedValue({
+      spark: { depositAddress: "sparkrt1deposit", network: "REGTEST" },
+    } as any);
+    jest
+      .spyOn(amm as any, "sparkTransferForDeposit")
+      .mockResolvedValue("abc123");
+    jest.spyOn(amm as any, "signEip2612Permit").mockResolvedValue({
+      value: 1_000_000n,
+      deadline: 2n,
+      v: 27,
+      r: `0x${"00".repeat(32)}`,
+      s: `0x${"00".repeat(32)}`,
+    });
+
+    await amm.swap({
+      assetInAddress: TOKEN_A,
+      assetOutAddress: "btc",
+      amountIn: "1000000",
+      minAmountOut: "49750000", // sats
+      fee: 3000,
+      integratorFeeRateBps: 25,
+      useAvailableBalance: true,
+      assetInSparkTokenId: encodeSparkHumanReadableTokenIdentifier(
+        "cc".repeat(32),
+        "REGTEST"
+      ),
+    });
+
+    const decoded = decodeSigned(sign);
+    expect(decoded.functionName).toBe("swapAndWithdrawBTCWithEIP2612");
+    // [tokenIn, fee, amountIn, minAmountOut, sparkRecipient, integrator, integratorBps, tokenPermit]
+    expect(decoded.args[3]).toBe(49750000n * WEI_PER_SAT);
+    expect(decoded.args[6]).toBe(25);
+  });
+
+  it("end-to-end: quote()'s minAmountOut for token→BTC is consumed correctly by swap()", async () => {
+    const client = new ExecutionClient(mockWallet(), EXEC_CONFIG);
+    const amm = new AMMClient(client, {
+      conductorAddress: AMM_CONFIG.conductorAddress,
+      wbtcAddress: WBTC,
+    });
+
+    // Gateway works in WBTC wei; minAmountOut is a whole-sat-multiple wei.
+    const gatewayMinWei = 49_750_000n * WEI_PER_SAT;
+    global.fetch = jest.fn(async (input: any) => {
+      const url = typeof input === "string" ? input : (input.url ?? "");
+      if (url.endsWith("/api/v1/swap/quote")) {
+        return new Response(
+          JSON.stringify({
+            amountOut: (50_000_000n * WEI_PER_SAT).toString(),
+            minAmountOut: gatewayMinWei.toString(),
+            sqrtPriceX96After: "0",
+            feeTier: 3000,
+            slippageBps: 50,
+            conductorFeeBps: 0,
+            conductorFeeAmount: "0",
+          }),
+          { status: 200, headers: { "Content-Type": "application/json" } }
+        );
+      }
+      throw new Error(`unexpected fetch in test: ${url}`);
+    }) as unknown as typeof fetch;
+
+    const q = await amm.quote({
+      assetInAddress: TOKEN_A,
+      assetOutAddress: "btc",
+      amountIn: "1000000",
+      fee: 3000,
+      slippageBps: 50,
+    });
+    // quote() reports the BTC output floor in sats.
+    expect(q.minAmountOut).toBe("49750000");
+
+    // Feeding it straight into swap() must reproduce the gateway's wei floor.
+    const sign = captureSignedSwap(amm, client);
+    await amm.swap({
+      assetInAddress: TOKEN_A,
+      assetOutAddress: "btc",
+      amountIn: "1000000",
+      minAmountOut: q.minAmountOut,
+      fee: 3000,
+    });
+    const decoded = decodeSigned(sign);
+    expect(decoded.functionName).toBe("swapAndWithdrawBTC");
+    expect(decoded.args[3]).toBe(gatewayMinWei);
   });
 });

@@ -52,6 +52,8 @@ const GATEWAY_OK = {
   sqrtPriceX96After: "79228162514264337593543950336",
   feeTier: 3000,
   slippageBps: 50,
+  conductorFeeBps: 0,
+  conductorFeeAmount: "0",
 };
 
 interface CapturedRequest {
@@ -391,5 +393,100 @@ describe("AMMClient.quote — input + response hardening", () => {
         fee: 3000,
       })
     ).rejects.toThrow(/timed out after \d+ms/);
+  });
+});
+
+describe("AMMClient.quote — Conductor fee", () => {
+  it("forwards integratorBps to the gateway", async () => {
+    const calls = stubQuoteFetch(GATEWAY_OK);
+    const amm = newAmm();
+    await amm.quote({
+      assetInAddress: TOKEN_A,
+      assetOutAddress: TOKEN_B,
+      amountIn: "1000000",
+      fee: 3000,
+      integratorBps: 25,
+    });
+    expect(calls[0]?.body?.integratorBps).toBe(25);
+  });
+
+  it("omits integratorBps from the request when the caller omits it", async () => {
+    const calls = stubQuoteFetch(GATEWAY_OK);
+    const amm = newAmm();
+    await amm.quote({
+      assetInAddress: TOKEN_A,
+      assetOutAddress: TOKEN_B,
+      amountIn: "1000000",
+      fee: 3000,
+    });
+    expect(calls[0]?.body).not.toHaveProperty("integratorBps");
+  });
+
+  it("surfaces the Conductor fee fields for a token fee asset", async () => {
+    stubQuoteFetch({
+      ...GATEWAY_OK,
+      amountOut: "997010",
+      minAmountOut: "992025",
+      conductorFeeBps: 30,
+      conductorFeeAmount: "2988",
+      conductorFeeAsset: TOKEN_B,
+    });
+    const amm = newAmm();
+    const q = await amm.quote({
+      assetInAddress: TOKEN_A,
+      assetOutAddress: TOKEN_B,
+      amountIn: "1000000",
+      fee: 3000,
+      slippageBps: 50,
+    });
+    expect(q.conductorFeeBps).toBe(30);
+    expect(q.conductorFeeAmount).toBe("2988"); // token base units, unchanged
+    expect(q.conductorFeeAsset).toBe(TOKEN_B);
+  });
+
+  it("converts a WBTC Conductor fee to sats", async () => {
+    stubQuoteFetch({
+      ...GATEWAY_OK,
+      conductorFeeBps: 30,
+      conductorFeeAmount: (5n * WEI_PER_SAT).toString(),
+      conductorFeeAsset: WBTC,
+    });
+    const amm = newAmm();
+    const q = await amm.quote({
+      assetInAddress: "btc",
+      assetOutAddress: TOKEN_B,
+      amountIn: "1000000",
+      fee: 3000,
+    });
+    expect(q.conductorFeeAsset).toBe(WBTC);
+    expect(q.conductorFeeAmount).toBe("5"); // 5e10 wei -> 5 sats
+  });
+
+  it("reports zero fee when no Conductor fee applies", async () => {
+    stubQuoteFetch(GATEWAY_OK);
+    const amm = newAmm();
+    const q = await amm.quote({
+      assetInAddress: TOKEN_A,
+      assetOutAddress: TOKEN_B,
+      amountIn: "1000000",
+      fee: 3000,
+    });
+    expect(q.conductorFeeBps).toBe(0);
+    expect(q.conductorFeeAmount).toBe("0");
+    expect(q.conductorFeeAsset).toBeUndefined();
+  });
+
+  it("rejects out-of-range integratorBps", async () => {
+    stubQuoteFetch(GATEWAY_OK);
+    const amm = newAmm();
+    await expect(
+      amm.quote({
+        assetInAddress: TOKEN_A,
+        assetOutAddress: TOKEN_B,
+        amountIn: "1000000",
+        fee: 3000,
+        integratorBps: 1001,
+      })
+    ).rejects.toThrow(/integratorBps/);
   });
 });
