@@ -233,7 +233,7 @@ export interface IntentStatusResponse {
  * and read fields here instead of hard-coding them in environment config.
  *
  * Trading-stack contract addresses are intentionally absent — they live in
- * `AMMConfig`, and the compile-time guardrail below
+ * `TradingConfig`, and the compile-time guardrail below
  * {@link ExecutionNetworkInfo} keeps them off this surface.
  */
 export interface NetworkInfo {
@@ -273,7 +273,7 @@ export interface ExecutionNetworkInfo {
  *
  * The gateway publishes execution concerns only (Spark deposit address, bridge
  * contract, chain id, paused flag, min deposit). Conductor / WBTC / factory /
- * NonfungiblePositionManager / Permit2 addresses live in `AMMConfig`, because
+ * NonfungiblePositionManager / Permit2 addresses live in `TradingConfig`, because
  * they move on the trading stack's own release cadence. The aliases below fail
  * `tsc` if any such field is added to {@link NetworkInfo},
  * {@link ExecutionNetworkInfo}, or {@link SparkNetworkInfo}; they are erased at

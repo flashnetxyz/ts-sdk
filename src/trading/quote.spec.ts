@@ -1,7 +1,7 @@
 import { secp256k1 } from "@noble/curves/secp256k1";
 import { ExecutionClient } from "../execution/client";
 import type { SparkWalletInput } from "../execution/spark-evm-account";
-import { AMMClient } from "./client";
+import { TradingClient } from "./client";
 
 // Deterministic test key — private key = 1 (well-known test scalar).
 const TEST_KEY = new Uint8Array(32);
@@ -87,8 +87,8 @@ function stubQuoteFetch(
   return calls;
 }
 
-function newAmm(config: Record<string, unknown> = AMM_CONFIG): AMMClient {
-  return new AMMClient(
+function newAmm(config: Record<string, unknown> = AMM_CONFIG): TradingClient {
+  return new TradingClient(
     new ExecutionClient(mockWallet(), EXEC_CONFIG),
     config as any
   );
@@ -104,7 +104,7 @@ afterEach(() => {
   global.fetch = originalFetch;
 });
 
-describe("AMMClient.quote", () => {
+describe("TradingClient.quote", () => {
   it("maps a token→token quote and forwards the request verbatim", async () => {
     const calls = stubQuoteFetch(GATEWAY_OK);
     const amm = newAmm();
@@ -265,7 +265,7 @@ describe("AMMClient.quote", () => {
   });
 });
 
-describe("AMMClient.quote — input + response hardening", () => {
+describe("TradingClient.quote — input + response hardening", () => {
   it("rejects amountIn that is not a base-10 integer", async () => {
     stubQuoteFetch(GATEWAY_OK);
     const amm = newAmm();
@@ -396,7 +396,7 @@ describe("AMMClient.quote — input + response hardening", () => {
   });
 });
 
-describe("AMMClient.quote — Conductor fee", () => {
+describe("TradingClient.quote — Conductor fee", () => {
   it("forwards integratorBps to the gateway", async () => {
     const calls = stubQuoteFetch(GATEWAY_OK);
     const amm = newAmm();

@@ -1,5 +1,5 @@
 /**
- * Unit tests for AMMClient liquidity-management methods.
+ * Unit tests for TradingClient liquidity-management methods.
  *
  * Strategy: drive each method end-to-end against a stubbed JSON-RPC + gateway,
  * capture the signed EVM transaction the SDK hands to `/execute`, then decode
@@ -28,7 +28,7 @@ import { nonfungiblePositionManagerAbi } from "../execution/abis/nonfungiblePosi
 import { ExecutionClient } from "../execution/client";
 import type { SparkWalletInput } from "../execution/spark-evm-account";
 import { encodeSparkHumanReadableTokenIdentifier } from "../utils/tokenAddress";
-import { AMMClient, satsToWei, weiToSats } from "./client";
+import { TradingClient, satsToWei, weiToSats } from "./client";
 
 const TEST_KEY = new Uint8Array(32);
 TEST_KEY[31] = 1;
@@ -340,10 +340,10 @@ function decodeLastCall(): {
 
 async function makeClient(
   walletOpts?: Parameters<typeof mockWallet>[0]
-): Promise<AMMClient> {
+): Promise<TradingClient> {
   const exec = new ExecutionClient(mockWallet(walletOpts), EXEC_CONFIG);
   await exec.authenticate();
-  return new AMMClient(exec, AMM_CONFIG);
+  return new TradingClient(exec, AMM_CONFIG);
 }
 
 beforeEach(() => {
@@ -377,7 +377,7 @@ describe("unit conversion helpers", () => {
   });
 });
 
-describe("AMMClient.addLiquidity (ERC20/ERC20)", () => {
+describe("TradingClient.addLiquidity (ERC20/ERC20)", () => {
   it("encodes addLiquidity with both Permit2 legs bound to the right tokens", async () => {
     const amm = await makeClient();
     await amm.addLiquidity({
@@ -495,7 +495,7 @@ describe("AMMClient.addLiquidity (ERC20/ERC20)", () => {
   });
 });
 
-describe("AMMClient.addLiquidity (BTC-paired)", () => {
+describe("TradingClient.addLiquidity (BTC-paired)", () => {
   it("routes to addLiquidityBTC with msg.value = WBTC-leg wei", async () => {
     const amm = await makeClient();
     const wbtcWei = satsToWei(10_000); // 10k sats on the WBTC (token0) leg
@@ -549,7 +549,7 @@ describe("AMMClient.addLiquidity (BTC-paired)", () => {
   });
 });
 
-describe("AMMClient.increaseLiquidity", () => {
+describe("TradingClient.increaseLiquidity", () => {
   it("reads the position tokens and encodes increaseLiquidity", async () => {
     const amm = await makeClient();
     await amm.increaseLiquidity({
@@ -571,7 +571,7 @@ describe("AMMClient.increaseLiquidity", () => {
   });
 });
 
-describe("AMMClient.decreaseLiquidity", () => {
+describe("TradingClient.decreaseLiquidity", () => {
   it("encodes decreaseLiquidityAndWithdraw with a signed NFT permit", async () => {
     const amm = await makeClient();
     await amm.decreaseLiquidity({
@@ -606,7 +606,7 @@ describe("AMMClient.decreaseLiquidity", () => {
   });
 });
 
-describe("AMMClient.collectFees", () => {
+describe("TradingClient.collectFees", () => {
   it("encodes collectFeesAndWithdraw with a signed NFT permit", async () => {
     const amm = await makeClient();
     await amm.collectFees({ tokenId: 9n });
@@ -619,7 +619,7 @@ describe("AMMClient.collectFees", () => {
   });
 });
 
-describe("AMMClient.modifyPosition", () => {
+describe("TradingClient.modifyPosition", () => {
   it("encodes modifyPosition with both permits bound to the position tokens", async () => {
     const amm = await makeClient();
     await amm.modifyPosition({
@@ -651,7 +651,7 @@ describe("AMMClient.modifyPosition", () => {
   });
 });
 
-describe("AMMClient position reads", () => {
+describe("TradingClient position reads", () => {
   it("getPosition maps the NPM tuple into PositionInfo", async () => {
     stubPosition = {
       nonce: 3n,
@@ -720,10 +720,10 @@ describe("AMMClient position reads", () => {
   });
 });
 
-describe("AMMClient liquidity config guards", () => {
+describe("TradingClient liquidity config guards", () => {
   it("throws when positionManagerAddress is missing", async () => {
     const exec = new ExecutionClient(mockWallet(), EXEC_CONFIG);
-    const amm = new AMMClient(exec, { conductorAddress: CONDUCTOR });
+    const amm = new TradingClient(exec, { conductorAddress: CONDUCTOR });
     await expect(amm.getPosition(1n)).rejects.toThrow(
       /positionManagerAddress is required/
     );

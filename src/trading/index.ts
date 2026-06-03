@@ -1,14 +1,15 @@
 /**
- * Flashnet AMM Module
+ * Flashnet Trading Module
  *
- * High-level AMM client for DEX operations through the Conductor contract.
- * Separate from the execution layer — depends on ExecutionClient but
- * contains no execution-layer primitives.
+ * High-level trading client for DEX operations through the Conductor
+ * contract. Separate from the execution layer — depends on ExecutionClient
+ * but contains no execution-layer primitives.
  */
 
 export {
-  AMMClient,
-  type AMMConfig,
+  TradingClient,
+  SwapDepositStrandedError,
+  type TradingConfig,
   type SwapParams,
   type SwapResult,
   type QuoteParams,

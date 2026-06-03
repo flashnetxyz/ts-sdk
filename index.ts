@@ -69,14 +69,14 @@ export type {
   TraceFrame,
 } from "./src/execution";
 
-// AMM client (wraps ExecutionClient for DEX operations)
-export { AMMClient, satsToWei, weiToSats } from "./src/amm";
+// Trading client (wraps ExecutionClient for DEX operations)
+export { TradingClient, SwapDepositStrandedError, satsToWei, weiToSats } from "./src/trading";
 export type {
-  AMMConfig,
-  SwapParams as AMMSwapParams,
-  SwapResult as AMMSwapResult,
-  QuoteParams as AMMQuoteParams,
-  QuoteResult as AMMQuoteResult,
+  TradingConfig,
+  SwapParams as TradingSwapParams,
+  SwapResult as TradingSwapResult,
+  QuoteParams as TradingQuoteParams,
+  QuoteResult as TradingQuoteResult,
   AddLiquidityParams,
   IncreaseLiquidityParams,
   DecreaseLiquidityParams,
@@ -87,7 +87,7 @@ export type {
   IncreaseResult,
   WithdrawResult,
   PositionInfo,
-} from "./src/amm";
+} from "./src/trading";
 
 export type { RequestOptions } from "./src/api/client";
 // Export API client and typed endpoints

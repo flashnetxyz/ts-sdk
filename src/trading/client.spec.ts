@@ -1,6 +1,6 @@
 import { secp256k1 } from "@noble/curves/secp256k1";
 import { decodeFunctionData } from "viem";
-import { AMMClient } from "./client";
+import { TradingClient, SwapDepositStrandedError } from "./client";
 import { ExecutionClient } from "../execution/client";
 import { conductorAbi } from "../execution/abis/conductor";
 import { encodeSparkHumanReadableTokenIdentifier } from "../utils/tokenAddress";
@@ -12,7 +12,7 @@ TEST_KEY[31] = 1;
 
 /**
  * Mock SparkWallet shape. The SDK reads `config.signer` via getWalletSigner;
- * for AMMClient's useAvailableBalance path it ALSO expects `.transfer` and
+ * for TradingClient's useAvailableBalance path it ALSO expects `.transfer` and
  * `.transferTokens` on the wallet (read through getSparkWallet()).
  */
 function mockWallet(opts?: {
@@ -61,7 +61,7 @@ const AMM_CONFIG = {
 
 /**
  * Deposit address the mocked `/network/info` endpoint returns. Tests that
- * care about the argument AMMClient passes to `wallet.transfer` assert
+ * care about the argument TradingClient passes to `wallet.transfer` assert
  * against this value.
  */
 const TEST_DEPOSIT_ADDRESS =
@@ -107,12 +107,12 @@ afterEach(() => {
   global.fetch = originalFetch;
 });
 
-describe("AMMClient.swap — useAvailableBalance validation", () => {
+describe("TradingClient.swap — useAvailableBalance validation", () => {
   it("rejects BTC → BTC unconditionally", async () => {
     const client = new ExecutionClient(mockWallet(), EXEC_CONFIG);
-    const amm = new AMMClient(client, AMM_CONFIG);
+    const trading = new TradingClient(client, AMM_CONFIG);
     await expect(
-      amm.swap({
+      trading.swap({
         assetInAddress: "btc",
         assetOutAddress: "BTC",
         amountIn: "1000",
@@ -125,9 +125,9 @@ describe("AMMClient.swap — useAvailableBalance validation", () => {
 
   it("requires withdraw=true when useAvailableBalance is set", async () => {
     const client = new ExecutionClient(mockWallet(), EXEC_CONFIG);
-    const amm = new AMMClient(client, AMM_CONFIG);
+    const trading = new TradingClient(client, AMM_CONFIG);
     await expect(
-      amm.swap({
+      trading.swap({
         assetInAddress: "btc",
         assetOutAddress: "0x4444444444444444444444444444444444444444",
         amountIn: "1000",
@@ -142,9 +142,9 @@ describe("AMMClient.swap — useAvailableBalance validation", () => {
   it("requires assetInSparkTokenId for ERC-20 inputs", async () => {
     stubNetworkInfoFetch();
     const client = new ExecutionClient(mockWallet(), EXEC_CONFIG);
-    const amm = new AMMClient(client, AMM_CONFIG);
+    const trading = new TradingClient(client, AMM_CONFIG);
     await expect(
-      amm.swap({
+      trading.swap({
         assetInAddress: "0x4444444444444444444444444444444444444444",
         assetOutAddress: "btc",
         amountIn: "1000",
@@ -164,10 +164,10 @@ describe("AMMClient.swap — useAvailableBalance validation", () => {
     stubNetworkInfoFetch();
     const wallet = mockWallet();
     const client = new ExecutionClient(wallet, EXEC_CONFIG);
-    const amm = new AMMClient(client, AMM_CONFIG);
+    const trading = new TradingClient(client, AMM_CONFIG);
     const tooBig = (BigInt(Number.MAX_SAFE_INTEGER) + 1n).toString();
     await expect(
-      amm.swap({
+      trading.swap({
         assetInAddress: "btc",
         assetOutAddress: "0x4444444444444444444444444444444444444444",
         amountIn: tooBig,
@@ -179,10 +179,10 @@ describe("AMMClient.swap — useAvailableBalance validation", () => {
   });
 });
 
-describe("AMMClient.swap — BTC → token deposit wiring", () => {
+describe("TradingClient.swap — BTC → token deposit wiring", () => {
   it("calls wallet.transfer with the gateway-advertised deposit address", async () => {
     // Stub /network/info so the swap flow can proceed past the runtime
-    // discovery fetch. Assert that AMMClient forwards the resolved
+    // discovery fetch. Assert that TradingClient forwards the resolved
     // depositAddress to wallet.transfer instead of a hard-coded config
     // value — this is the whole point of runtime discovery.
     stubNetworkInfoFetch();
@@ -194,13 +194,14 @@ describe("AMMClient.swap — BTC → token deposit wiring", () => {
       },
     });
     const client = new ExecutionClient(wallet, EXEC_CONFIG);
-    const amm = new AMMClient(client, AMM_CONFIG);
+    const trading = new TradingClient(client, AMM_CONFIG);
 
-    // The call will throw when it reaches `fetchNonce` (no RPC running).
-    // That's fine — by then `wallet.transfer` has already run and we can
-    // assert on `observed`.
-    await expect(
-      amm.swap({
+    // The call throws when it reaches `fetchNonce` (no RPC running) — but
+    // by then `wallet.transfer` has already committed the deposit. The
+    // failure must surface as a SwapDepositStrandedError carrying the
+    // transferId so the stranded deposit stays recoverable.
+    const err = await trading
+      .swap({
         assetInAddress: "btc",
         assetOutAddress: "0x4444444444444444444444444444444444444444",
         amountIn: "250000",
@@ -208,7 +209,13 @@ describe("AMMClient.swap — BTC → token deposit wiring", () => {
         fee: 3000,
         useAvailableBalance: true,
       })
-    ).rejects.toBeDefined();
+      .then(
+        () => null,
+        (e) => e
+      );
+
+    expect(err).toBeInstanceOf(SwapDepositStrandedError);
+    expect((err as SwapDepositStrandedError).transferId).toBe("abc123");
 
     expect(observed).not.toBeNull();
     expect(observed.amountSats).toBe(250000);
@@ -216,7 +223,7 @@ describe("AMMClient.swap — BTC → token deposit wiring", () => {
   });
 });
 
-describe("AMMClient.swap — minAmountOut unit handling", () => {
+describe("TradingClient.swap — minAmountOut unit handling", () => {
   const WBTC = "0x5555555555555555555555555555555555555555";
   const TOKEN_A = "0x4444444444444444444444444444444444444444";
   const TOKEN_B = "0x2222222222222222222222222222222222222222";
@@ -226,7 +233,7 @@ describe("AMMClient.swap — minAmountOut unit handling", () => {
   // would have signed, with no RPC or signing. `getEvmAccount`'s result is
   // unused on these paths; it only needs to not throw.
   function captureSignedSwap(
-    amm: AMMClient,
+    amm: TradingClient,
     client: ExecutionClient
   ): jest.SpyInstance {
     jest
@@ -256,7 +263,7 @@ describe("AMMClient.swap — minAmountOut unit handling", () => {
 
   it("token→BTC converts minAmountOut from sats to WBTC wei (C1 regression)", async () => {
     const client = new ExecutionClient(mockWallet(), EXEC_CONFIG);
-    const amm = new AMMClient(client, {
+    const amm = new TradingClient(client, {
       conductorAddress: AMM_CONFIG.conductorAddress,
       wbtcAddress: WBTC,
     });
@@ -278,7 +285,7 @@ describe("AMMClient.swap — minAmountOut unit handling", () => {
 
   it("token→token passes minAmountOut through unchanged", async () => {
     const client = new ExecutionClient(mockWallet(), EXEC_CONFIG);
-    const amm = new AMMClient(client, AMM_CONFIG);
+    const amm = new TradingClient(client, AMM_CONFIG);
     const sign = captureSignedSwap(amm, client);
 
     await amm.swap({
@@ -297,7 +304,7 @@ describe("AMMClient.swap — minAmountOut unit handling", () => {
 
   it("BTC→token leaves minAmountOut in the output token's base units", async () => {
     const client = new ExecutionClient(mockWallet(), EXEC_CONFIG);
-    const amm = new AMMClient(client, {
+    const amm = new TradingClient(client, {
       conductorAddress: AMM_CONFIG.conductorAddress,
       wbtcAddress: WBTC,
     });
@@ -319,7 +326,7 @@ describe("AMMClient.swap — minAmountOut unit handling", () => {
 
   it("threads integratorFeeRateBps into the swap calldata", async () => {
     const client = new ExecutionClient(mockWallet(), EXEC_CONFIG);
-    const amm = new AMMClient(client, AMM_CONFIG);
+    const amm = new TradingClient(client, AMM_CONFIG);
     const sign = captureSignedSwap(amm, client);
 
     await amm.swap({
@@ -339,7 +346,7 @@ describe("AMMClient.swap — minAmountOut unit handling", () => {
 
   it("rejects integratorFeeRateBps above the 1000 bps cap", async () => {
     const client = new ExecutionClient(mockWallet(), EXEC_CONFIG);
-    const amm = new AMMClient(client, AMM_CONFIG);
+    const amm = new TradingClient(client, AMM_CONFIG);
     await expect(
       amm.swap({
         assetInAddress: TOKEN_A,
@@ -354,7 +361,7 @@ describe("AMMClient.swap — minAmountOut unit handling", () => {
 
   it("permit2 token→BTC converts minAmountOut to wei and carries integratorBps", async () => {
     const client = new ExecutionClient(mockWallet(), EXEC_CONFIG);
-    const amm = new AMMClient(client, {
+    const amm = new TradingClient(client, {
       conductorAddress: AMM_CONFIG.conductorAddress,
       wbtcAddress: WBTC,
       permit2Address: "0x6666666666666666666666666666666666666666",
@@ -388,7 +395,7 @@ describe("AMMClient.swap — minAmountOut unit handling", () => {
 
   it("EIP-2612 (useAvailableBalance) token→BTC converts minAmountOut and carries integratorBps", async () => {
     const client = new ExecutionClient(mockWallet(), EXEC_CONFIG);
-    const amm = new AMMClient(client, {
+    const amm = new TradingClient(client, {
       conductorAddress: AMM_CONFIG.conductorAddress,
       wbtcAddress: WBTC,
     });
@@ -430,7 +437,7 @@ describe("AMMClient.swap — minAmountOut unit handling", () => {
 
   it("end-to-end: quote()'s minAmountOut for token→BTC is consumed correctly by swap()", async () => {
     const client = new ExecutionClient(mockWallet(), EXEC_CONFIG);
-    const amm = new AMMClient(client, {
+    const amm = new TradingClient(client, {
       conductorAddress: AMM_CONFIG.conductorAddress,
       wbtcAddress: WBTC,
     });
