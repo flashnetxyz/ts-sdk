@@ -35,6 +35,7 @@ import {
   encodeFunctionData,
   bytesToHex,
   hexToBigInt,
+  isAddress,
   keccak256,
   type Address,
   type Hex,
@@ -125,6 +126,22 @@ const QUOTE_TIMEOUT_MS = 10_000;
 
 /** Conversion factor: 1 sat = 10^10 wei on Flashnet's EVM. */
 const WEI_PER_SAT = 10_000_000_000n;
+
+/**
+ * Resolve the optional integrator fee recipient to a checked 20-byte EVM
+ * address, defaulting to the zero address (no integrator). Rejects malformed
+ * input up front so a mistaken 33-byte pubkey can't be silently encoded into
+ * the Conductor's `address` slot.
+ */
+function resolveIntegratorAddress(integratorAddress?: string): string {
+  if (integratorAddress === undefined) return ZERO_ADDRESS;
+  if (!isAddress(integratorAddress)) {
+    throw new Error(
+      `integratorAddress must be a 20-byte EVM address (0x...), got "${integratorAddress}".`
+    );
+  }
+  return integratorAddress;
+}
 
 /** Default validity window for permit / on-chain deadlines (30 minutes). */
 const DEFAULT_DEADLINE_SECONDS = 30 * 60;
@@ -250,8 +267,12 @@ export interface SwapParams {
   fee: number;
   /** Integrator fee rate in basis points (optional). */
   integratorFeeRateBps?: number;
-  /** Integrator public key for fee collection (optional). */
-  integratorPublicKey?: string;
+  /**
+   * Integrator EVM address that receives the integrator fee — a 20-byte
+   * `0x...` address, not a Spark public key. Optional; defaults to the zero
+   * address (no integrator).
+   */
+  integratorAddress?: string;
   /** Whether to withdraw output back to Spark. Default true. */
   withdraw?: boolean;
   /**
@@ -494,7 +515,9 @@ export interface DecreaseLiquidityParams {
   tokenId: bigint | string;
   /** Liquidity units to remove. */
   liquidity: bigint | string;
+  /** Minimum token0 to recover (slippage floor), in token0 base units; the WBTC leg is in wei. */
   amount0Min: string;
+  /** Minimum token1 to recover (slippage floor), in token1 base units; the WBTC leg is in wei. */
   amount1Min: string;
   /** Absolute unix-seconds on-chain deadline. Default: now + 30 minutes. */
   deadline?: number;
@@ -674,7 +697,7 @@ export class TradingClient {
       return this.swapWithSparkDeposit(params, isBtcIn, isBtcOut);
     }
 
-    const integrator = params.integratorPublicKey ?? ZERO_ADDRESS;
+    const integrator = resolveIntegratorAddress(params.integratorAddress);
     const amountIn = BigInt(params.amountIn);
     // A BTC output's on-chain `minAmountOut` is the Uniswap WBTC floor, in
     // wei. The product API denominates BTC in sats, so convert here —
@@ -1150,7 +1173,7 @@ export class TradingClient {
       );
     }
 
-    const integrator = params.integratorPublicKey ?? ZERO_ADDRESS;
+    const integrator = resolveIntegratorAddress(params.integratorAddress);
     // Validated in `swap()` before it dispatches here.
     const integratorBps = params.integratorFeeRateBps ?? 0;
     const amountIn = BigInt(params.amountIn);
@@ -1677,6 +1700,12 @@ export class TradingClient {
           "by address). Sort the pair and the matching amounts/ticks first."
       );
     }
+    if (params.tickLower >= params.tickUpper) {
+      throw new Error(
+        `addLiquidity: tickLower (${params.tickLower}) must be < tickUpper ` +
+          `(${params.tickUpper}).`
+      );
+    }
     const token0 = params.token0 as `0x${string}`;
     const token1 = params.token1 as `0x${string}`;
     const amount0 = BigInt(params.amount0Desired);
@@ -1898,6 +1927,12 @@ export class TradingClient {
    * Requires an ERC-721 permit over the old tokenId.
    */
   async modifyPosition(params: ModifyPositionParams): Promise<MintResult> {
+    if (params.newTickLower >= params.newTickUpper) {
+      throw new Error(
+        `modifyPosition: newTickLower (${params.newTickLower}) must be < ` +
+          `newTickUpper (${params.newTickUpper}).`
+      );
+    }
     const tokenId = BigInt(params.tokenId);
     const position = await this.readPosition(tokenId);
     const token0 = position.token0 as `0x${string}`;

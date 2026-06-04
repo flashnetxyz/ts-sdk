@@ -359,6 +359,50 @@ describe("TradingClient.swap — minAmountOut unit handling", () => {
     ).rejects.toThrow(/integratorFeeRateBps/);
   });
 
+  it("rejects an integratorAddress that is not a 20-byte EVM address", async () => {
+    const client = new ExecutionClient(mockWallet(), EXEC_CONFIG);
+    const amm = new TradingClient(client, AMM_CONFIG);
+    await expect(
+      amm.swap({
+        assetInAddress: TOKEN_A,
+        assetOutAddress: TOKEN_B,
+        amountIn: "1000000",
+        minAmountOut: "0",
+        fee: 3000,
+        // A 33-byte compressed pubkey is the classic mistake the old
+        // `integratorPublicKey` name invited. Reject it up front with a clear
+        // message instead of leaning on viem's late, cryptic "Address is
+        // invalid" throw (which in the round-trip path only fires after the
+        // funding transfer has already committed).
+        integratorAddress:
+          "0x0279be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798",
+      })
+    ).rejects.toThrow(/integratorAddress/);
+  });
+
+  it("threads a valid integratorAddress into the swap calldata", async () => {
+    const client = new ExecutionClient(mockWallet(), EXEC_CONFIG);
+    const amm = new TradingClient(client, AMM_CONFIG);
+    const sign = captureSignedSwap(amm, client);
+    const integrator = "0x00000000000000000000000000000000000000aa";
+
+    await amm.swap({
+      assetInAddress: TOKEN_A,
+      assetOutAddress: TOKEN_B,
+      amountIn: "1000000",
+      minAmountOut: "995000",
+      fee: 3000,
+      integratorAddress: integrator,
+    });
+
+    const decoded = decodeSigned(sign);
+    expect(
+      decoded.args.some(
+        (a) => typeof a === "string" && a.toLowerCase() === integrator
+      )
+    ).toBe(true);
+  });
+
   it("permit2 token→BTC converts minAmountOut to wei and carries integratorBps", async () => {
     const client = new ExecutionClient(mockWallet(), EXEC_CONFIG);
     const amm = new TradingClient(client, {

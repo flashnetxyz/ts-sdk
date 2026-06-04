@@ -432,6 +432,23 @@ describe("TradingClient.addLiquidity (ERC20/ERC20)", () => {
     ).rejects.toThrow(/sort strictly before/);
   });
 
+  it("rejects tickLower >= tickUpper", async () => {
+    const amm = await makeClient();
+    await expect(
+      amm.addLiquidity({
+        token0: TOKEN_A,
+        token1: TOKEN_B,
+        fee: 3000,
+        tickLower: 60,
+        tickUpper: 60,
+        amount0Desired: "1",
+        amount1Desired: "1",
+        amount0Min: "0",
+        amount1Min: "0",
+      })
+    ).rejects.toThrow(/tickLower.*must be < tickUpper/);
+  });
+
   it("bundles two Spark deposits and the call in one intent (useAvailableBalance)", async () => {
     let tokenTransfers = 0;
     const amm = await makeClient({ onTransferTokens: () => tokenTransfers++ });
@@ -648,6 +665,21 @@ describe("TradingClient.modifyPosition", () => {
     // Zero-additional leg still binds token1 (Conductor checks it).
     expect(permitB.permitted.token.toLowerCase()).toBe(TOKEN_B);
     expect(permitB.permitted.amount).toBe(0n);
+  });
+
+  it("rejects newTickLower >= newTickUpper before reading the position", async () => {
+    const amm = await makeClient();
+    await expect(
+      amm.modifyPosition({
+        tokenId: 42n,
+        newTickLower: 120,
+        newTickUpper: 60,
+        amount0Min: "0",
+        amount1Min: "0",
+        newAmount0Min: "0",
+        newAmount1Min: "0",
+      })
+    ).rejects.toThrow(/newTickLower.*newTickUpper/);
   });
 });
 
