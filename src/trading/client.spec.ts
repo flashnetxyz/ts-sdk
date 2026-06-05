@@ -1,6 +1,6 @@
 import { secp256k1 } from "@noble/curves/secp256k1";
 import { decodeFunctionData } from "viem";
-import { TradingClient, SwapDepositStrandedError } from "./client";
+import { TradingClient, StrandedFundingError } from "./client";
 import { ExecutionClient } from "../execution/client";
 import { conductorAbi } from "../execution/abis/conductor";
 import { encodeSparkHumanReadableTokenIdentifier } from "../utils/tokenAddress";
@@ -196,10 +196,14 @@ describe("TradingClient.swap — BTC → token deposit wiring", () => {
     const client = new ExecutionClient(wallet, EXEC_CONFIG);
     const trading = new TradingClient(client, AMM_CONFIG);
 
-    // The call throws when it reaches `fetchNonce` (no RPC running) — but
-    // by then `wallet.transfer` has already committed the deposit. The
-    // failure must surface as a SwapDepositStrandedError carrying the
-    // transferId so the stranded deposit stays recoverable.
+    // The call throws when it reaches `fetchNonce` (no RPC running) — but by
+    // then `wallet.transfer` has already committed the deposit. The failure
+    // must surface as a StrandedFundingError, and the SDK auto-claws the
+    // committed transfer back, reporting it recovered.
+    const clawbackSpy = jest
+      .spyOn(client, "clawbackMany")
+      .mockResolvedValue([{ transferId: "abc123", success: true }]);
+
     const err = await trading
       .swap({
         assetInAddress: "btc",
@@ -214,12 +218,57 @@ describe("TradingClient.swap — BTC → token deposit wiring", () => {
         (e) => e
       );
 
-    expect(err).toBeInstanceOf(SwapDepositStrandedError);
-    expect((err as SwapDepositStrandedError).transferId).toBe("abc123");
+    expect(err).toBeInstanceOf(StrandedFundingError);
+    expect((err as StrandedFundingError).transferIds).toEqual(["abc123"]);
+    expect(
+      (err as StrandedFundingError).clawbackSummary.recoveredTransferIds
+    ).toEqual(["abc123"]);
+    expect(
+      (err as StrandedFundingError).clawbackSummary.unrecoveredTransferIds
+    ).toEqual([]);
+    expect(clawbackSpy).toHaveBeenCalledWith(["abc123"]);
 
     expect(observed).not.toBeNull();
     expect(observed.amountSats).toBe(250000);
     expect(observed.receiverSparkAddress).toBe(TEST_DEPOSIT_ADDRESS);
+  });
+
+  it("surfaces unrecovered transfers when auto-clawback is rejected", async () => {
+    stubNetworkInfoFetch();
+    const wallet = mockWallet({ transferId: "def456" });
+    const client = new ExecutionClient(wallet, EXEC_CONFIG);
+    const trading = new TradingClient(client, AMM_CONFIG);
+
+    // Funding commits, the swap fails at fetchNonce, and the clawback itself
+    // is rejected (e.g. the gateway already consumed the transfer). The error
+    // must report the transfer as still at risk.
+    jest
+      .spyOn(client, "clawbackMany")
+      .mockResolvedValue([
+        { transferId: "def456", success: false, error: "transfer already used" },
+      ]);
+
+    const err = await trading
+      .swap({
+        assetInAddress: "btc",
+        assetOutAddress: "0x4444444444444444444444444444444444444444",
+        amountIn: "250000",
+        minAmountOut: "0",
+        fee: 3000,
+        useAvailableBalance: true,
+      })
+      .then(
+        () => null,
+        (e) => e
+      );
+
+    expect(err).toBeInstanceOf(StrandedFundingError);
+    expect(
+      (err as StrandedFundingError).clawbackSummary.unrecoveredTransferIds
+    ).toEqual(["def456"]);
+    expect(
+      (err as StrandedFundingError).clawbackSummary.recoveredTransferIds
+    ).toEqual([]);
   });
 });
 

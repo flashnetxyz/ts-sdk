@@ -41,7 +41,11 @@ import {
   type Hex,
 } from "viem";
 import type { ExecutionClient } from "../execution/client";
-import type { Deposit, ExecuteResponse } from "../execution/types";
+import type {
+  ClawbackSummary,
+  Deposit,
+  ExecuteResponse,
+} from "../execution/types";
 import { conductorAbi } from "../execution/abis/conductor";
 import { nonfungiblePositionManagerAbi } from "../execution/abis/nonfungiblePositionManager";
 import { fetchNonce, fetchAllowance, fetchEip1559Fees } from "../execution/evm";
@@ -584,24 +588,35 @@ const TRADING_ENVIRONMENT_CONFIGS: Partial<Record<ClientEnvironment, TradingConf
 };
 
 /**
- * Thrown when a `useAvailableBalance` swap fails AFTER its funding Spark
- * transfer has already committed. The deposit is sitting at the gateway
- * deposit address; `transferId` lets the caller build a recovery deposit
- * intent instead of losing track of it. `cause` is the underlying failure
- * (nonce/fee RPC error, permit signing, gateway rejection, etc.).
+ * Thrown when a Spark-funded operation (swap round-trip, or LP add / increase
+ * / modify with `useAvailableBalance`) fails AFTER its funding transfer(s)
+ * committed. The SDK automatically attempts to claw the committed transfer(s)
+ * back to the caller's Spark balance; `clawbackSummary` reports which were
+ * recovered and which are still at risk. `transferIds` are the committed
+ * transfers; `cause` is the underlying failure.
  */
-export class SwapDepositStrandedError extends Error {
-  readonly transferId: string;
-  constructor(transferId: string, cause: unknown) {
+export class StrandedFundingError extends Error {
+  readonly transferIds: string[];
+  readonly clawbackSummary: ClawbackSummary;
+  constructor(
+    transferIds: string[],
+    clawbackSummary: ClawbackSummary,
+    cause: unknown
+  ) {
     const reason = cause instanceof Error ? cause.message : String(cause);
+    const { recoveredTransferIds, unrecoveredTransferIds } = clawbackSummary;
+    const recovery =
+      unrecoveredTransferIds.length === 0
+        ? `All ${transferIds.length} funding transfer(s) were automatically clawed back.`
+        : `Auto-clawback recovered ${recoveredTransferIds.length}/${transferIds.length}; still at risk: ${unrecoveredTransferIds.join(", ")}.`;
     super(
-      `swap funding transfer ${transferId} committed but the swap failed ` +
-        `before the intent was submitted: ${reason}. The deposit is at the ` +
-        `gateway deposit address — build a recovery intent with this transferId.`,
+      `funding transfer(s) ${transferIds.join(", ")} committed but the ` +
+        `operation failed before the intent was submitted: ${reason}. ${recovery}`,
       { cause }
     );
-    this.name = "SwapDepositStrandedError";
-    this.transferId = transferId;
+    this.name = "StrandedFundingError";
+    this.transferIds = transferIds;
+    this.clawbackSummary = clawbackSummary;
   }
 }
 
@@ -1136,6 +1151,43 @@ export class TradingClient {
   }
 
   /**
+   * Run the post-funding work of a Spark-funded operation under automatic
+   * clawback. If `op` throws after funding transfer(s) committed, claw them
+   * back to the caller's Spark balance and rethrow as
+   * {@link StrandedFundingError} with a per-transfer recovery summary.
+   *
+   * `committedTransferIds` are the transfers made before `op` runs. An empty
+   * array (no Spark funding) makes this a transparent pass-through. Clawback
+   * eligibility is enforced server-side, so a clawback for a transfer the
+   * gateway actually consumed is rejected and surfaced as unrecovered rather
+   * than double-spending.
+   */
+  private async withAutoClawback<T>(
+    committedTransferIds: string[],
+    op: () => Promise<T>
+  ): Promise<T> {
+    try {
+      return await op();
+    } catch (err) {
+      if (committedTransferIds.length === 0) {
+        throw err;
+      }
+      const results = await this.execClient.clawbackMany(committedTransferIds);
+      const summary: ClawbackSummary = {
+        attempted: true,
+        recoveredTransferIds: results
+          .filter((r) => r.success)
+          .map((r) => r.transferId),
+        unrecoveredTransferIds: results
+          .filter((r) => !r.success)
+          .map((r) => r.transferId),
+        results,
+      };
+      throw new StrandedFundingError(committedTransferIds, summary, err);
+    }
+  }
+
+  /**
    * Bundle a Spark-side deposit with the swap+withdraw in ONE execute
    * intent.
    *
@@ -1215,11 +1267,10 @@ export class TradingClient {
 
     // The funding transfer has committed. Everything past this point can
     // still fail (EIP-2612 permit signing, nonce/fee RPC inside
-    // signConductorTx, and the gateway POST in submitSwapIntent). Wrap it
-    // so any failure surfaces `transferId` via SwapDepositStrandedError —
-    // otherwise the deposit is stranded at the gateway with no way to
-    // build a recovery intent.
-    try {
+    // signConductorTx, and the gateway POST in submitSwapIntent). Run it under
+    // auto-clawback so any failure returns the deposit to the caller's Spark
+    // balance instead of stranding it at the gateway.
+    return this.withAutoClawback([transferId], async () => {
       // Step 2: build calldata.
       let calldata: string;
       let value: bigint = 0n;
@@ -1285,9 +1336,7 @@ export class TradingClient {
       // Step 3: sign + submit bundled intent.
       const signedTx = await this.signConductorTx(calldata, value);
       return await this.submitSwapIntent(signedTx, deposits, transferId);
-    } catch (err) {
-      throw new SwapDepositStrandedError(transferId, err);
-    }
+    });
   }
 
   /**

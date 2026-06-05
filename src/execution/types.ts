@@ -403,6 +403,18 @@ export interface ClawbackResult {
   error?: string;
 }
 
+/** Aggregate result of an automatic clawback over one or more transfers. */
+export interface ClawbackSummary {
+  /** Whether a clawback was attempted (false when no funds were committed). */
+  attempted: boolean;
+  /** Transfers the gateway accepted a clawback for (returned to the sender). */
+  recoveredTransferIds: string[];
+  /** Transfers whose clawback was rejected — still at risk, may need manual recovery. */
+  unrecoveredTransferIds: string[];
+  /** Per-transfer detail. */
+  results: ClawbackResult[];
+}
+
 /**
  * Canonical intent message that gets signed by the client.
  *
