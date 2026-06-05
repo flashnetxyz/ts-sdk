@@ -46,6 +46,7 @@ import { fetchNonce, fetchEip1559Fees, fetchNativeBalance } from "./evm";
 import {
   PLACEHOLDER_DEPOSIT_PROOF,
   canonicalIntentId,
+  clawbackSparkTxidWire,
   depositAssetToWire,
   isTerminalIntentStatus,
   normalizeIntentStatus,
@@ -56,6 +57,7 @@ import type {
   CanonicalIntentAction,
   CanonicalIntentMessage,
   CanonicalTransferEntry,
+  ClawbackResult,
   Deposit,
   DepositRejection,
   ExecuteResponse,
@@ -782,6 +784,65 @@ export class ExecutionClient {
   }
 
   /**
+   * Request a refund of a Spark transfer whose intent never finalized on EVM.
+   *
+   * Submits an `IntentAction::Clawback` (no deposits): the sequencer resolves
+   * the original transfer from custody, plans a `SparkGateway.refundTx`, and
+   * returns the funds to the original Spark sender.
+   *
+   * Eligibility is enforced server-side — the transfer must exist in custody
+   * and must not have been consumed by a finalized intent, and the caller's
+   * identity key must match the original sender. A clawback for a transfer
+   * that already finalized is rejected; treat that as "already settled", not
+   * a transient error to retry.
+   *
+   * @param sparkTxid Hex Spark transfer id returned when the funding transfer
+   *   was made.
+   */
+  async clawback(
+    sparkTxid: string,
+    opts?: { expiresAt?: number }
+  ): Promise<ExecuteResponse> {
+    this.requireAuth();
+    return this.submitIntent(
+      [],
+      { type: "clawback", sparkTxid },
+      {
+        // Ignored for clawback by `canonicalIntentId` (it zeroes the
+        // recipient), but the field is non-optional on `submitIntent`.
+        recipientForHash: "0x0000000000000000000000000000000000000000",
+        clawback: { sparkTxid },
+        expiresAt: opts?.expiresAt,
+      }
+    );
+  }
+
+  /**
+   * Attempt to claw back several Spark transfers, one intent each. Never
+   * throws on an individual failure: returns a per-transfer result so callers
+   * can report recovered vs. still-at-risk.
+   */
+  async clawbackMany(
+    sparkTxids: string[],
+    opts?: { expiresAt?: number }
+  ): Promise<ClawbackResult[]> {
+    const results: ClawbackResult[] = [];
+    for (const sparkTxid of sparkTxids) {
+      try {
+        const response = await this.clawback(sparkTxid, opts);
+        results.push({ transferId: sparkTxid, success: true, response });
+      } catch (err) {
+        results.push({
+          transferId: sparkTxid,
+          success: false,
+          error: err instanceof Error ? err.message : String(err),
+        });
+      }
+    }
+    return results;
+  }
+
+  /**
    * Look up the lifecycle status of a previously submitted intent.
    *
    * Calls `GET /api/v1/intents/{submissionId}` on the gateway. No auth
@@ -954,6 +1015,12 @@ export class ExecutionClient {
        * flows that is the SDK's own EVM address). Ignored for Clawback.
        */
       recipientForHash: string;
+      /**
+       * Clawback target. When set, the body carries a `clawback` action and
+       * `rawDeposits` MUST be empty. Mutually exclusive with `recipient` and
+       * `evmTransaction`.
+       */
+      clawback?: { sparkTxid: string };
       expiresAt?: number;
       manualProofs?: boolean;
     }
@@ -1016,10 +1083,21 @@ export class ExecutionClient {
     // keys (or the Rust struct) silently breaks auth — the signed
     // bytes diverge but no type-level error surfaces. A golden-vector
     // test in stringify-bigint.spec.ts locks in the current ordering.
-    const canonicalMessage: CanonicalIntentMessage = {
+    // The signed message must byte-match the gateway's serde output. For
+    // clawback the action's `sparkTxid` is a `SparkTransferId` enum on the Rust
+    // side, serialized externally tagged as `{ Bitcoin|Token: [...bytes] }` —
+    // NOT the hex string carried in the request body and the BLAKE3 preimage.
+    const messageAction =
+      action.type === "clawback"
+        ? {
+            type: "clawback" as const,
+            sparkTxid: clawbackSparkTxidWire(action.sparkTxid),
+          }
+        : action;
+    const canonicalMessage = {
       chainId: this.config.chainId,
       transfers,
-      action,
+      action: messageAction,
       expiresAt,
     };
 
@@ -1051,6 +1129,9 @@ export class ExecutionClient {
     }
     if (requestAction.evmTransaction) {
       body.evmTransaction = requestAction.evmTransaction;
+    }
+    if (requestAction.clawback) {
+      body.clawback = { sparkTxid: requestAction.clawback.sparkTxid };
     }
 
     const resp = await this.post<ExecuteResponse>("/api/v1/execute", body, {
