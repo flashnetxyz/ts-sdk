@@ -1776,56 +1776,58 @@ export class TradingClient {
       token1SparkId: params.token1SparkId,
     });
 
-    const struct = {
-      token0,
-      token1,
-      fee: params.fee,
-      tickLower: params.tickLower,
-      tickUpper: params.tickUpper,
-      amount0Desired: amount0,
-      amount1Desired: amount1,
-      amount0Min: BigInt(params.amount0Min),
-      amount1Min: BigInt(params.amount1Min),
-      deadline,
-      sparkRecipient,
-    };
+    return this.withAutoClawback(inboundIds, async () => {
+      const struct = {
+        token0,
+        token1,
+        fee: params.fee,
+        tickLower: params.tickLower,
+        tickUpper: params.tickUpper,
+        amount0Desired: amount0,
+        amount1Desired: amount1,
+        amount0Min: BigInt(params.amount0Min),
+        amount1Min: BigInt(params.amount1Min),
+        deadline,
+        sparkRecipient,
+      };
 
-    let calldata: string;
-    let value = 0n;
-    if (isBtcPair) {
-      const otherToken = (isToken0Btc ? token1 : token0) as `0x${string}`;
-      const otherAmount = isToken0Btc ? amount1 : amount0;
-      value = isToken0Btc ? amount0 : amount1;
-      const permit = await this.buildPermit2Signature(otherToken, otherAmount);
-      calldata = encodeFunctionData({
-        abi: conductorAbi,
-        functionName: "addLiquidityBTC",
-        args: [struct, permit.permitTransfer, permit.signature],
-      });
-    } else {
-      const [permitA, permitB] = await Promise.all([
-        this.buildPermit2Signature(token0, amount0),
-        this.buildPermit2Signature(token1, amount1),
-      ]);
-      calldata = encodeFunctionData({
-        abi: conductorAbi,
-        functionName: "addLiquidity",
-        args: [
-          struct,
-          permitA.permitTransfer,
-          permitA.signature,
-          permitB.permitTransfer,
-          permitB.signature,
-        ],
-      });
-    }
+      let calldata: string;
+      let value = 0n;
+      if (isBtcPair) {
+        const otherToken = (isToken0Btc ? token1 : token0) as `0x${string}`;
+        const otherAmount = isToken0Btc ? amount1 : amount0;
+        value = isToken0Btc ? amount0 : amount1;
+        const permit = await this.buildPermit2Signature(otherToken, otherAmount);
+        calldata = encodeFunctionData({
+          abi: conductorAbi,
+          functionName: "addLiquidityBTC",
+          args: [struct, permit.permitTransfer, permit.signature],
+        });
+      } else {
+        const [permitA, permitB] = await Promise.all([
+          this.buildPermit2Signature(token0, amount0),
+          this.buildPermit2Signature(token1, amount1),
+        ]);
+        calldata = encodeFunctionData({
+          abi: conductorAbi,
+          functionName: "addLiquidity",
+          args: [
+            struct,
+            permitA.permitTransfer,
+            permitA.signature,
+            permitB.permitTransfer,
+            permitB.signature,
+          ],
+        });
+      }
 
-    const signedTx = await this.signConductorTx(
-      calldata,
-      value,
-      this.config.lpGasLimit ?? DEFAULT_LP_GAS_LIMIT
-    );
-    return this.submitLpIntent(signedTx, deposits, inboundIds);
+      const signedTx = await this.signConductorTx(
+        calldata,
+        value,
+        this.config.lpGasLimit ?? DEFAULT_LP_GAS_LIMIT
+      );
+      return this.submitLpIntent(signedTx, deposits, inboundIds);
+    });
   }
 
   /**
@@ -1857,52 +1859,54 @@ export class TradingClient {
       token1SparkId: params.token1SparkId,
     });
 
-    const struct = {
-      tokenId,
-      amount0Desired: amount0,
-      amount1Desired: amount1,
-      amount0Min: BigInt(params.amount0Min),
-      amount1Min: BigInt(params.amount1Min),
-      deadline,
-      sparkRecipient,
-    };
+    return this.withAutoClawback(inboundIds, async () => {
+      const struct = {
+        tokenId,
+        amount0Desired: amount0,
+        amount1Desired: amount1,
+        amount0Min: BigInt(params.amount0Min),
+        amount1Min: BigInt(params.amount1Min),
+        deadline,
+        sparkRecipient,
+      };
 
-    let calldata: string;
-    let value = 0n;
-    if (isBtcPair) {
-      const otherToken = (isToken0Btc ? token1 : token0) as `0x${string}`;
-      const otherAmount = isToken0Btc ? amount1 : amount0;
-      value = isToken0Btc ? amount0 : amount1;
-      const permit = await this.buildPermit2Signature(otherToken, otherAmount);
-      calldata = encodeFunctionData({
-        abi: conductorAbi,
-        functionName: "increaseLiquidityBTC",
-        args: [struct, permit.permitTransfer, permit.signature],
-      });
-    } else {
-      const [permitA, permitB] = await Promise.all([
-        this.buildPermit2Signature(token0, amount0),
-        this.buildPermit2Signature(token1, amount1),
-      ]);
-      calldata = encodeFunctionData({
-        abi: conductorAbi,
-        functionName: "increaseLiquidity",
-        args: [
-          struct,
-          permitA.permitTransfer,
-          permitA.signature,
-          permitB.permitTransfer,
-          permitB.signature,
-        ],
-      });
-    }
+      let calldata: string;
+      let value = 0n;
+      if (isBtcPair) {
+        const otherToken = (isToken0Btc ? token1 : token0) as `0x${string}`;
+        const otherAmount = isToken0Btc ? amount1 : amount0;
+        value = isToken0Btc ? amount0 : amount1;
+        const permit = await this.buildPermit2Signature(otherToken, otherAmount);
+        calldata = encodeFunctionData({
+          abi: conductorAbi,
+          functionName: "increaseLiquidityBTC",
+          args: [struct, permit.permitTransfer, permit.signature],
+        });
+      } else {
+        const [permitA, permitB] = await Promise.all([
+          this.buildPermit2Signature(token0, amount0),
+          this.buildPermit2Signature(token1, amount1),
+        ]);
+        calldata = encodeFunctionData({
+          abi: conductorAbi,
+          functionName: "increaseLiquidity",
+          args: [
+            struct,
+            permitA.permitTransfer,
+            permitA.signature,
+            permitB.permitTransfer,
+            permitB.signature,
+          ],
+        });
+      }
 
-    const signedTx = await this.signConductorTx(
-      calldata,
-      value,
-      this.config.lpGasLimit ?? DEFAULT_LP_GAS_LIMIT
-    );
-    return this.submitLpIntent(signedTx, deposits, inboundIds);
+      const signedTx = await this.signConductorTx(
+        calldata,
+        value,
+        this.config.lpGasLimit ?? DEFAULT_LP_GAS_LIMIT
+      );
+      return this.submitLpIntent(signedTx, deposits, inboundIds);
+    });
   }
 
   /**
@@ -2007,60 +2011,62 @@ export class TradingClient {
       token1SparkId: params.token1SparkId,
     });
 
-    const struct = {
-      tokenId,
-      newTickLower: params.newTickLower,
-      newTickUpper: params.newTickUpper,
-      amount0Min: BigInt(params.amount0Min),
-      amount1Min: BigInt(params.amount1Min),
-      additionalAmount0Desired: add0,
-      additionalAmount1Desired: add1,
-      newAmount0Min: BigInt(params.newAmount0Min),
-      newAmount1Min: BigInt(params.newAmount1Min),
-      deadline,
-      sparkRecipient,
-    };
+    return this.withAutoClawback(inboundIds, async () => {
+      const struct = {
+        tokenId,
+        newTickLower: params.newTickLower,
+        newTickUpper: params.newTickUpper,
+        amount0Min: BigInt(params.amount0Min),
+        amount1Min: BigInt(params.amount1Min),
+        additionalAmount0Desired: add0,
+        additionalAmount1Desired: add1,
+        newAmount0Min: BigInt(params.newAmount0Min),
+        newAmount1Min: BigInt(params.newAmount1Min),
+        deadline,
+        sparkRecipient,
+      };
 
-    let calldata: string;
-    let value = 0n;
-    if (isBtcPair) {
-      const otherToken = (isToken0Btc ? token1 : token0) as `0x${string}`;
-      const otherAdd = isToken0Btc ? add1 : add0;
-      value = isToken0Btc ? add0 : add1;
-      const permit = await this.buildPermit2Signature(otherToken, otherAdd);
-      calldata = encodeFunctionData({
-        abi: conductorAbi,
-        functionName: "modifyPositionBTC",
-        args: [struct, nftPermit, permit.permitTransfer, permit.signature],
-      });
-    } else {
-      // The Conductor binds permitA/permitB to token0/token1 unconditionally
-      // (even when the additional amount is zero), so always sign both with
-      // the correct token; a zero-amount permit is a no-op on the pull.
-      const [permitA, permitB] = await Promise.all([
-        this.buildPermit2Signature(token0, add0),
-        this.buildPermit2Signature(token1, add1),
-      ]);
-      calldata = encodeFunctionData({
-        abi: conductorAbi,
-        functionName: "modifyPosition",
-        args: [
-          struct,
-          nftPermit,
-          permitA.permitTransfer,
-          permitA.signature,
-          permitB.permitTransfer,
-          permitB.signature,
-        ],
-      });
-    }
+      let calldata: string;
+      let value = 0n;
+      if (isBtcPair) {
+        const otherToken = (isToken0Btc ? token1 : token0) as `0x${string}`;
+        const otherAdd = isToken0Btc ? add1 : add0;
+        value = isToken0Btc ? add0 : add1;
+        const permit = await this.buildPermit2Signature(otherToken, otherAdd);
+        calldata = encodeFunctionData({
+          abi: conductorAbi,
+          functionName: "modifyPositionBTC",
+          args: [struct, nftPermit, permit.permitTransfer, permit.signature],
+        });
+      } else {
+        // The Conductor binds permitA/permitB to token0/token1 unconditionally
+        // (even when the additional amount is zero), so always sign both with
+        // the correct token; a zero-amount permit is a no-op on the pull.
+        const [permitA, permitB] = await Promise.all([
+          this.buildPermit2Signature(token0, add0),
+          this.buildPermit2Signature(token1, add1),
+        ]);
+        calldata = encodeFunctionData({
+          abi: conductorAbi,
+          functionName: "modifyPosition",
+          args: [
+            struct,
+            nftPermit,
+            permitA.permitTransfer,
+            permitA.signature,
+            permitB.permitTransfer,
+            permitB.signature,
+          ],
+        });
+      }
 
-    const signedTx = await this.signConductorTx(
-      calldata,
-      value,
-      this.config.lpGasLimit ?? DEFAULT_LP_GAS_LIMIT
-    );
-    return this.submitLpIntent(signedTx, deposits, inboundIds);
+      const signedTx = await this.signConductorTx(
+        calldata,
+        value,
+        this.config.lpGasLimit ?? DEFAULT_LP_GAS_LIMIT
+      );
+      return this.submitLpIntent(signedTx, deposits, inboundIds);
+    });
   }
 
   /**
@@ -2280,11 +2286,16 @@ export class TradingClient {
       inboundIds.push(leg.transferId);
     }
     if (opts.amount1 > 0n) {
-      const leg = await this.fundLpLeg(
-        opts.isToken1Btc,
-        opts.amount1,
-        opts.token1SparkId,
-        custody
+      // The first leg's transfer has already committed. If this one throws,
+      // claw the first leg back instead of stranding it (no-op when the first
+      // leg was zero-amount, since `inboundIds` is then empty).
+      const leg = await this.withAutoClawback(inboundIds.slice(), () =>
+        this.fundLpLeg(
+          opts.isToken1Btc,
+          opts.amount1,
+          opts.token1SparkId,
+          custody
+        )
       );
       deposits.push(leg.deposit);
       inboundIds.push(leg.transferId);
