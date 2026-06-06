@@ -42,6 +42,7 @@ import {
 } from "viem";
 import type { ExecutionClient } from "../execution/client";
 import type {
+  ClawbackResult,
   ClawbackSummary,
   Deposit,
   ExecuteResponse,
@@ -611,7 +612,7 @@ export class StrandedFundingError extends Error {
         : `Auto-clawback recovered ${recoveredTransferIds.length}/${transferIds.length}; still at risk: ${unrecoveredTransferIds.join(", ")}.`;
     super(
       `funding transfer(s) ${transferIds.join(", ")} committed but the ` +
-        `operation failed before the intent was submitted: ${reason}. ${recovery}`,
+        `operation then failed: ${reason}. ${recovery}`,
       { cause }
     );
     this.name = "StrandedFundingError";
@@ -1172,7 +1173,19 @@ export class TradingClient {
       if (committedTransferIds.length === 0) {
         throw err;
       }
-      const results = await this.execClient.clawbackMany(committedTransferIds);
+      // `clawbackMany` never throws per its contract, but localize the
+      // StrandedFundingError guarantee here so a future contract change can't
+      // strand the caller without the committed transfer ids.
+      let results: ClawbackResult[];
+      try {
+        results = await this.execClient.clawbackMany(committedTransferIds);
+      } catch {
+        results = committedTransferIds.map((transferId) => ({
+          transferId,
+          success: false,
+          error: "clawback request failed",
+        }));
+      }
       const summary: ClawbackSummary = {
         attempted: true,
         recoveredTransferIds: results

@@ -58,6 +58,7 @@ import type {
   CanonicalIntentMessage,
   CanonicalTransferEntry,
   ClawbackResult,
+  ClawbackSparkTxidWire,
   Deposit,
   DepositRejection,
   ExecuteResponse,
@@ -1087,6 +1088,15 @@ export class ExecutionClient {
     // clawback the action's `sparkTxid` is a `SparkTransferId` enum on the Rust
     // side, serialized externally tagged as `{ Bitcoin|Token: [...bytes] }` —
     // NOT the hex string carried in the request body and the BLAKE3 preimage.
+    // Type the message against a wire-form of `CanonicalIntentMessage` derived
+    // from the canonical type (the clawback `sparkTxid` above is the byte enum,
+    // not the hex `CanonicalIntentAction` form), so a later rename/reorder of
+    // the shared fields still fails to compile here.
+    type CanonicalIntentMessageWire = Omit<CanonicalIntentMessage, "action"> & {
+      action:
+        | Exclude<CanonicalIntentAction, { type: "clawback" }>
+        | { type: "clawback"; sparkTxid: ClawbackSparkTxidWire };
+    };
     const messageAction =
       action.type === "clawback"
         ? {
@@ -1094,7 +1104,7 @@ export class ExecutionClient {
             sparkTxid: clawbackSparkTxidWire(action.sparkTxid),
           }
         : action;
-    const canonicalMessage = {
+    const canonicalMessage: CanonicalIntentMessageWire = {
       chainId: this.config.chainId,
       transfers,
       action: messageAction,
