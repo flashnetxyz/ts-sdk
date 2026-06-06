@@ -28,7 +28,12 @@ import { nonfungiblePositionManagerAbi } from "../execution/abis/nonfungiblePosi
 import { ExecutionClient } from "../execution/client";
 import type { SparkWalletInput } from "../execution/spark-evm-account";
 import { encodeSparkHumanReadableTokenIdentifier } from "../utils/tokenAddress";
-import { TradingClient, satsToWei, weiToSats } from "./client";
+import {
+  StrandedFundingError,
+  TradingClient,
+  satsToWei,
+  weiToSats,
+} from "./client";
 
 const TEST_KEY = new Uint8Array(32);
 TEST_KEY[31] = 1;
@@ -478,6 +483,60 @@ describe("TradingClient.addLiquidity (ERC20/ERC20)", () => {
     expect(body?.deposits).toHaveLength(2);
     expect(res.inboundSparkTransferIds).toHaveLength(2);
     expect(decodeLastCall().functionName).toBe("addLiquidity");
+  });
+
+  it("auto-claws back both legs when a funded addLiquidity fails post-funding", async () => {
+    let tokenTransfers = 0;
+    const amm = await makeClient({ onTransferTokens: () => tokenTransfers++ });
+    const exec = (amm as any).execClient as ExecutionClient;
+
+    // Both legs' transfers commit, then signing fails (RPC down). The SDK must
+    // claw both committed transfers back rather than strand them.
+    jest
+      .spyOn(amm as any, "signConductorTx")
+      .mockRejectedValue(new Error("nonce/fee RPC unavailable"));
+    let clawedIds: string[] = [];
+    const clawbackSpy = jest
+      .spyOn(exec, "clawbackMany")
+      .mockImplementation(async (ids: string[]) => {
+        clawedIds = ids;
+        return ids.map((id) => ({ transferId: id, success: true }));
+      });
+
+    const err = await amm
+      .addLiquidity({
+        token0: TOKEN_A,
+        token1: TOKEN_B,
+        fee: 3000,
+        tickLower: -60,
+        tickUpper: 60,
+        amount0Desired: "1000",
+        amount1Desired: "2000",
+        amount0Min: "0",
+        amount1Min: "0",
+        useAvailableBalance: true,
+        token0SparkId: encodeSparkHumanReadableTokenIdentifier(
+          "aa".repeat(32),
+          "REGTEST"
+        ),
+        token1SparkId: encodeSparkHumanReadableTokenIdentifier(
+          "bb".repeat(32),
+          "REGTEST"
+        ),
+      })
+      .then(
+        () => null,
+        (e) => e
+      );
+
+    expect(tokenTransfers).toBe(2);
+    expect(err).toBeInstanceOf(StrandedFundingError);
+    expect(clawbackSpy).toHaveBeenCalledTimes(1);
+    expect(clawedIds).toHaveLength(2);
+    expect((err as StrandedFundingError).transferIds).toEqual(clawedIds);
+    expect(
+      (err as StrandedFundingError).clawbackSummary.recoveredTransferIds
+    ).toEqual(clawedIds);
   });
 
   it("refuses the Spark-funded ERC20 path when Permit2 is not approved, before transferring", async () => {

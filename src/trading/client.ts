@@ -41,7 +41,12 @@ import {
   type Hex,
 } from "viem";
 import type { ExecutionClient } from "../execution/client";
-import type { Deposit, ExecuteResponse } from "../execution/types";
+import type {
+  ClawbackResult,
+  ClawbackSummary,
+  Deposit,
+  ExecuteResponse,
+} from "../execution/types";
 import { conductorAbi } from "../execution/abis/conductor";
 import { nonfungiblePositionManagerAbi } from "../execution/abis/nonfungiblePositionManager";
 import { fetchNonce, fetchAllowance, fetchEip1559Fees } from "../execution/evm";
@@ -584,24 +589,35 @@ const TRADING_ENVIRONMENT_CONFIGS: Partial<Record<ClientEnvironment, TradingConf
 };
 
 /**
- * Thrown when a `useAvailableBalance` swap fails AFTER its funding Spark
- * transfer has already committed. The deposit is sitting at the gateway
- * deposit address; `transferId` lets the caller build a recovery deposit
- * intent instead of losing track of it. `cause` is the underlying failure
- * (nonce/fee RPC error, permit signing, gateway rejection, etc.).
+ * Thrown when a Spark-funded operation (swap round-trip, or LP add / increase
+ * / modify with `useAvailableBalance`) fails AFTER its funding transfer(s)
+ * committed. The SDK automatically attempts to claw the committed transfer(s)
+ * back to the caller's Spark balance; `clawbackSummary` reports which were
+ * recovered and which are still at risk. `transferIds` are the committed
+ * transfers; `cause` is the underlying failure.
  */
-export class SwapDepositStrandedError extends Error {
-  readonly transferId: string;
-  constructor(transferId: string, cause: unknown) {
+export class StrandedFundingError extends Error {
+  readonly transferIds: string[];
+  readonly clawbackSummary: ClawbackSummary;
+  constructor(
+    transferIds: string[],
+    clawbackSummary: ClawbackSummary,
+    cause: unknown
+  ) {
     const reason = cause instanceof Error ? cause.message : String(cause);
+    const { recoveredTransferIds, unrecoveredTransferIds } = clawbackSummary;
+    const recovery =
+      unrecoveredTransferIds.length === 0
+        ? `All ${transferIds.length} funding transfer(s) were automatically clawed back.`
+        : `Auto-clawback recovered ${recoveredTransferIds.length}/${transferIds.length}; still at risk: ${unrecoveredTransferIds.join(", ")}.`;
     super(
-      `swap funding transfer ${transferId} committed but the swap failed ` +
-        `before the intent was submitted: ${reason}. The deposit is at the ` +
-        `gateway deposit address — build a recovery intent with this transferId.`,
+      `funding transfer(s) ${transferIds.join(", ")} committed but the ` +
+        `operation then failed: ${reason}. ${recovery}`,
       { cause }
     );
-    this.name = "SwapDepositStrandedError";
-    this.transferId = transferId;
+    this.name = "StrandedFundingError";
+    this.transferIds = transferIds;
+    this.clawbackSummary = clawbackSummary;
   }
 }
 
@@ -1136,6 +1152,55 @@ export class TradingClient {
   }
 
   /**
+   * Run the post-funding work of a Spark-funded operation under automatic
+   * clawback. If `op` throws after funding transfer(s) committed, claw them
+   * back to the caller's Spark balance and rethrow as
+   * {@link StrandedFundingError} with a per-transfer recovery summary.
+   *
+   * `committedTransferIds` are the transfers made before `op` runs. An empty
+   * array (no Spark funding) makes this a transparent pass-through. Clawback
+   * eligibility is enforced server-side, so a clawback for a transfer the
+   * gateway actually consumed is rejected and surfaced as unrecovered rather
+   * than double-spending.
+   */
+  private async withAutoClawback<T>(
+    committedTransferIds: string[],
+    op: () => Promise<T>
+  ): Promise<T> {
+    try {
+      return await op();
+    } catch (err) {
+      if (committedTransferIds.length === 0) {
+        throw err;
+      }
+      // `clawbackMany` never throws per its contract, but localize the
+      // StrandedFundingError guarantee here so a future contract change can't
+      // strand the caller without the committed transfer ids.
+      let results: ClawbackResult[];
+      try {
+        results = await this.execClient.clawbackMany(committedTransferIds);
+      } catch {
+        results = committedTransferIds.map((transferId) => ({
+          transferId,
+          success: false,
+          error: "clawback request failed",
+        }));
+      }
+      const summary: ClawbackSummary = {
+        attempted: true,
+        recoveredTransferIds: results
+          .filter((r) => r.success)
+          .map((r) => r.transferId),
+        unrecoveredTransferIds: results
+          .filter((r) => !r.success)
+          .map((r) => r.transferId),
+        results,
+      };
+      throw new StrandedFundingError(committedTransferIds, summary, err);
+    }
+  }
+
+  /**
    * Bundle a Spark-side deposit with the swap+withdraw in ONE execute
    * intent.
    *
@@ -1215,11 +1280,10 @@ export class TradingClient {
 
     // The funding transfer has committed. Everything past this point can
     // still fail (EIP-2612 permit signing, nonce/fee RPC inside
-    // signConductorTx, and the gateway POST in submitSwapIntent). Wrap it
-    // so any failure surfaces `transferId` via SwapDepositStrandedError —
-    // otherwise the deposit is stranded at the gateway with no way to
-    // build a recovery intent.
-    try {
+    // signConductorTx, and the gateway POST in submitSwapIntent). Run it under
+    // auto-clawback so any failure returns the deposit to the caller's Spark
+    // balance instead of stranding it at the gateway.
+    return this.withAutoClawback([transferId], async () => {
       // Step 2: build calldata.
       let calldata: string;
       let value: bigint = 0n;
@@ -1285,9 +1349,7 @@ export class TradingClient {
       // Step 3: sign + submit bundled intent.
       const signedTx = await this.signConductorTx(calldata, value);
       return await this.submitSwapIntent(signedTx, deposits, transferId);
-    } catch (err) {
-      throw new SwapDepositStrandedError(transferId, err);
-    }
+    });
   }
 
   /**
@@ -1727,56 +1789,58 @@ export class TradingClient {
       token1SparkId: params.token1SparkId,
     });
 
-    const struct = {
-      token0,
-      token1,
-      fee: params.fee,
-      tickLower: params.tickLower,
-      tickUpper: params.tickUpper,
-      amount0Desired: amount0,
-      amount1Desired: amount1,
-      amount0Min: BigInt(params.amount0Min),
-      amount1Min: BigInt(params.amount1Min),
-      deadline,
-      sparkRecipient,
-    };
+    return this.withAutoClawback(inboundIds, async () => {
+      const struct = {
+        token0,
+        token1,
+        fee: params.fee,
+        tickLower: params.tickLower,
+        tickUpper: params.tickUpper,
+        amount0Desired: amount0,
+        amount1Desired: amount1,
+        amount0Min: BigInt(params.amount0Min),
+        amount1Min: BigInt(params.amount1Min),
+        deadline,
+        sparkRecipient,
+      };
 
-    let calldata: string;
-    let value = 0n;
-    if (isBtcPair) {
-      const otherToken = (isToken0Btc ? token1 : token0) as `0x${string}`;
-      const otherAmount = isToken0Btc ? amount1 : amount0;
-      value = isToken0Btc ? amount0 : amount1;
-      const permit = await this.buildPermit2Signature(otherToken, otherAmount);
-      calldata = encodeFunctionData({
-        abi: conductorAbi,
-        functionName: "addLiquidityBTC",
-        args: [struct, permit.permitTransfer, permit.signature],
-      });
-    } else {
-      const [permitA, permitB] = await Promise.all([
-        this.buildPermit2Signature(token0, amount0),
-        this.buildPermit2Signature(token1, amount1),
-      ]);
-      calldata = encodeFunctionData({
-        abi: conductorAbi,
-        functionName: "addLiquidity",
-        args: [
-          struct,
-          permitA.permitTransfer,
-          permitA.signature,
-          permitB.permitTransfer,
-          permitB.signature,
-        ],
-      });
-    }
+      let calldata: string;
+      let value = 0n;
+      if (isBtcPair) {
+        const otherToken = (isToken0Btc ? token1 : token0) as `0x${string}`;
+        const otherAmount = isToken0Btc ? amount1 : amount0;
+        value = isToken0Btc ? amount0 : amount1;
+        const permit = await this.buildPermit2Signature(otherToken, otherAmount);
+        calldata = encodeFunctionData({
+          abi: conductorAbi,
+          functionName: "addLiquidityBTC",
+          args: [struct, permit.permitTransfer, permit.signature],
+        });
+      } else {
+        const [permitA, permitB] = await Promise.all([
+          this.buildPermit2Signature(token0, amount0),
+          this.buildPermit2Signature(token1, amount1),
+        ]);
+        calldata = encodeFunctionData({
+          abi: conductorAbi,
+          functionName: "addLiquidity",
+          args: [
+            struct,
+            permitA.permitTransfer,
+            permitA.signature,
+            permitB.permitTransfer,
+            permitB.signature,
+          ],
+        });
+      }
 
-    const signedTx = await this.signConductorTx(
-      calldata,
-      value,
-      this.config.lpGasLimit ?? DEFAULT_LP_GAS_LIMIT
-    );
-    return this.submitLpIntent(signedTx, deposits, inboundIds);
+      const signedTx = await this.signConductorTx(
+        calldata,
+        value,
+        this.config.lpGasLimit ?? DEFAULT_LP_GAS_LIMIT
+      );
+      return this.submitLpIntent(signedTx, deposits, inboundIds);
+    });
   }
 
   /**
@@ -1808,52 +1872,54 @@ export class TradingClient {
       token1SparkId: params.token1SparkId,
     });
 
-    const struct = {
-      tokenId,
-      amount0Desired: amount0,
-      amount1Desired: amount1,
-      amount0Min: BigInt(params.amount0Min),
-      amount1Min: BigInt(params.amount1Min),
-      deadline,
-      sparkRecipient,
-    };
+    return this.withAutoClawback(inboundIds, async () => {
+      const struct = {
+        tokenId,
+        amount0Desired: amount0,
+        amount1Desired: amount1,
+        amount0Min: BigInt(params.amount0Min),
+        amount1Min: BigInt(params.amount1Min),
+        deadline,
+        sparkRecipient,
+      };
 
-    let calldata: string;
-    let value = 0n;
-    if (isBtcPair) {
-      const otherToken = (isToken0Btc ? token1 : token0) as `0x${string}`;
-      const otherAmount = isToken0Btc ? amount1 : amount0;
-      value = isToken0Btc ? amount0 : amount1;
-      const permit = await this.buildPermit2Signature(otherToken, otherAmount);
-      calldata = encodeFunctionData({
-        abi: conductorAbi,
-        functionName: "increaseLiquidityBTC",
-        args: [struct, permit.permitTransfer, permit.signature],
-      });
-    } else {
-      const [permitA, permitB] = await Promise.all([
-        this.buildPermit2Signature(token0, amount0),
-        this.buildPermit2Signature(token1, amount1),
-      ]);
-      calldata = encodeFunctionData({
-        abi: conductorAbi,
-        functionName: "increaseLiquidity",
-        args: [
-          struct,
-          permitA.permitTransfer,
-          permitA.signature,
-          permitB.permitTransfer,
-          permitB.signature,
-        ],
-      });
-    }
+      let calldata: string;
+      let value = 0n;
+      if (isBtcPair) {
+        const otherToken = (isToken0Btc ? token1 : token0) as `0x${string}`;
+        const otherAmount = isToken0Btc ? amount1 : amount0;
+        value = isToken0Btc ? amount0 : amount1;
+        const permit = await this.buildPermit2Signature(otherToken, otherAmount);
+        calldata = encodeFunctionData({
+          abi: conductorAbi,
+          functionName: "increaseLiquidityBTC",
+          args: [struct, permit.permitTransfer, permit.signature],
+        });
+      } else {
+        const [permitA, permitB] = await Promise.all([
+          this.buildPermit2Signature(token0, amount0),
+          this.buildPermit2Signature(token1, amount1),
+        ]);
+        calldata = encodeFunctionData({
+          abi: conductorAbi,
+          functionName: "increaseLiquidity",
+          args: [
+            struct,
+            permitA.permitTransfer,
+            permitA.signature,
+            permitB.permitTransfer,
+            permitB.signature,
+          ],
+        });
+      }
 
-    const signedTx = await this.signConductorTx(
-      calldata,
-      value,
-      this.config.lpGasLimit ?? DEFAULT_LP_GAS_LIMIT
-    );
-    return this.submitLpIntent(signedTx, deposits, inboundIds);
+      const signedTx = await this.signConductorTx(
+        calldata,
+        value,
+        this.config.lpGasLimit ?? DEFAULT_LP_GAS_LIMIT
+      );
+      return this.submitLpIntent(signedTx, deposits, inboundIds);
+    });
   }
 
   /**
@@ -1958,60 +2024,62 @@ export class TradingClient {
       token1SparkId: params.token1SparkId,
     });
 
-    const struct = {
-      tokenId,
-      newTickLower: params.newTickLower,
-      newTickUpper: params.newTickUpper,
-      amount0Min: BigInt(params.amount0Min),
-      amount1Min: BigInt(params.amount1Min),
-      additionalAmount0Desired: add0,
-      additionalAmount1Desired: add1,
-      newAmount0Min: BigInt(params.newAmount0Min),
-      newAmount1Min: BigInt(params.newAmount1Min),
-      deadline,
-      sparkRecipient,
-    };
+    return this.withAutoClawback(inboundIds, async () => {
+      const struct = {
+        tokenId,
+        newTickLower: params.newTickLower,
+        newTickUpper: params.newTickUpper,
+        amount0Min: BigInt(params.amount0Min),
+        amount1Min: BigInt(params.amount1Min),
+        additionalAmount0Desired: add0,
+        additionalAmount1Desired: add1,
+        newAmount0Min: BigInt(params.newAmount0Min),
+        newAmount1Min: BigInt(params.newAmount1Min),
+        deadline,
+        sparkRecipient,
+      };
 
-    let calldata: string;
-    let value = 0n;
-    if (isBtcPair) {
-      const otherToken = (isToken0Btc ? token1 : token0) as `0x${string}`;
-      const otherAdd = isToken0Btc ? add1 : add0;
-      value = isToken0Btc ? add0 : add1;
-      const permit = await this.buildPermit2Signature(otherToken, otherAdd);
-      calldata = encodeFunctionData({
-        abi: conductorAbi,
-        functionName: "modifyPositionBTC",
-        args: [struct, nftPermit, permit.permitTransfer, permit.signature],
-      });
-    } else {
-      // The Conductor binds permitA/permitB to token0/token1 unconditionally
-      // (even when the additional amount is zero), so always sign both with
-      // the correct token; a zero-amount permit is a no-op on the pull.
-      const [permitA, permitB] = await Promise.all([
-        this.buildPermit2Signature(token0, add0),
-        this.buildPermit2Signature(token1, add1),
-      ]);
-      calldata = encodeFunctionData({
-        abi: conductorAbi,
-        functionName: "modifyPosition",
-        args: [
-          struct,
-          nftPermit,
-          permitA.permitTransfer,
-          permitA.signature,
-          permitB.permitTransfer,
-          permitB.signature,
-        ],
-      });
-    }
+      let calldata: string;
+      let value = 0n;
+      if (isBtcPair) {
+        const otherToken = (isToken0Btc ? token1 : token0) as `0x${string}`;
+        const otherAdd = isToken0Btc ? add1 : add0;
+        value = isToken0Btc ? add0 : add1;
+        const permit = await this.buildPermit2Signature(otherToken, otherAdd);
+        calldata = encodeFunctionData({
+          abi: conductorAbi,
+          functionName: "modifyPositionBTC",
+          args: [struct, nftPermit, permit.permitTransfer, permit.signature],
+        });
+      } else {
+        // The Conductor binds permitA/permitB to token0/token1 unconditionally
+        // (even when the additional amount is zero), so always sign both with
+        // the correct token; a zero-amount permit is a no-op on the pull.
+        const [permitA, permitB] = await Promise.all([
+          this.buildPermit2Signature(token0, add0),
+          this.buildPermit2Signature(token1, add1),
+        ]);
+        calldata = encodeFunctionData({
+          abi: conductorAbi,
+          functionName: "modifyPosition",
+          args: [
+            struct,
+            nftPermit,
+            permitA.permitTransfer,
+            permitA.signature,
+            permitB.permitTransfer,
+            permitB.signature,
+          ],
+        });
+      }
 
-    const signedTx = await this.signConductorTx(
-      calldata,
-      value,
-      this.config.lpGasLimit ?? DEFAULT_LP_GAS_LIMIT
-    );
-    return this.submitLpIntent(signedTx, deposits, inboundIds);
+      const signedTx = await this.signConductorTx(
+        calldata,
+        value,
+        this.config.lpGasLimit ?? DEFAULT_LP_GAS_LIMIT
+      );
+      return this.submitLpIntent(signedTx, deposits, inboundIds);
+    });
   }
 
   /**
@@ -2231,11 +2299,16 @@ export class TradingClient {
       inboundIds.push(leg.transferId);
     }
     if (opts.amount1 > 0n) {
-      const leg = await this.fundLpLeg(
-        opts.isToken1Btc,
-        opts.amount1,
-        opts.token1SparkId,
-        custody
+      // The first leg's transfer has already committed. If this one throws,
+      // claw the first leg back instead of stranding it (no-op when the first
+      // leg was zero-amount, since `inboundIds` is then empty).
+      const leg = await this.withAutoClawback(inboundIds.slice(), () =>
+        this.fundLpLeg(
+          opts.isToken1Btc,
+          opts.amount1,
+          opts.token1SparkId,
+          custody
+        )
       );
       deposits.push(leg.deposit);
       inboundIds.push(leg.transferId);

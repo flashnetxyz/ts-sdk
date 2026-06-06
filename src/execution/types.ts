@@ -387,6 +387,34 @@ export type CanonicalIntentAction =
   | { type: "execute"; signedTxHash: string }
   | { type: "clawback"; sparkTxid: string };
 
+/** Outcome of a single clawback attempt. Never represents a thrown error. */
+export interface ClawbackResult {
+  /** The Spark transfer id this attempt targeted. */
+  transferId: string;
+  /** Whether the gateway accepted the clawback intent. */
+  success: boolean;
+  /** Gateway response when accepted. */
+  response?: ExecuteResponse;
+  /**
+   * Failure message when rejected. A rejection commonly means the transfer
+   * was already consumed by a finalized intent (so no refund is owed), not a
+   * transient error to retry.
+   */
+  error?: string;
+}
+
+/** Aggregate result of an automatic clawback over one or more transfers. */
+export interface ClawbackSummary {
+  /** Whether a clawback was attempted (false when no funds were committed). */
+  attempted: boolean;
+  /** Transfers the gateway accepted a clawback for (returned to the sender). */
+  recoveredTransferIds: string[];
+  /** Transfers whose clawback was rejected — still at risk, may need manual recovery. */
+  unrecoveredTransferIds: string[];
+  /** Per-transfer detail. */
+  results: ClawbackResult[];
+}
+
 /**
  * Canonical intent message that gets signed by the client.
  *
@@ -503,6 +531,32 @@ function hexToBytes(hex: string): Uint8Array {
 function normalizeIdHex(id: string): string {
   const noPrefix = id.startsWith("0x") || id.startsWith("0X") ? id.slice(2) : id;
   return noPrefix.replace(/-/g, "");
+}
+
+/**
+ * Externally-tagged wire form of a clawback `sparkTxid` as it appears in the
+ * signed canonical intent message.
+ *
+ * The gateway's `CanonicalIntentAction::Clawback.spark_txid` is a
+ * `SparkTransferId` enum (`Bitcoin([u8; 16])` / `Token([u8; 32])`) with a plain
+ * derived `Serialize`, so serde emits it externally tagged with a decimal byte
+ * array and a PascalCase variant key: `{ "Bitcoin": [..16] }` or
+ * `{ "Token": [..32] }`. The signature is verified against this JSON
+ * byte-for-byte, so the SDK must reproduce the exact shape.
+ *
+ * This is ONLY for the signed message. The `/execute` request body and the
+ * BLAKE3 intent-id preimage both use the bare-hex string form.
+ */
+export type ClawbackSparkTxidWire = { Bitcoin: number[] } | { Token: number[] };
+
+/** Build the {@link ClawbackSparkTxidWire} form from a hex transfer id. */
+export function clawbackSparkTxidWire(sparkTxid: string): ClawbackSparkTxidWire {
+  const bytes = Array.from(hexToBytes(normalizeIdHex(sparkTxid)));
+  if (bytes.length === 16) return { Bitcoin: bytes };
+  if (bytes.length === 32) return { Token: bytes };
+  throw new Error(
+    `clawback sparkTxid must be 16 (Bitcoin) or 32 (Token) bytes, got ${bytes.length}`
+  );
 }
 
 /**

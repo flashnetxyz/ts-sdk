@@ -8,7 +8,7 @@
 
 export {
   TradingClient,
-  SwapDepositStrandedError,
+  StrandedFundingError,
   type TradingConfig,
   type SwapParams,
   type SwapResult,
