@@ -152,6 +152,11 @@ describe("stringifyWithBigint", () => {
   // (0xFF*32, chainId 21022, expiresAt 9999999999000) so the two are directly
   // comparable. If this drifts, clawback signature verification fails at the
   // gateway.
+  //
+  // Cross-checked: this exact string equals `serde_json::to_string` of the
+  // Rust clawback `CanonicalIntentMessage` (captured by running the
+  // `flashnet-auth` `clawback_intent_serializes_with_empty_transfers` test),
+  // so the SDK signs the bytes the gateway verifies, not just a derived guess.
   it("clawback canonical message matches the Rust serde wire form", () => {
     const message = {
       chainId: 21022,
