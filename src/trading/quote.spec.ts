@@ -372,6 +372,7 @@ describe("TradingClient.quote — computation", () => {
     });
     expect(res.conductorFeeBps).toBe(100); // all three components summed
     expect(res.conductorFeeAmount).toBe("10000");
+    expect(res.conductorFeeAsset).toBe(TOKEN_B); // neither leg is WBTC/USDB → tokenOut
     expect(res.amountOut).toBe("1000000"); // 1_010_000 - 10_000
   });
 
