@@ -675,4 +675,34 @@ export const conductorAbi = [
     ],
     anonymous: false,
   },
+  // Fee getters — read-only views used by client-side swap quoting to fold the
+  // Conductor's skim into the quoted output (mirrors `Conductor._swap`).
+  {
+    type: "function",
+    name: "hostFeeBps",
+    stateMutability: "view",
+    inputs: [{ name: "pool", type: "address" }],
+    outputs: [{ name: "", type: "uint16" }],
+  },
+  {
+    type: "function",
+    name: "protocolFeeBps",
+    stateMutability: "view",
+    inputs: [],
+    outputs: [{ name: "", type: "uint16" }],
+  },
+  {
+    type: "function",
+    name: "wbtc",
+    stateMutability: "view",
+    inputs: [],
+    outputs: [{ name: "", type: "address" }],
+  },
+  {
+    type: "function",
+    name: "usdb",
+    stateMutability: "view",
+    inputs: [],
+    outputs: [{ name: "", type: "address" }],
+  },
 ] as const;

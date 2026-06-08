@@ -37,8 +37,11 @@ import {
   hexToBigInt,
   isAddress,
   keccak256,
+  BaseError,
+  ContractFunctionRevertedError,
   type Address,
   type Hex,
+  type PublicClient,
 } from "viem";
 import type { ExecutionClient } from "../execution/client";
 import type {
@@ -50,6 +53,21 @@ import type {
 import { conductorAbi } from "../execution/abis/conductor";
 import { nonfungiblePositionManagerAbi } from "../execution/abis/nonfungiblePositionManager";
 import { fetchNonce, fetchAllowance, fetchEip1559Fees } from "../execution/evm";
+import { getPoolAddress } from "../execution/pool";
+import {
+  uniswapV3PoolAbi,
+  uniswapV3QuoterV2Abi,
+} from "../execution/abis/uniswapV3";
+import {
+  applySlippage,
+  conductorSkim,
+  effectiveSwapInput,
+  priceImpactBps,
+  resolveFeeAsset,
+  DEFAULT_SLIPPAGE_BPS,
+  MAX_FEE_RATE_BPS,
+  UINT24_MAX,
+} from "./quote-math";
 import {
   decodeSparkHumanReadableTokenIdentifier,
   type SparkHumanReadableTokenIdentifier,
@@ -125,9 +143,6 @@ const ZERO_ADDRESS = "0x0000000000000000000000000000000000000000";
 const DEFAULT_SWAP_GAS_LIMIT = 1_000_000n;
 const DEFAULT_APPROVE_GAS_LIMIT = 100_000n;
 const DEFAULT_LP_GAS_LIMIT = 1_500_000n;
-
-/** Timeout for the read-only gateway swap-quote HTTP request. */
-const QUOTE_TIMEOUT_MS = 10_000;
 
 /** Conversion factor: 1 sat = 10^10 wei on Flashnet's EVM. */
 const WEI_PER_SAT = 10_000_000_000n;
@@ -209,6 +224,12 @@ export interface TradingConfig {
    * A trading-stack address, so it lives here rather than on `NetworkInfo`.
    */
   factoryAddress?: string;
+  /**
+   * Uniswap V3 `QuoterV2` address. Required by {@link TradingClient.quote},
+   * which reads `quoteExactInputSingle` directly over RPC (the gateway no
+   * longer proxies quotes). A trading-stack address, like `factoryAddress`.
+   */
+  quoterV2Address?: string;
   /**
    * NonfungiblePositionManager (NPM) address. Required for every
    * liquidity-management method: read paths (`getPosition`, `listPositions`)
@@ -395,12 +416,15 @@ export interface QuoteResult {
   conductorFeeAsset?: string;
 }
 
-/** Raw shape of the gateway `POST /api/v1/swap/quote` response. */
-interface GatewaySwapQuoteResponse {
+/**
+ * Client-side computed swap quote, in `tokenIn`/`tokenOut` base units. Replaces
+ * the old gateway-proxied response shape; {@link TradingClient.quote} applies
+ * the BTC↔sats glue on top.
+ */
+interface ComputedSwapQuote {
   amountOut: string;
   minAmountOut: string;
   priceImpactBps?: number;
-  sqrtPriceX96After: string;
   feeTier: number;
   slippageBps: number;
   conductorFeeBps: number;
@@ -807,10 +831,10 @@ export class TradingClient {
   }
 
   /**
-   * Fetch a pre-trade quote for a single-pool swap. The gateway reads the
-   * on-chain Uniswap V3 `QuoterV2`; this returns the estimated output, a
-   * slippage-adjusted `minAmountOut` you can pass straight to {@link swap},
-   * and the pool price impact.
+   * Fetch a pre-trade quote for a single-pool swap. Reads the on-chain Uniswap
+   * V3 `QuoterV2` directly over RPC, folds in the Conductor's fee skim, and
+   * returns the estimated output, a slippage-adjusted `minAmountOut` you can
+   * pass straight to {@link swap}, and the pool price impact.
    *
    * BTC legs are quoted against the configured WBTC pool token: a `"btc"`
    * input amount (sats) is converted to WBTC wei for the quote, and a
@@ -818,9 +842,8 @@ export class TradingClient {
    * WBTC and withdraws sats, flooring sub-sat dust). Either `"btc"` leg
    * requires `wbtcAddress` in {@link TradingConfig}.
    *
-   * Requires the gateway to expose `POST /api/v1/swap/quote` with a QuoterV2
-   * address configured; if it does not, the gateway returns 503 and this
-   * throws.
+   * Requires `quoterV2Address` (and, since the Conductor fee is always folded
+   * in, `factoryAddress`) in {@link TradingConfig}; throws if either is unset.
    */
   async quote(params: QuoteParams): Promise<QuoteResult> {
     const isBtcIn = params.assetInAddress.toLowerCase() === "btc";
@@ -870,24 +893,16 @@ export class TradingClient {
     const tokenOut = isBtcOut
       ? this.requireWbtcAddress()
       : params.assetOutAddress;
-    // BTC input is denominated in sats; the WBTC pool leg is in wei. Forward
-    // the normalized decimal for token legs too, so a quirky-but-valid input
-    // reaches the gateway canonicalized.
-    const amountIn = isBtcIn
-      ? (amountInRaw * WEI_PER_SAT).toString()
-      : amountInRaw.toString();
+    // BTC input is denominated in sats; the WBTC pool leg is in wei.
+    const amountIn = isBtcIn ? amountInRaw * WEI_PER_SAT : amountInRaw;
 
-    const res = await this.postSwapQuote({
+    const res = await this.computeSwapQuote({
       tokenIn,
       tokenOut,
       fee: params.fee,
       amountIn,
-      ...(params.slippageBps !== undefined
-        ? { slippageBps: params.slippageBps }
-        : {}),
-      ...(params.integratorBps !== undefined
-        ? { integratorBps: params.integratorBps }
-        : {}),
+      slippageBps: params.slippageBps,
+      integratorBps: params.integratorBps,
     });
 
     // Don't blindly trust the gateway with a value the caller will use as an
@@ -976,61 +991,234 @@ export class TradingClient {
     return this.config.wbtcAddress;
   }
 
-  /** POST the gateway swap-quote endpoint and parse its response. */
-  private async postSwapQuote(body: {
+  /**
+   * Compute a single-pool swap quote client-side, in `tokenIn`/`tokenOut` base
+   * units: resolve the pool, fold in the Conductor fee skim, read
+   * `QuoterV2.quoteExactInputSingle` over RPC, and derive the slippage floor
+   * plus a best-effort price impact. Ported from the gateway's removed
+   * `quote.rs`; the fee/slippage math lives in `./quote-math`.
+   */
+  private async computeSwapQuote(input: {
     tokenIn: string;
     tokenOut: string;
     fee: number;
-    amountIn: string;
+    amountIn: bigint;
     slippageBps?: number;
     integratorBps?: number;
-  }): Promise<GatewaySwapQuoteResponse> {
-    const { gatewayUrl } = this.execClient.getConfig();
-    const url = `${gatewayUrl}/api/v1/swap/quote`;
+  }): Promise<ComputedSwapQuote> {
+    const { tokenIn, tokenOut, fee, amountIn } = input;
+    const slippageBps = input.slippageBps ?? DEFAULT_SLIPPAGE_BPS;
+    const integratorBps = BigInt(input.integratorBps ?? 0);
 
-    // Bound the whole request (including the body read) so a slow or stalled
-    // gateway can't hang quote() indefinitely.
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), QUOTE_TIMEOUT_MS);
+    if (!isAddress(tokenIn) || !isAddress(tokenOut)) {
+      throw new Error(
+        "quote: tokenIn and tokenOut must be 0x-prefixed addresses."
+      );
+    }
+    if (tokenIn.toLowerCase() === tokenOut.toLowerCase()) {
+      throw new Error("quote: tokenIn and tokenOut must differ.");
+    }
+    if (!Number.isInteger(fee) || fee < 0 || fee > UINT24_MAX) {
+      throw new Error(
+        "quote: fee must be a uint24 tier (e.g. 500, 3000, 10000)."
+      );
+    }
+
+    const quoter = this.config.quoterV2Address;
+    if (!quoter) {
+      throw new Error(
+        "quote: quoterV2Address is not configured in TradingConfig — the " +
+          "Uniswap V3 QuoterV2 the SDK reads quotes from."
+      );
+    }
+    const conductor = this.config.conductorAddress;
+    const factory = this.config.factoryAddress;
+    // The Conductor host fee is keyed by pool address, so a fee-aware quote
+    // needs the factory to resolve the pool (mirrors the gateway's 503).
+    if (conductor && !factory) {
+      throw new Error(
+        "quote: fee-aware quotes require factoryAddress in TradingConfig to " +
+          "resolve the pool for the Conductor host fee."
+      );
+    }
+
+    const rpcUrl = this.execClient.getConfig().rpcUrl;
+    const client = getClient(rpcUrl);
+
+    // Resolve the pool when a factory is configured; a configured factory that
+    // resolves no pool is a hard error.
+    const pool = factory
+      ? await getPoolAddress(rpcUrl, factory, tokenIn, tokenOut, fee)
+      : null;
+    if (factory && !pool) {
+      throw new Error("quote: no pool for the given tokenIn/tokenOut/fee.");
+    }
+
+    // Conductor fee. With no Conductor address the quote is the raw Uniswap
+    // output and conductorFeeBps is 0.
+    let totalFeeBps = 0n;
+    let feeAsset: string | undefined;
+    if (conductor && pool) {
+      ({ totalFeeBps, feeAsset } = await this.resolveConductorFee(
+        client,
+        conductor,
+        pool,
+        integratorBps,
+        tokenIn,
+        tokenOut
+      ));
+    }
+
+    // Input-side skim reduces the amount actually swapped (mirrors
+    // Conductor._swap); output-side skim is taken off the gross output.
+    const inputSide =
+      feeAsset !== undefined &&
+      feeAsset.toLowerCase() === tokenIn.toLowerCase();
+    const quoterAmount = effectiveSwapInput(amountIn, totalFeeBps, inputSide);
+    const inputFee = amountIn - quoterAmount;
+
+    const { grossOut, sqrtAfter } = await this.quoteExactInputSingle(
+      client,
+      quoter,
+      { tokenIn, tokenOut, fee, amountIn: quoterAmount }
+    );
+
+    const outputFee = inputSide ? 0n : conductorSkim(grossOut, totalFeeBps);
+    const netOut = grossOut - outputFee;
+    const feeAmount = inputSide ? inputFee : outputFee;
+
+    return {
+      amountOut: netOut.toString(),
+      minAmountOut: applySlippage(netOut, slippageBps).toString(),
+      priceImpactBps: pool
+        ? await this.poolPriceImpact(client, pool, sqrtAfter)
+        : undefined,
+      feeTier: fee,
+      slippageBps,
+      conductorFeeBps: Number(totalFeeBps),
+      conductorFeeAmount: feeAmount.toString(),
+      conductorFeeAsset: feeAsset,
+    };
+  }
+
+  /**
+   * Read `hostFeeBps(pool)` + `protocolFeeBps()`, add the integrator bps, and
+   * resolve the fee asset (only when a fee applies). Each on-chain component is
+   * capped at `MAX_FEE_RATE_BPS`; a larger value is corrupt upstream data and
+   * is rejected rather than folded into the skim.
+   */
+  private async resolveConductorFee(
+    client: PublicClient,
+    conductor: string,
+    pool: string,
+    integratorBps: bigint,
+    tokenIn: string,
+    tokenOut: string
+  ): Promise<{ totalFeeBps: bigint; feeAsset?: string }> {
+    const address = conductor as Address;
+    const [hostBps, protocolBps] = await Promise.all([
+      client.readContract({
+        address,
+        abi: conductorAbi,
+        functionName: "hostFeeBps",
+        args: [pool as Address],
+      }),
+      client.readContract({
+        address,
+        abi: conductorAbi,
+        functionName: "protocolFeeBps",
+      }),
+    ]);
+    const totalFeeBps =
+      this.requireBoundedFeeBps(hostBps, "hostFeeBps") +
+      this.requireBoundedFeeBps(protocolBps, "protocolFeeBps") +
+      integratorBps;
+    if (totalFeeBps === 0n) {
+      return { totalFeeBps, feeAsset: undefined };
+    }
+    const [wbtc, usdb] = await Promise.all([
+      client.readContract({ address, abi: conductorAbi, functionName: "wbtc" }),
+      client.readContract({ address, abi: conductorAbi, functionName: "usdb" }),
+    ]);
+    return {
+      totalFeeBps,
+      feeAsset: resolveFeeAsset(tokenIn, tokenOut, wbtc, usdb),
+    };
+  }
+
+  /** Widen a uint16 fee-bps read to bigint, rejecting anything above the cap. */
+  private requireBoundedFeeBps(raw: number, field: string): bigint {
+    const bps = BigInt(raw);
+    if (bps > MAX_FEE_RATE_BPS) {
+      throw new Error(
+        `quote: Conductor ${field}=${raw} exceeds the protocol maximum ` +
+          `of ${MAX_FEE_RATE_BPS}.`
+      );
+    }
+    return bps;
+  }
+
+  /**
+   * Read `QuoterV2.quoteExactInputSingle` over RPC (an `eth_call` to a
+   * nonpayable function). A simulated revert means no pool / insufficient
+   * liquidity; any other error (transport/node) propagates.
+   */
+  private async quoteExactInputSingle(
+    client: PublicClient,
+    quoter: string,
+    p: { tokenIn: string; tokenOut: string; fee: number; amountIn: bigint }
+  ): Promise<{ grossOut: bigint; sqrtAfter: bigint }> {
     try {
-      let resp: Response;
-      try {
-        resp = await fetch(url, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(body),
-          signal: controller.signal,
-        });
-      } catch (err) {
-        const reason =
-          err instanceof Error && err.name === "AbortError"
-            ? `timed out after ${QUOTE_TIMEOUT_MS}ms`
-            : err instanceof Error
-              ? err.message
-              : String(err);
+      const result = await client.readContract({
+        address: quoter as Address,
+        abi: uniswapV3QuoterV2Abi,
+        functionName: "quoteExactInputSingle",
+        args: [
+          {
+            tokenIn: p.tokenIn as Address,
+            tokenOut: p.tokenOut as Address,
+            amountIn: p.amountIn,
+            fee: p.fee,
+            sqrtPriceLimitX96: 0n,
+          },
+        ],
+      });
+      return { grossOut: result[0], sqrtAfter: result[1] };
+    } catch (err) {
+      const isRevert =
+        err instanceof BaseError &&
+        (err.walk((e) => e instanceof ContractFunctionRevertedError) !==
+          null ||
+          (err.shortMessage ?? err.message).toLowerCase().includes("revert"));
+      if (isRevert) {
         throw new Error(
-          `quote: could not reach the gateway quote endpoint at ${url}: ${reason}`
+          "quote: no pool or insufficient liquidity for the given " +
+            "tokenIn/tokenOut/fee."
         );
       }
+      throw err;
+    }
+  }
 
-      if (!resp.ok) {
-        // The gateway returns RFC-7807 problem+json; surface its detail.
-        let detail = `HTTP ${resp.status}`;
-        try {
-          const problem = (await resp.json()) as {
-            detail?: string;
-            title?: string;
-          };
-          detail = problem.detail ?? problem.title ?? detail;
-        } catch {
-          // Non-JSON error body — keep the status-only detail.
-        }
-        throw new Error(`quote: gateway rejected the request: ${detail}`);
-      }
-
-      return (await resp.json()) as GatewaySwapQuoteResponse;
-    } finally {
-      clearTimeout(timer);
+  /**
+   * Best-effort pool mid-price move (bps) from the pre-trade `slot0` and the
+   * post-swap sqrt price. Any read failure degrades to `undefined` rather than
+   * failing the quote.
+   */
+  private async poolPriceImpact(
+    client: PublicClient,
+    pool: string,
+    sqrtAfter: bigint
+  ): Promise<number | undefined> {
+    try {
+      const slot0 = await client.readContract({
+        address: pool as Address,
+        abi: uniswapV3PoolAbi,
+        functionName: "slot0",
+      });
+      return priceImpactBps(slot0[0], sqrtAfter);
+    } catch {
+      return undefined;
     }
   }
 

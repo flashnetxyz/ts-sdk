@@ -535,26 +535,18 @@ describe("TradingClient.swap — minAmountOut unit handling", () => {
       wbtcAddress: WBTC,
     });
 
-    // Gateway works in WBTC wei; minAmountOut is a whole-sat-multiple wei.
-    const gatewayMinWei = 49_750_000n * WEI_PER_SAT;
-    global.fetch = jest.fn(async (input: any) => {
-      const url = typeof input === "string" ? input : (input.url ?? "");
-      if (url.endsWith("/api/v1/swap/quote")) {
-        return new Response(
-          JSON.stringify({
-            amountOut: (50_000_000n * WEI_PER_SAT).toString(),
-            minAmountOut: gatewayMinWei.toString(),
-            sqrtPriceX96After: "0",
-            feeTier: 3000,
-            slippageBps: 50,
-            conductorFeeBps: 0,
-            conductorFeeAmount: "0",
-          }),
-          { status: 200, headers: { "Content-Type": "application/json" } }
-        );
-      }
-      throw new Error(`unexpected fetch in test: ${url}`);
-    }) as unknown as typeof fetch;
+    // quote() computes the swap client-side in WBTC wei; stub that core (its
+    // own logic is covered in quote.spec.ts) and assert the wei->sat handoff
+    // from quote() into swap().
+    const minWei = 49_750_000n * WEI_PER_SAT;
+    jest.spyOn(amm as any, "computeSwapQuote").mockResolvedValue({
+      amountOut: (50_000_000n * WEI_PER_SAT).toString(),
+      minAmountOut: minWei.toString(),
+      feeTier: 3000,
+      slippageBps: 50,
+      conductorFeeBps: 0,
+      conductorFeeAmount: "0",
+    });
 
     const q = await amm.quote({
       assetInAddress: TOKEN_A,
@@ -577,6 +569,6 @@ describe("TradingClient.swap — minAmountOut unit handling", () => {
     });
     const decoded = decodeSigned(sign);
     expect(decoded.functionName).toBe("swapAndWithdrawBTC");
-    expect(decoded.args[3]).toBe(gatewayMinWei);
+    expect(decoded.args[3]).toBe(minWei);
   });
 });
