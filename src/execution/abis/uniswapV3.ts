@@ -50,3 +50,37 @@ export const uniswapV3PoolAbi = [
     outputs: [{ name: "", type: "address" }],
   },
 ] as const;
+
+/**
+ * Uniswap V3 `QuoterV2`. `quoteExactInputSingle` is `nonpayable` on-chain (it
+ * runs the swap and reverts to unwind) but is invoked read-only via `eth_call`;
+ * declaring it `view` here lets viem's `readContract` call it without sending a
+ * transaction. The simulated revert surfaces as a thrown error the caller maps
+ * to "no pool / insufficient liquidity".
+ */
+export const uniswapV3QuoterV2Abi = [
+  {
+    type: "function",
+    name: "quoteExactInputSingle",
+    stateMutability: "view",
+    inputs: [
+      {
+        name: "params",
+        type: "tuple",
+        components: [
+          { name: "tokenIn", type: "address" },
+          { name: "tokenOut", type: "address" },
+          { name: "amountIn", type: "uint256" },
+          { name: "fee", type: "uint24" },
+          { name: "sqrtPriceLimitX96", type: "uint160" },
+        ],
+      },
+    ],
+    outputs: [
+      { name: "amountOut", type: "uint256" },
+      { name: "sqrtPriceX96After", type: "uint160" },
+      { name: "initializedTicksCrossed", type: "uint32" },
+      { name: "gasEstimate", type: "uint256" },
+    ],
+  },
+] as const;

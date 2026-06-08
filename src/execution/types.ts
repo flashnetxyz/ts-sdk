@@ -231,6 +231,10 @@ export interface IntentStatusResponse {
  * and where on-chain transactions go (execution side). Clients call
  * `ExecutionClient.getNetworkInfo()` once per session (memoized, 60s TTL)
  * and read fields here instead of hard-coding them in environment config.
+ *
+ * Trading-stack contract addresses are intentionally absent — they live in
+ * `TradingConfig`, and the compile-time guardrail below
+ * {@link ExecutionNetworkInfo} keeps them off this surface.
  */
 export interface NetworkInfo {
   spark: SparkNetworkInfo;
@@ -263,6 +267,62 @@ export interface ExecutionNetworkInfo {
   /** Execution-chain chain id. */
   chainId: number;
 }
+
+/**
+ * Guardrail: trading-stack addresses stay off `/network/info`.
+ *
+ * The gateway publishes execution concerns only (Spark deposit address, bridge
+ * contract, chain id, paused flag, min deposit). Conductor / WBTC / factory /
+ * NonfungiblePositionManager / Permit2 addresses live in `TradingConfig`, because
+ * they move on the trading stack's own release cadence. The aliases below fail
+ * `tsc` if any such field is added to {@link NetworkInfo},
+ * {@link ExecutionNetworkInfo}, or {@link SparkNetworkInfo}; they are erased at
+ * runtime. Runtime counterpart: `network-info-address-invariant.spec.ts`.
+ */
+type ForbiddenTradingAddressKey =
+  // Known trading-stack address fields.
+  | "conductorAddress"
+  | "wbtcAddress"
+  | "factoryAddress"
+  | "positionManagerAddress"
+  | "permit2Address"
+  | "uniswapFactoryAddress"
+  // Defensive synonyms a future contributor might reach for instead.
+  | "nonfungiblePositionManagerAddress"
+  | "npmAddress"
+  | "routerAddress"
+  | "swapRouterAddress"
+  | "quoterAddress"
+  | "v3FactoryAddress";
+
+/**
+ * `true` when `T` has no forbidden trading-stack address key.
+ *
+ * Checks top-level literal keys only (matching the flat wire shape) — it does
+ * not recurse, and an index signature would make it vacuously `true`. Keep the
+ * response interfaces flat and literal-keyed so the guard stays meaningful.
+ */
+type HasNoTradingAddress<T> = Extract<
+  keyof T,
+  ForbiddenTradingAddressKey
+> extends never
+  ? true
+  : false;
+
+/** Resolves only when `T` is exactly `true`; any other input is a compile error. */
+type AssertTrue<T extends true> = T;
+
+// Adding a forbidden key to any interface flips its check to `false` and
+// fails the build via the AssertTrue constraint.
+type _NetworkInfoHasNoTradingAddress = AssertTrue<
+  HasNoTradingAddress<NetworkInfo>
+>;
+type _ExecutionNetworkInfoHasNoTradingAddress = AssertTrue<
+  HasNoTradingAddress<ExecutionNetworkInfo>
+>;
+type _SparkNetworkInfoHasNoTradingAddress = AssertTrue<
+  HasNoTradingAddress<SparkNetworkInfo>
+>;
 
 /**
  * Signer interface for the execution client.
@@ -326,6 +386,34 @@ export type CanonicalIntentAction =
   | { type: "deposit"; recipient: string }
   | { type: "execute"; signedTxHash: string }
   | { type: "clawback"; sparkTxid: string };
+
+/** Outcome of a single clawback attempt. Never represents a thrown error. */
+export interface ClawbackResult {
+  /** The Spark transfer id this attempt targeted. */
+  transferId: string;
+  /** Whether the gateway accepted the clawback intent. */
+  success: boolean;
+  /** Gateway response when accepted. */
+  response?: ExecuteResponse;
+  /**
+   * Failure message when rejected. A rejection commonly means the transfer
+   * was already consumed by a finalized intent (so no refund is owed), not a
+   * transient error to retry.
+   */
+  error?: string;
+}
+
+/** Aggregate result of an automatic clawback over one or more transfers. */
+export interface ClawbackSummary {
+  /** Whether a clawback was attempted (false when no funds were committed). */
+  attempted: boolean;
+  /** Transfers the gateway accepted a clawback for (returned to the sender). */
+  recoveredTransferIds: string[];
+  /** Transfers whose clawback was rejected — still at risk, may need manual recovery. */
+  unrecoveredTransferIds: string[];
+  /** Per-transfer detail. */
+  results: ClawbackResult[];
+}
 
 /**
  * Canonical intent message that gets signed by the client.
@@ -443,6 +531,32 @@ function hexToBytes(hex: string): Uint8Array {
 function normalizeIdHex(id: string): string {
   const noPrefix = id.startsWith("0x") || id.startsWith("0X") ? id.slice(2) : id;
   return noPrefix.replace(/-/g, "");
+}
+
+/**
+ * Externally-tagged wire form of a clawback `sparkTxid` as it appears in the
+ * signed canonical intent message.
+ *
+ * The gateway's `CanonicalIntentAction::Clawback.spark_txid` is a
+ * `SparkTransferId` enum (`Bitcoin([u8; 16])` / `Token([u8; 32])`) with a plain
+ * derived `Serialize`, so serde emits it externally tagged with a decimal byte
+ * array and a PascalCase variant key: `{ "Bitcoin": [..16] }` or
+ * `{ "Token": [..32] }`. The signature is verified against this JSON
+ * byte-for-byte, so the SDK must reproduce the exact shape.
+ *
+ * This is ONLY for the signed message. The `/execute` request body and the
+ * BLAKE3 intent-id preimage both use the bare-hex string form.
+ */
+export type ClawbackSparkTxidWire = { Bitcoin: number[] } | { Token: number[] };
+
+/** Build the {@link ClawbackSparkTxidWire} form from a hex transfer id. */
+export function clawbackSparkTxidWire(sparkTxid: string): ClawbackSparkTxidWire {
+  const bytes = Array.from(hexToBytes(normalizeIdHex(sparkTxid)));
+  if (bytes.length === 16) return { Bitcoin: bytes };
+  if (bytes.length === 32) return { Token: bytes };
+  throw new Error(
+    `clawback sparkTxid must be 16 (Bitcoin) or 32 (Token) bytes, got ${bytes.length}`
+  );
 }
 
 /**

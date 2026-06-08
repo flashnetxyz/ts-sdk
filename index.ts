@@ -70,8 +70,24 @@ export type {
 } from "./src/execution";
 
 // Trading client (wraps ExecutionClient for DEX operations)
-export { TradingClient, SwapDepositStrandedError } from "./src/trading";
-export type { TradingConfig, SwapParams as TradingSwapParams, SwapResult as TradingSwapResult } from "./src/trading";
+export { TradingClient, StrandedFundingError, satsToWei, weiToSats } from "./src/trading";
+export type {
+  TradingConfig,
+  SwapParams as TradingSwapParams,
+  SwapResult as TradingSwapResult,
+  QuoteParams as TradingQuoteParams,
+  QuoteResult as TradingQuoteResult,
+  AddLiquidityParams,
+  IncreaseLiquidityParams,
+  DecreaseLiquidityParams,
+  CollectFeesParams,
+  ModifyPositionParams,
+  LpWriteResult,
+  MintResult,
+  IncreaseResult,
+  WithdrawResult,
+  PositionInfo,
+} from "./src/trading";
 
 export type { RequestOptions } from "./src/api/client";
 // Export API client and typed endpoints

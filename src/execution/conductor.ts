@@ -16,6 +16,8 @@ export interface SwapParams {
   amountIn: bigint;
   minAmountOut: bigint;
   integrator?: string;
+  /** Integrator fee in basis points (0..=1000). Defaults to 0. */
+  integratorBps?: number;
 }
 
 /** Parameters for Conductor.swapBTC() — native BTC to ERC20. */
@@ -24,6 +26,8 @@ export interface SwapBTCParams {
   fee: number;
   minAmountOut: bigint;
   integrator?: string;
+  /** Integrator fee in basis points (0..=1000). Defaults to 0. */
+  integratorBps?: number;
 }
 
 const ZERO_ADDRESS = "0x0000000000000000000000000000000000000000";
@@ -44,6 +48,7 @@ export const Conductor = {
         params.amountIn,
         params.minAmountOut,
         (params.integrator ?? ZERO_ADDRESS) as `0x${string}`,
+        params.integratorBps ?? 0,
       ],
     });
   },
@@ -58,6 +63,7 @@ export const Conductor = {
         params.fee,
         params.minAmountOut,
         (params.integrator ?? ZERO_ADDRESS) as `0x${string}`,
+        params.integratorBps ?? 0,
       ],
     });
   },

@@ -1,4 +1,5 @@
 import { stringifyWithBigint } from "./client";
+import { clawbackSparkTxidWire } from "./types";
 import type {
   CanonicalIntentMessage,
   CanonicalTransferEntry,
@@ -142,5 +143,45 @@ describe("stringifyWithBigint", () => {
         '"action":{"type":"deposit","recipient":"0xabc"},' +
         '"expiresAt":1893456000000}'
     );
+  });
+
+  // Golden vector for a clawback message. The gateway signs the
+  // `SparkTransferId` enum externally tagged with a decimal byte array
+  // (`{"Token":[..32]}` / `{"Bitcoin":[..16]}`), NOT a hex string. Inputs
+  // mirror the Rust `clawback_intent_serializes_with_empty_transfers` test
+  // (0xFF*32, chainId 21022, expiresAt 9999999999000) so the two are directly
+  // comparable. If this drifts, clawback signature verification fails at the
+  // gateway.
+  //
+  // Cross-checked: this exact string equals `serde_json::to_string` of the
+  // Rust clawback `CanonicalIntentMessage` (captured by running the
+  // `flashnet-auth` `clawback_intent_serializes_with_empty_transfers` test),
+  // so the SDK signs the bytes the gateway verifies, not just a derived guess.
+  it("clawback canonical message matches the Rust serde wire form", () => {
+    const message = {
+      chainId: 21022,
+      transfers: [] as CanonicalTransferEntry[],
+      action: {
+        type: "clawback" as const,
+        sparkTxid: clawbackSparkTxidWire("0x" + "ff".repeat(32)),
+      },
+      expiresAt: 9_999_999_999_000,
+    };
+    const tokenBytes = Array(32).fill(255).join(",");
+    expect(stringifyWithBigint(message)).toEqual(
+      '{"chainId":21022,"transfers":[],' +
+        `"action":{"type":"clawback","sparkTxid":{"Token":[${tokenBytes}]}},` +
+        '"expiresAt":9999999999000}'
+    );
+  });
+
+  it("clawbackSparkTxidWire dispatches Bitcoin (16B) vs Token (32B) by length", () => {
+    expect(clawbackSparkTxidWire("0x" + "ab".repeat(16))).toEqual({
+      Bitcoin: Array(16).fill(0xab),
+    });
+    expect(clawbackSparkTxidWire("cd".repeat(32))).toEqual({
+      Token: Array(32).fill(0xcd),
+    });
+    expect(() => clawbackSparkTxidWire("00".repeat(20))).toThrow(/must be 16/);
   });
 });

@@ -8,8 +8,23 @@
 
 export {
   TradingClient,
-  SwapDepositStrandedError,
+  StrandedFundingError,
   type TradingConfig,
   type SwapParams,
   type SwapResult,
+  type QuoteParams,
+  type QuoteResult,
+  // Liquidity management
+  satsToWei,
+  weiToSats,
+  type AddLiquidityParams,
+  type IncreaseLiquidityParams,
+  type DecreaseLiquidityParams,
+  type CollectFeesParams,
+  type ModifyPositionParams,
+  type LpWriteResult,
+  type MintResult,
+  type IncreaseResult,
+  type WithdrawResult,
+  type PositionInfo,
 } from "./client";
