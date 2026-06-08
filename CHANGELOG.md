@@ -1,5 +1,32 @@
 # Changelog
 
+## [Unreleased]
+
+### Changed
+
+- **BREAKING**: `TradingClient.quote()` now computes the swap quote client-side
+  over RPC — reading Uniswap V3 `QuoterV2.quoteExactInputSingle` and the
+  Conductor fee getters directly — instead of proxying the gateway's
+  `POST /api/v1/swap/quote`, which has been removed from the execution gateway
+  (DEX/product logic no longer lives there). `quote()` now requires
+  `quoterV2Address` **and** `factoryAddress` in `TradingConfig` and throws if
+  either is unset. Its public signature, `QuoteResult` shape, and BTC↔sats
+  handling are unchanged.
+
+### Migration Guide
+
+Pass the Uniswap V3 QuoterV2 and Factory addresses when constructing
+`TradingClient` (the same trading-stack addresses already used for swaps/LP):
+
+```typescript
+const trading = new TradingClient(exec, {
+  conductorAddress,
+  factoryAddress, // now required for quote()
+  quoterV2Address, // new — Uniswap V3 QuoterV2
+  // wbtcAddress, permit2Address, etc. as before
+});
+```
+
 ## [0.2.0] - 2024-01-XX
 
 ### Added

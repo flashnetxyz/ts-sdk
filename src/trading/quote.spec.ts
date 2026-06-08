@@ -352,6 +352,53 @@ describe("TradingClient.quote — computation", () => {
     expect(res.amountOut).toBe("2000000"); // output not skimmed again
   });
 
+  it("folds host + protocol + integrator fees into the total skim", async () => {
+    // total = 30 host + 20 protocol + 50 integrator = 100 bps (output-side,
+    // fee asset = tokenOut). skim(1_010_000, 100) = 10_000.
+    configureReads({
+      grossOut: 1_010_000n,
+      hostBps: 30,
+      protocolBps: 20,
+      wbtc: WBTC,
+      usdb: USDB,
+    });
+    const res = await newAmm().quote({
+      assetInAddress: TOKEN_A,
+      assetOutAddress: TOKEN_B,
+      amountIn: "1000000",
+      fee: 3000,
+      integratorBps: 50,
+      slippageBps: 0,
+    });
+    expect(res.conductorFeeBps).toBe(100); // all three components summed
+    expect(res.conductorFeeAmount).toBe("10000");
+    expect(res.conductorFeeAsset).toBe(TOKEN_B); // neither leg is WBTC/USDB → tokenOut
+    expect(res.amountOut).toBe("1000000"); // 1_010_000 - 10_000
+  });
+
+  it("reports a WBTC Conductor fee in whole sats, not wei", async () => {
+    // token -> BTC, fee asset = WBTC (the output leg). The 30 bps output skim is
+    // 30_000_000_000 wei; quote() must report it as 3 sats to match amountOut's
+    // units. skim(10_030_000_000_000, 30) = 30_000_000_000; net = 1_000 sats.
+    configureReads({
+      grossOut: 10_030_000_000_000n, // 1003 sats in WBTC wei
+      hostBps: 30,
+      protocolBps: 0,
+      wbtc: WBTC,
+      usdb: USDB,
+    });
+    const res = await newAmm().quote({
+      assetInAddress: TOKEN_A,
+      assetOutAddress: "btc",
+      amountIn: "1000000",
+      fee: 3000,
+      slippageBps: 0,
+    });
+    expect(res.conductorFeeAsset).toBe(WBTC);
+    expect(res.conductorFeeAmount).toBe("3"); // 30_000_000_000 wei -> 3 sats
+    expect(res.amountOut).toBe("1000"); // 10_000_000_000_000 wei -> 1000 sats
+  });
+
   it("rejects a Conductor fee component above the protocol cap", async () => {
     configureReads({ hostBps: 2000, protocolBps: 0 }); // > MAX_FEE_RATE_BPS
     await expect(
