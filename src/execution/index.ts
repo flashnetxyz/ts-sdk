@@ -53,14 +53,6 @@ export {
   waitForSparkTokenAddress,
 } from "./gateway";
 
-// Conductor calldata encoding (used by TradingClient)
-export {
-  Conductor,
-  type ConductorConfig,
-  type SwapParams as ConductorSwapParams,
-  type SwapBTCParams,
-} from "./conductor";
-
 // EVM read helpers
 export {
   fetchTokenInfo,
