@@ -608,8 +608,19 @@ export interface PositionInfo {
  * "staging" environment lives under `regtest` here.
  */
 const TRADING_ENVIRONMENT_CONFIGS: Partial<Record<ClientEnvironment, TradingConfig>> = {
-  // Populate once contracts are deployed:
-  // regtest: { conductorAddress: "0x..." },
+  // Staging cluster (chain 21022; the `regtest` ClientEnvironment). The Uniswap
+  // V3 stack is deployed deterministically via the shared CREATE2 deployer, so
+  // factory / quoterV2 / positionManager are stable across redeploys; the
+  // Conductor is a fixed-address UUPS proxy. Permit2 is the canonical address.
+  // All six verified to hold code on rpc.makebitcoingreatagain.dev.
+  regtest: {
+    conductorAddress: "0x111174C68083B66e7B865da05312520F712B55CA",
+    quoterV2Address: "0x69286A386E30ff0932cb94687274da4B0cfE5Ed5",
+    factoryAddress: "0x112cA63c8FBA619aE5eA1Fb4464fC6E26948866a",
+    positionManagerAddress: "0xBe0D28E0b3C1D840EeF75fd61c07Df66b82cDF9b",
+    wbtcAddress: "0x8A7661b071Dc3c5F99CC93f3A25915e9E1b8F1bF",
+    permit2Address: "0x000000000022D473030F116dDEE9F6B43aC78BA3",
+  },
 };
 
 /**
