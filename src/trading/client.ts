@@ -1489,6 +1489,7 @@ export class TradingClient {
             sparkRecipient as `0x${string}`,
             integrator as `0x${string}`,
             integratorBps,
+            BigInt(Math.floor(Date.now() / 1000) + DEFAULT_DEADLINE_SECONDS),
           ],
         });
         value = amountIn * WEI_PER_SAT;
@@ -1780,6 +1781,7 @@ export class TradingClient {
           sparkRecipient as `0x${string}`,
           integrator as `0x${string}`,
           integratorBps,
+          BigInt(Math.floor(Date.now() / 1000) + DEFAULT_DEADLINE_SECONDS),
         ],
       });
     }
@@ -1792,6 +1794,7 @@ export class TradingClient {
         minAmountOut,
         integrator as `0x${string}`,
         integratorBps,
+        BigInt(Math.floor(Date.now() / 1000) + DEFAULT_DEADLINE_SECONDS),
       ],
     });
   }
@@ -1819,6 +1822,7 @@ export class TradingClient {
         sparkRecipient as `0x${string}`,
         integrator as `0x${string}`,
         integratorBps,
+        BigInt(Math.floor(Date.now() / 1000) + DEFAULT_DEADLINE_SECONDS),
       ],
     });
   }
@@ -1847,6 +1851,7 @@ export class TradingClient {
           sparkRecipient as `0x${string}`,
           integrator as `0x${string}`,
           integratorBps,
+          BigInt(Math.floor(Date.now() / 1000) + DEFAULT_DEADLINE_SECONDS),
         ],
       });
     }
@@ -1861,6 +1866,7 @@ export class TradingClient {
         minAmountOut,
         integrator as `0x${string}`,
         integratorBps,
+        BigInt(Math.floor(Date.now() / 1000) + DEFAULT_DEADLINE_SECONDS),
       ],
     });
   }

@@ -18,6 +18,8 @@ export interface SwapParams {
   integrator?: string;
   /** Integrator fee in basis points (0..=1000). Defaults to 0. */
   integratorBps?: number;
+  /** Absolute unix-seconds on-chain deadline. Defaults to now + 30 minutes. */
+  deadline?: bigint;
 }
 
 /** Parameters for Conductor.swapBTC() — native BTC to ERC20. */
@@ -28,6 +30,8 @@ export interface SwapBTCParams {
   integrator?: string;
   /** Integrator fee in basis points (0..=1000). Defaults to 0. */
   integratorBps?: number;
+  /** Absolute unix-seconds on-chain deadline. Defaults to now + 30 minutes. */
+  deadline?: bigint;
 }
 
 const ZERO_ADDRESS = "0x0000000000000000000000000000000000000000";
@@ -49,6 +53,7 @@ export const Conductor = {
         params.minAmountOut,
         (params.integrator ?? ZERO_ADDRESS) as `0x${string}`,
         params.integratorBps ?? 0,
+        params.deadline ?? BigInt(Math.floor(Date.now() / 1000) + 30 * 60),
       ],
     });
   },
@@ -64,6 +69,7 @@ export const Conductor = {
         params.minAmountOut,
         (params.integrator ?? ZERO_ADDRESS) as `0x${string}`,
         params.integratorBps ?? 0,
+        params.deadline ?? BigInt(Math.floor(Date.now() / 1000) + 30 * 60),
       ],
     });
   },
