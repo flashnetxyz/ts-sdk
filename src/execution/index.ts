@@ -89,6 +89,12 @@ export {
   FEE_TIERS,
 } from "./price-math";
 
+// Conductor contract ABI — the single source of truth TradingClient encodes
+// against internally. Exported for integrators building raw calldata via
+// encodeFunctionData({ abi: conductorAbi, functionName, args }): all swap
+// variants, LP entrypoints, and fee getters.
+export { conductorAbi } from "./abis/conductor";
+
 // Types
 export type {
   Asset,

@@ -22,6 +22,7 @@ export {
   sqrtPriceX96ToPrice,
   fullRangeTicks,
   FEE_TIERS,
+  conductorAbi,
 } from "./src/execution";
 export type {
   ExecutionClientConfig,
