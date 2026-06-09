@@ -4,7 +4,6 @@
 export {
   ExecutionClient,
   sparkWalletToEvmAccount,
-  Conductor,
   encodeWithdrawSats,
   encodeWithdrawToken,
   querySparkTokenAddress,
@@ -31,7 +30,6 @@ export type {
   WithdrawTokenParams,
   ExecuteParams,
   SparkWalletInput,
-  ConductorConfig,
   TokenInfo,
   PoolInfo,
   CreateBTCPoolParams,
