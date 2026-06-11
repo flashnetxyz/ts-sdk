@@ -6,21 +6,16 @@ export * from "./tokenAddress";
 
 // Helper function to generate random nonce (browser-compatible)
 export function generateNonce(): string {
-  // Generate a random string using crypto.getRandomValues (works in both Node.js and browsers)
+  // Nonces are signed and must come from a cryptographically secure RNG.
   const array = new Uint8Array(16);
-  if (typeof crypto !== "undefined" && crypto.getRandomValues) {
-    crypto.getRandomValues(array);
-  } else if (
-    typeof globalThis !== "undefined" &&
-    globalThis.crypto?.getRandomValues
-  ) {
-    globalThis.crypto.getRandomValues(array);
-  } else {
-    // Fallback for environments without crypto.getRandomValues
-    for (let i = 0; i < array.length; i++) {
-      array[i] = Math.floor(Math.random() * 256);
-    }
+
+  const cryptoApi = globalThis.crypto;
+  if (!cryptoApi?.getRandomValues) {
+    throw new Error(
+      "Secure random source unavailable. Ensure Web Crypto is available or install react-native-get-random-values before using generateNonce()."
+    );
   }
+  cryptoApi.getRandomValues(array);
 
   // Convert to hex string
   return Array.from(array, (byte) => byte.toString(16).padStart(2, "0")).join(
