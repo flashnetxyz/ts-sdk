@@ -225,9 +225,9 @@ export interface IntentExpiry {
 /**
  * "Bring your own proofs" opt-out. When `true`, `deposit` / `execute`
  * do not fetch any proofs themselves - the caller is responsible for
- * the entire proof flow, either by pre-attaching `depositProof` to
- * each entry of `deposits[]` (with a matching `nonce`) or by
- * deliberately submitting an unproven intent.
+ * the proof flow, either by pre-attaching `depositProof` to each
+ * entry of `deposits[]` or by deliberately submitting an unproven
+ * intent.
  *
  * Default is `false`: the SDK auto-fetches proofs for any deposit
  * that arrives without one. This is the recommended path - reach for
@@ -242,8 +242,8 @@ export interface ProofOptOut {
 export interface DepositParams extends IntentExpiry, ProofOptOut {
   /**
    * Spark transfers funding this deposit. Each entry that arrives
-   * without `depositProof` is automatically verified and proof-bound
-   * before the intent is signed - see `ProofOptOut` to disable.
+   * without `depositProof` is automatically verified before submit -
+   * see `ProofOptOut` to disable.
    */
   deposits: Deposit[];
   /** EVM address to credit. If omitted, credits the identity key's EVM address. */
@@ -256,11 +256,8 @@ export interface DepositParams extends IntentExpiry, ProofOptOut {
  * This is the modular escape hatch - most callers should let
  * `deposit` / `execute` handle proof fetching automatically.
  *
- * `intentId` is the canonical BLAKE3 hash of the intent the caller is
- * about to submit. Compute it via {@link canonicalIntentId} from the
- * exact canonical transfers + action you intend to sign — the gateway
- * binds the returned proofs to this value and a mismatch on `/execute`
- * is a hard rejection.
+ * `intentId` is retained by the gateway for compatibility with existing
+ * callers. Transfer attestations are intent-agnostic and do not bind to it.
  */
 export interface VerifyDepositParams {
   intentId: string;
@@ -307,8 +304,8 @@ export interface WaitForIntentOptions {
 export interface ExecuteParams extends IntentExpiry, ProofOptOut {
   /**
    * Spark transfers to credit before executing. Each entry without an
-   * attached `depositProof` is auto-verified before the intent is
-   * signed - see `ProofOptOut` to disable.
+   * attached `depositProof` is auto-verified before submit - see
+   * `ProofOptOut` to disable.
    */
   deposits?: Deposit[];
   /** Hex-encoded signed EVM transaction (RLP-serialized, 0x-prefixed). */
@@ -467,19 +464,16 @@ export class ExecutionClient {
    *
    * Credits the deposited funds to the specified recipient or the
    * identity key's EVM address. Any deposit that arrives without an
-   * attached `depositProof` is automatically proof-bound first by an
+   * attached `depositProof` is automatically fetched first by an
    * internal `/verifyDeposit` call; the resulting proofs are stitched
    * into the request the gateway receives. Pass `params.manualProofs:
    * true` to take over the proof flow (e.g., to inspect rejections,
    * cache proofs, or submit unproven), or pre-populate
-   * `deposits[i].depositProof` if proofs were fetched out of band
-   * against the same canonical intent.
+   * `deposits[i].depositProof` if proofs were fetched out of band.
    *
-   * If the gateway has not enabled proof verification yet (returns
-   * 503) the call falls back to the legacy proofless path. Any
-   * per-transfer rejection from the verification step is surfaced as
-   * an error before the intent is signed - the SDK never silently
-   * drops or downgrades a deposit.
+   * If the preflight attester is unavailable (503), `/execute` still
+   * performs its normal server-side attestation attempt. Any
+   * per-transfer rejection from preflight is surfaced before submit.
    */
   async deposit(params: DepositParams): Promise<ExecuteResponse> {
     this.requireAuth();
@@ -540,17 +534,12 @@ export class ExecutionClient {
    * Auto-attach proofs for any deposit that arrives without one.
    *
    * Returns the (possibly mutated) deposit list. Pre-attached proofs
-   * are kept as-is; the caller is responsible for ensuring they were
-   * minted against the same canonical intent (same `intentId`). The
-   * gateway will reject mismatched bindings on `/execute`.
+   * are kept as-is.
    *
-   * On 503 from the gateway (proof verification not yet enabled), each
-   * deposit without a pre-attached proof receives the placeholder
-   * shape so the canonical preimage still includes a `depositProof`
-   * field. The gateway's `has_valid_shape()` check treats placeholders
-   * as "not configured" and falls through to the legacy polling
-   * admission. Any other failure - including a non-empty `rejections[]`
-   * - throws to surface the issue before the intent is signed.
+   * On 503 from the gateway (attester unavailable), deposits without a
+   * pre-attached proof flow through unchanged. Any other failure -
+   * including a non-empty `rejections[]` - throws to surface the issue
+   * before the intent is submitted.
    */
   private async resolveProofs(
     deposits: Deposit[],
@@ -560,15 +549,23 @@ export class ExecutionClient {
     // Validate the shape of any pre-attached proof so a malformed
     // `depositProof` (wrong-length signature, etc.) fails here with a
     // clear message rather than being rejected by the gateway after
-    // the intent is signed. The gateway accepts both `0x`-prefixed
+    // submit. The gateway accepts both `0x`-prefixed
     // and bare hex - so does this check.
     for (let i = 0; i < deposits.length; i++) {
       const proof = deposits[i]!.depositProof;
       if (proof) {
-        if (typeof proof.payloadBytes !== "string" || proof.payloadBytes.trim() === "") {
-          throw new Error(`deposits[${i}].depositProof.payloadBytes is missing or empty`);
+        if (
+          typeof proof.payloadBytes !== "string" ||
+          proof.payloadBytes.trim() === ""
+        ) {
+          throw new Error(
+            `deposits[${i}].depositProof.payloadBytes is missing or empty`
+          );
         }
-        if (typeof proof.signature !== "string" || !SIGNATURE_HEX_RE.test(proof.signature)) {
+        if (
+          typeof proof.signature !== "string" ||
+          !SIGNATURE_HEX_RE.test(proof.signature)
+        ) {
           throw new Error(
             `deposits[${i}].depositProof.signature must be 64 hex bytes (128 chars, optional 0x prefix)`
           );
@@ -598,11 +595,8 @@ export class ExecutionClient {
         sparkTransferIds: missing.map((i) => deposits[i]!.sparkTransferId),
       });
     } catch (err) {
-      // Soft-mode fallback: if the gateway does not yet expose
-      // /verifyDeposit it returns 503. Fall through to the legacy
-      // proofless path instead of failing the caller's intent. Any
-      // pre-attached proofs flow through unchanged - the legacy path
-      // ignores the placeholder shape via `has_valid_shape()`.
+      // If the attester is unavailable, let /execute perform its normal
+      // server-side attestation attempt and return the authoritative error.
       if (isGatewayUnavailable(err)) {
         return deposits;
       }
@@ -1028,27 +1022,28 @@ export class ExecutionClient {
   ): Promise<ExecuteResponse> {
     const expiresAt = resolveExpiresAt(requestAction.expiresAt);
 
-    // Build wire-shaped transfers (no proofs yet). The intent_id BLAKE3
-    // preimage does NOT cover `depositProof` or `expiresAt`, so we can
-    // compute the canonical intent id from a proof-less projection and
-    // attach proofs afterwards. See `canonicalIntentId` in ./types.
-    const placeholderTransfers: CanonicalTransferEntry[] = rawDeposits.map((d) => {
-      const amountBig =
-        typeof d.amount === "bigint" ? d.amount : BigInt(d.amount);
-      if (amountBig < 0n) {
-        throw new Error(`deposits[${d.sparkTransferId}].amount must be non-negative`);
+    // Build proofless transfers for the intent id. The BLAKE3 preimage
+    // does not cover `depositProof` or `expiresAt`.
+    const intentIdTransfers: CanonicalTransferEntry[] = rawDeposits.map(
+      (d) => {
+        const amountBig =
+          typeof d.amount === "bigint" ? d.amount : BigInt(d.amount);
+        if (amountBig < 0n) {
+          throw new Error(
+            `deposits[${d.sparkTransferId}].amount must be non-negative`
+          );
+        }
+        return {
+          transferId: d.sparkTransferId,
+          amount: u256Hex(amountBig),
+          asset: depositAssetToWire(d.asset),
+        };
       }
-      return {
-        transferId: d.sparkTransferId,
-        amount: u256Hex(amountBig),
-        asset: depositAssetToWire(d.asset),
-        depositProof: d.depositProof ?? PLACEHOLDER_DEPOSIT_PROOF,
-      };
-    });
+    );
 
     const intentId = canonicalIntentId({
       chainId: this.config.chainId,
-      transfers: placeholderTransfers,
+      transfers: intentIdTransfers,
       action,
       recipientForHash: requestAction.recipientForHash,
       signedTxHex: requestAction.evmTransaction,
@@ -1056,17 +1051,15 @@ export class ExecutionClient {
 
     // Auto-attach proofs for any deposit that arrives without one. The
     // returned `Deposit[]` is the same caller-facing shape with
-    // `depositProof` populated. Falls through silently on a 503 from
-    // /verifyDeposit (soft-mode gateway), and throws on any
-    // per-transfer rejection.
+    // `depositProof` populated when /verifyDeposit succeeds.
     const deposits = await this.resolveProofs(
       rawDeposits,
       intentId,
       requestAction.manualProofs
     );
 
-    // Final canonical transfers with resolved proofs (or placeholders).
-    const transfers: CanonicalTransferEntry[] = deposits.map((d) => {
+    // Final request-body transfers with resolved proofs (or placeholders).
+    const transfers = deposits.map((d) => {
       const amountBig =
         typeof d.amount === "bigint" ? d.amount : BigInt(d.amount);
       return {
@@ -1106,7 +1099,7 @@ export class ExecutionClient {
         : action;
     const canonicalMessage: CanonicalIntentMessageWire = {
       chainId: this.config.chainId,
-      transfers,
+      transfers: intentIdTransfers,
       action: messageAction,
       expiresAt,
     };
@@ -1117,11 +1110,6 @@ export class ExecutionClient {
     // Body mirrors the Rust `ExecuteRequest` struct. `amount` is U256
     // hex on the Rust side; we emit `0x`-prefixed lowercase hex
     // matching alloy's serde shape.
-    //
-    // Each deposit carries a `depositProof` (either the gateway-signed
-    // value from /verifyDeposit, a caller-supplied pre-attached proof,
-    // or the {payloadBytes:"0x", signature:"0x"} placeholder that the
-    // gateway treats as "not configured" via has_valid_shape()).
     const body: Record<string, unknown> = {
       chainId: this.config.chainId,
       deposits: transfers.map((t) => ({

@@ -23,11 +23,8 @@ export interface Deposit {
   /**
    * Optional signed deposit proof obtained from `POST /api/v1/verifyDeposit`.
    *
-   * When present, the gateway re-verifies the proof on `/execute` before
-   * forwarding the intent. When absent, the SDK either fetches one
-   * automatically (the default) or sends a placeholder shape that the
-   * gateway treats as "not configured" and falls through to the legacy
-   * admission path.
+   * The gateway treats this as transport evidence only. It is not part
+   * of the user-signed canonical intent message.
    */
   depositProof?: SignedDepositProof;
 }
@@ -50,11 +47,8 @@ export interface SignedDepositProof {
 /**
  * Request body for `POST /api/v1/verifyDeposit`.
  *
- * `intentId` is the canonical 32-byte BLAKE3 hash of the intent the SDK
- * is about to submit on `/execute`. The returned proofs bind to this
- * value, so a proof minted for intent A cannot be re-attached to a
- * request whose body hashes to intent B. Compute it via
- * {@link canonicalIntentId} from the message you intend to sign.
+ * `intentId` is retained for compatibility with existing callers. Transfer
+ * attestations are intent-agnostic and do not bind to this value.
  *
  * Each transfer's `sparkTransferId` may be supplied as a dashed UUID, a
  * raw hex string (with or without `0x`), or a 64-char hex string for
@@ -358,12 +352,11 @@ export type Asset =
   | { type: "SPARK_TOKEN"; tokenId: string };
 
 /**
- * Canonical transfer entry in the signed intent message.
+ * Transfer entry in the user-signed canonical intent message.
  *
- * Mirrors Rust `CanonicalTransferEntry` (camelCase, serde declaration
- * order: `transferId`, `amount`, `asset`, `depositProof`). The deposit
- * proof is part of the signed preimage — omitting it on the SDK side
- * breaks signature verification.
+ * Mirrors Rust `CanonicalTransferEntry` serialization order:
+ * `transferId`, `amount`, `asset`. `depositProof` is deliberately omitted
+ * from the signature preimage and is only carried on the `/execute` request body.
  *
  * `amount` is the alloy `U256` JSON shape: `0x`-prefixed lowercase hex
  * with no leading zeros (`"0x0"` for zero).
@@ -372,7 +365,6 @@ export interface CanonicalTransferEntry {
   transferId: string;
   amount: string;
   asset: Asset;
-  depositProof: SignedDepositProof;
 }
 
 /**
@@ -483,12 +475,8 @@ export function depositAssetToWire(asset: DepositAsset): Asset {
 }
 
 /**
- * Placeholder {@link SignedDepositProof} used on the legacy/soft-mode
- * admission path. The gateway treats any proof that fails
- * `has_valid_shape()` (empty payload OR non-64-byte signature) as
- * "not configured" and falls through to the polling admission. The
- * SDK uses this when `/verifyDeposit` returns 503 or when
- * `manualProofs: true` is set without an attached proof.
+ * Placeholder {@link SignedDepositProof} used when the request body needs a
+ * proof-shaped value but the caller has not supplied one.
  */
 export const PLACEHOLDER_DEPOSIT_PROOF: SignedDepositProof = {
   payloadBytes: "0x",
@@ -584,7 +572,8 @@ export function clawbackSparkTxidWire(sparkTxid: string): ClawbackSparkTxidWire 
  *     Clawback  → 0x02 + sparkTxid.canonical_bytes (tag + bytes)
  *
  * Note: `expiresAt` and per-transfer `depositProof` are NOT part of the
- * BLAKE3 preimage — they live only on the JSON signed-preimage.
+ * BLAKE3 preimage. `expiresAt` is part of the JSON signed preimage;
+ * `depositProof` is not.
  *
  * `recipientForHash` must be the canonical 20-byte recipient determined
  * by the action variant — the caller is responsible for recovering the
