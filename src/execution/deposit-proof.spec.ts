@@ -2,6 +2,7 @@
  * Tests for the deposit-proof types, helpers, and auto-attach flow.
  */
 import { ExecutionClient, VerifyDepositRejectedError } from "./client";
+import { stringifyWithBigint } from "./client";
 import {
   PLACEHOLDER_DEPOSIT_PROOF,
   canonicalIntentId,
@@ -15,17 +16,21 @@ import {
 } from "./types";
 import type { SparkWalletInput } from "./spark-evm-account";
 import { secp256k1 } from "@noble/curves/secp256k1";
+import { sha256 } from "@noble/hashes/sha2";
 
 const TEST_KEY = new Uint8Array(32);
 TEST_KEY[31] = 1;
 
-function mockWallet(): SparkWalletInput {
+function mockWallet(onSign?: (hash: Uint8Array) => void): SparkWalletInput {
   return {
     config: {
       signer: {
         getIdentityPublicKey: async () =>
           secp256k1.getPublicKey(TEST_KEY, true),
-        signMessageWithIdentityKey: async () => new Uint8Array(64),
+        signMessageWithIdentityKey: async (hash: Uint8Array) => {
+          onSign?.(hash);
+          return new Uint8Array(64);
+        },
       },
     },
   } as unknown as SparkWalletInput;
@@ -109,9 +114,8 @@ describe("canonicalIntentId", () => {
       transferId: "a1b2c3d4e5f60718a1b2c3d4e5f60718",
       amount: "0x186a0",
       asset: { type: "NATIVE_SATS" },
-      depositProof: PLACEHOLDER_DEPOSIT_PROOF,
     };
-    const withProof: CanonicalTransferEntry = {
+    const withProof = {
       ...baseTransfer,
       depositProof: SAMPLE_PROOF,
     };
@@ -139,7 +143,6 @@ describe("canonicalIntentId", () => {
       transferId,
       amount: "0x186a0",
       asset: { type: "NATIVE_SATS" },
-      depositProof: PLACEHOLDER_DEPOSIT_PROOF,
     });
     const dashed = canonicalIntentId({
       chainId: 21022,
@@ -189,9 +192,12 @@ describe("VerifyDeposit type round-trips", () => {
 });
 
 describe("ExecutionClient.deposit auto-attach flow", () => {
-  function authenticatedClient(fetchMock: jest.Mock): ExecutionClient {
+  function authenticatedClient(
+    fetchMock: jest.Mock,
+    onSign?: (hash: Uint8Array) => void
+  ): ExecutionClient {
     global.fetch = fetchMock as unknown as typeof fetch;
-    const client = new ExecutionClient(mockWallet(), EXEC_CONFIG);
+    const client = new ExecutionClient(mockWallet(onSign), EXEC_CONFIG);
     // Bypass the real auth handshake.
     (client as unknown as { accessToken: string }).accessToken = "test-token";
     return client;
@@ -202,6 +208,8 @@ describe("ExecutionClient.deposit auto-attach flow", () => {
       proofs: [{ index: 0, proof: SAMPLE_PROOF }],
       rejections: [],
     };
+    const expiresAt = 1_893_456_000_000;
+    const signedHashes: Uint8Array[] = [];
     const executeResp = {
       submissionId: "sub-1",
       intentId: "0xabc",
@@ -215,7 +223,9 @@ describe("ExecutionClient.deposit auto-attach flow", () => {
       throw new Error(`unexpected URL: ${url}`);
     });
 
-    const client = authenticatedClient(fetchMock);
+    const client = authenticatedClient(fetchMock, (hash) =>
+      signedHashes.push(new Uint8Array(hash))
+    );
     const result = await client.deposit({
       deposits: [
         {
@@ -225,6 +235,7 @@ describe("ExecutionClient.deposit auto-attach flow", () => {
         },
       ],
       recipient: RECIPIENT,
+      expiresAt,
     });
 
     expect(result.submissionId).toBe("sub-1");
@@ -246,6 +257,36 @@ describe("ExecutionClient.deposit auto-attach flow", () => {
     // No top-level `nonce` field — replay defense is structural via intent_id.
     expect(body.nonce).toBeUndefined();
 
+    const expectedSignedMessage = {
+      chainId: EXEC_CONFIG.chainId,
+      transfers: [
+        {
+          transferId: "a1b2c3d4e5f60718a1b2c3d4e5f60718",
+          amount: "0x186a0",
+          asset: { type: "NATIVE_SATS" },
+        },
+      ],
+      action: { type: "deposit", recipient: RECIPIENT.toLowerCase() },
+      expiresAt,
+    };
+    const expectedSignedHash = sha256(
+      new TextEncoder().encode(stringifyWithBigint(expectedSignedMessage))
+    );
+    const prooffulMessage = {
+      ...expectedSignedMessage,
+      transfers: [
+        { ...expectedSignedMessage.transfers[0], depositProof: SAMPLE_PROOF },
+      ],
+    };
+    const prooffulHash = sha256(
+      new TextEncoder().encode(stringifyWithBigint(prooffulMessage))
+    );
+    expect(signedHashes).toHaveLength(1);
+    expect(Array.from(signedHashes[0]!)).toEqual(
+      Array.from(expectedSignedHash)
+    );
+    expect(Array.from(signedHashes[0]!)).not.toEqual(Array.from(prooffulHash));
+
     // /verifyDeposit body carries the canonical intentId, not a random nonce.
     const verifyCall = fetchMock.mock.calls.find((c) =>
       String(c[0]).endsWith("/api/v1/verifyDeposit")
@@ -264,7 +305,6 @@ describe("ExecutionClient.deposit auto-attach flow", () => {
           transferId: "a1b2c3d4e5f60718a1b2c3d4e5f60718",
           amount: "0x186a0",
           asset: { type: "NATIVE_SATS" },
-          depositProof: PLACEHOLDER_DEPOSIT_PROOF,
         },
       ],
       action: { type: "deposit", recipient: RECIPIENT.toLowerCase() },
@@ -333,9 +373,8 @@ describe("ExecutionClient.deposit auto-attach flow", () => {
     );
     if (!executeCall) throw new Error("/execute was not called");
     const body = JSON.parse(String((executeCall[1] as RequestInit).body));
-    // On 503 the placeholder shape is sent — the gateway's
-    // has_valid_shape() treats it as "not configured" and falls through
-    // to the legacy admission path.
+    // On 503 the placeholder shape is sent. The gateway ignores
+    // client-supplied proof authority and performs server-side attestation.
     expect(body.deposits[0].depositProof).toEqual(PLACEHOLDER_DEPOSIT_PROOF);
   });
 
@@ -379,9 +418,7 @@ describe("ExecutionClient.deposit auto-attach flow", () => {
 
     // /execute was never reached.
     expect(
-      fetchMock.mock.calls.some((c) =>
-        String(c[0]).endsWith("/api/v1/execute")
-      )
+      fetchMock.mock.calls.some((c) => String(c[0]).endsWith("/api/v1/execute"))
     ).toBe(false);
   });
 
@@ -448,10 +485,9 @@ describe("ExecutionClient.deposit auto-attach flow", () => {
 
     expect(fetchMock).toHaveBeenCalledTimes(1);
     expect(String(fetchMock.mock.calls[0]![0])).toContain("/api/v1/execute");
-    // manualProofs skips /verifyDeposit, but the wire requires a
+    // manualProofs skips /verifyDeposit, but the wire still accepts a
     // `depositProof` field on every Deposit. The SDK fills missing
-    // proofs with the placeholder shape — has_valid_shape() returns
-    // false, so the gateway falls through to legacy admission.
+    // proofs with the placeholder shape.
     const body = JSON.parse(
       String((fetchMock.mock.calls[0]![1] as RequestInit).body)
     );

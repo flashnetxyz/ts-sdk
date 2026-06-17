@@ -98,10 +98,10 @@ describe("stringifyWithBigint", () => {
   // canonical intent message. The validator hashes the JSON output
   // byte-for-byte and the signed bytes must match the Rust
   // CanonicalIntentMessage struct (chainId, transfers, action,
-  // expiresAt — no `nonce` since migration 0008), with each
-  // CanonicalTransferEntry in the order
-  // (transferId, amount, asset, depositProof). If someone reorders the
-  // TS interface, the Rust struct, or the object literal in
+  // expiresAt — no `nonce` since migration 0008), with each transfer
+  // in the order (transferId, amount, asset). `depositProof` is not
+  // part of this signed JSON. If someone reorders the TS interface,
+  // the Rust struct, or the object literal in
   // ExecutionClient.submitIntent, this test will fail loudly instead of
   // breaking signature verification at runtime.
   it("canonical intent message matches the Rust struct field order", () => {
@@ -110,7 +110,6 @@ describe("stringifyWithBigint", () => {
         transferId: "transfer-1",
         amount: "0x3e8",
         asset: { type: "NATIVE_SATS" },
-        depositProof: { payloadBytes: "0x", signature: "0x" },
       },
       {
         transferId: "transfer-2",
@@ -119,10 +118,6 @@ describe("stringifyWithBigint", () => {
           type: "SPARK_TOKEN",
           tokenId:
             "0x0000000000000000000000000000000000000000000000000000000000000001",
-        },
-        depositProof: {
-          payloadBytes: "0xdeadbeef",
-          signature: "0x" + "ab".repeat(64),
         },
       },
     ];
@@ -135,10 +130,8 @@ describe("stringifyWithBigint", () => {
     expect(stringifyWithBigint(message)).toEqual(
       '{"chainId":21022,' +
         '"transfers":[' +
-        '{"transferId":"transfer-1","amount":"0x3e8","asset":{"type":"NATIVE_SATS"},"depositProof":{"payloadBytes":"0x","signature":"0x"}},' +
-        '{"transferId":"transfer-2","amount":"0x9c4","asset":{"type":"SPARK_TOKEN","tokenId":"0x0000000000000000000000000000000000000000000000000000000000000001"},"depositProof":{"payloadBytes":"0xdeadbeef","signature":"0x' +
-        "ab".repeat(64) +
-        '"}}' +
+        '{"transferId":"transfer-1","amount":"0x3e8","asset":{"type":"NATIVE_SATS"}},' +
+        '{"transferId":"transfer-2","amount":"0x9c4","asset":{"type":"SPARK_TOKEN","tokenId":"0x0000000000000000000000000000000000000000000000000000000000000001"}}' +
         "]," +
         '"action":{"type":"deposit","recipient":"0xabc"},' +
         '"expiresAt":1893456000000}'
