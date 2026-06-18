@@ -840,20 +840,24 @@ export class ExecutionClient {
   /**
    * Look up the lifecycle status of a previously submitted intent.
    *
-   * Calls `GET /api/v1/intents/{submissionId}` on the gateway. No auth
-   * required — submission IDs are non-guessable handles, and a leak only
-   * exposes status text. Use {@link waitForIntent} to poll until a target
-   * status is reached.
+   * Calls `GET /api/v1/intents/{submissionId}` on the gateway. Requires
+   * authentication: the gateway authorizes the submission against the
+   * caller's access token and returns 404 for a submission the caller does
+   * not own. Use {@link waitForIntent} to poll until a target status is
+   * reached.
    *
-   * @throws if the submission is unknown (HTTP 404) or the gateway is
-   *   unreachable.
+   * @throws if the client is not authenticated, if the submission is unknown
+   *   or not owned by the caller (HTTP 404), or if the gateway is unreachable.
    */
   async getIntentStatus(submissionId: string): Promise<IntentStatusResponse> {
     if (!submissionId || submissionId.trim() === "") {
       throw new Error("submissionId is required");
     }
+    this.requireAuth();
     const path = `/api/v1/intents/${encodeURIComponent(submissionId)}`;
-    const resp = await fetch(`${this.config.gatewayUrl}${path}`);
+    const resp = await fetch(`${this.config.gatewayUrl}${path}`, {
+      headers: { Authorization: `Bearer ${this.accessToken}` },
+    });
     const text = await resp.text();
     if (!resp.ok) {
       throw new Error(
