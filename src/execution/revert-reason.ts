@@ -32,6 +32,10 @@ export const SPARK_GATEWAY_REVERT_ERRORS: Readonly<Record<string, string>> = {
   "0xce8c1048": "OnlyDepositor()",
   "0x5fc483c5": "OnlyOwner()",
   "0x65c23aa0": "EmptyDepositors()",
+  // Reentrancy guard (OZ ReentrancyGuardTransient) on the withdraw / deposit-execute paths.
+  "0x3ee5aeb5": "ReentrancyGuardReentrantCall()",
+  // Bootstrap-time only: UpgradeStub.firstUpgrade rejected a non-bootstrapper caller.
+  "0x78355615": "NotBootstrapper()",
 };
 
 /**
