@@ -24,27 +24,40 @@
  * ```
  */
 
+// Conductor contract ABI — the single source of truth TradingClient encodes
+// against internally. Exported for integrators building raw calldata via
+// encodeFunctionData({ abi: conductorAbi, functionName, args }): all swap
+// variants, LP entrypoints, and fee getters.
+export { conductorAbi } from "./abis/conductor";
+export {
+  errorSelector,
+  fetchAbiErrorsFromBlockscout,
+} from "./blockscout-abi";
 // Core client
 export {
-  ExecutionClient,
-  EXECUTION_NETWORK_CONFIGS,
-  type ExecutionClientConfig,
   type DepositParams,
+  EXECUTION_NETWORK_CONFIGS,
+  type ExecuteParams,
+  ExecutionClient,
+  type ExecutionClientConfig,
+  type ProofOptOut,
+  type VerifyDepositParams,
+  VerifyDepositRejectedError,
+  type WaitForIntentOptions,
   type WithdrawParams,
   type WithdrawTokenParams,
-  type ExecuteParams,
-  type WaitForIntentOptions,
-  type VerifyDepositParams,
-  type ProofOptOut,
-  VerifyDepositRejectedError,
 } from "./client";
 
-// SparkWallet → EVM account adapter
+// EVM read helpers
 export {
-  sparkWalletToEvmAccount,
-  type SparkWalletInput,
-} from "./spark-evm-account";
-
+  fetchAllowance,
+  fetchEip1559Fees,
+  fetchNativeBalance,
+  fetchNonce,
+  fetchTokenBalance,
+  fetchTokenInfo,
+  type TokenInfo,
+} from "./evm";
 // Gateway calldata encoding and queries
 export {
   encodeWithdrawSats,
@@ -52,49 +65,58 @@ export {
   querySparkTokenAddress,
   waitForSparkTokenAddress,
 } from "./gateway";
-
-// EVM read helpers
+// Gateway RPC contract the execution client honors (mirrors the gateway's
+// hardened public RPC + admission surface; see linked flashnet-execution PRs).
 export {
-  fetchTokenInfo,
-  fetchTokenBalance,
-  fetchNativeBalance,
-  fetchAllowance,
-  fetchNonce,
-  fetchEip1559Fees,
-  type TokenInfo,
-} from "./evm";
-
+  assertJsonRpcBatchWithinLimit,
+  GATEWAY_BLOCKED_STATEFUL_FILTER_METHODS,
+  type GatewayBlockedFilterMethod,
+  isGatewayBlockedStatefulFilter,
+  MAX_JSON_RPC_BATCH_REQUESTS,
+} from "./gateway-rpc-policy";
 // Pool queries
 export {
-  getPoolAddress,
   fetchPoolInfo,
-  sortTokens,
+  getPoolAddress,
   type PoolInfo,
+  sortTokens,
 } from "./pool";
-
 // Pool creation encoding
 export {
-  encodeCreateBTCPool,
-  encodeCreatePoolParams,
   type CreateBTCPoolParams,
   type CreatePoolParams,
+  encodeCreateBTCPool,
+  encodeCreatePoolParams,
   type PermitSignature,
 } from "./pool-creation";
-
 // Price math
 export {
+  FEE_TIERS,
+  fullRangeTicks,
   priceToSqrtPriceX96,
   sqrtPriceX96ToPrice,
-  fullRangeTicks,
-  FEE_TIERS,
 } from "./price-math";
-
-// Conductor contract ABI — the single source of truth TradingClient encodes
-// against internally. Exported for integrators building raw calldata via
-// encodeFunctionData({ abi: conductorAbi, functionName, args }): all swap
-// variants, LP entrypoints, and fee getters.
-export { conductorAbi } from "./abis/conductor";
-
+// Revert reason decoding
+export {
+  CONDUCTOR_REVERT_ERRORS,
+  DEFAULT_REVERT_ERRORS,
+  type DecodedRevertReason,
+  type DecodeRevertReasonOptions,
+  decodeRevertReason,
+  SOLIDITY_BUILTIN_REVERT_ERRORS,
+  SPARK_GATEWAY_REVERT_ERRORS,
+} from "./revert-reason";
+// SparkWallet → EVM account adapter
+export {
+  type SparkWalletInput,
+  sparkWalletToEvmAccount,
+} from "./spark-evm-account";
+export {
+  extractTxHashFromStatusMessage,
+  type InnermostRevertFrame,
+  type TraceFrame,
+  traceInnermostRevert,
+} from "./trace-revert";
 // Types
 export type {
   Asset,
@@ -105,6 +127,7 @@ export type {
   DepositAsset,
   DepositRejection,
   ExecuteResponse,
+  ExecutionNetworkInfo,
   ExecutionSigner,
   IndexedDepositProof,
   IntentStatus,
@@ -112,40 +135,18 @@ export type {
   NetworkInfo,
   SignedDepositProof,
   SparkNetworkInfo,
-  ExecutionNetworkInfo,
   VerifyDepositsRequest,
   VerifyDepositsResponse,
   VerifyDepositTransfer,
 } from "./types";
 export {
-  DEFAULT_INTENT_TTL_MS,
-  TERMINAL_INTENT_STATUSES,
-  PLACEHOLDER_DEPOSIT_PROOF,
   canonicalIntentId,
+  DEFAULT_INTENT_TTL_MS,
   depositAssetToWire,
   isTerminalIntentStatus,
   normalizeIntentStatus,
+  PLACEHOLDER_DEPOSIT_PROOF,
   resolveExpiresAt,
+  TERMINAL_INTENT_STATUSES,
   u256Hex,
 } from "./types";
-
-// Revert reason decoding
-export {
-  decodeRevertReason,
-  DEFAULT_REVERT_ERRORS,
-  CONDUCTOR_REVERT_ERRORS,
-  SPARK_GATEWAY_REVERT_ERRORS,
-  SOLIDITY_BUILTIN_REVERT_ERRORS,
-  type DecodedRevertReason,
-  type DecodeRevertReasonOptions,
-} from "./revert-reason";
-export {
-  traceInnermostRevert,
-  extractTxHashFromStatusMessage,
-  type InnermostRevertFrame,
-  type TraceFrame,
-} from "./trace-revert";
-export {
-  fetchAbiErrorsFromBlockscout,
-  errorSelector,
-} from "./blockscout-abi";
