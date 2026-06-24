@@ -65,8 +65,7 @@ export {
   querySparkTokenAddress,
   waitForSparkTokenAddress,
 } from "./gateway";
-// Gateway RPC contract the execution client honors (mirrors the gateway's
-// hardened public RPC + admission surface; see linked flashnet-execution PRs).
+// Gateway RPC contract the execution client honors (see ./gateway-rpc-policy).
 export {
   assertJsonRpcBatchWithinLimit,
   GATEWAY_BLOCKED_STATEFUL_FILTER_METHODS,

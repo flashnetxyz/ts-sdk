@@ -1,7 +1,7 @@
 /**
  * Shared viem PublicClient factory with Multicall3 support.
  *
- * The gateway's public RPC is read-only and hardened (see ./gateway-rpc-policy):
+ * The gateway's public RPC is read-only and constrained (see ./gateway-rpc-policy):
  * stateful `eth_*Filter` methods are rejected and JSON-RPC batches are capped.
  * This transport intentionally relies on Multicall3 to aggregate reads into a
  * single `eth_call` and does NOT enable viem's `http({ batch })` array batching

@@ -7,12 +7,11 @@
 - `execution` now exports the gateway RPC contract the execution client honors:
   `MAX_JSON_RPC_BATCH_REQUESTS` (100), `GATEWAY_BLOCKED_STATEFUL_FILTER_METHODS`
   (the six `eth_*Filter` methods), `isGatewayBlockedStatefulFilter`, and
-  `assertJsonRpcBatchWithinLimit`. These mirror the gateway's hardened public
-  RPC surface so the execution client stays aligned. The client is already
+  `assertJsonRpcBatchWithinLimit`. These mirror the gateway's public RPC
+  surface so the execution client stays aligned. The client is already
   compatible (Multicall3 + `eth_getLogs`, a non-batching viem `http()`
   transport, and it always sends the configured `chainId` and a valid auth
   public key); this is a guardrail to keep future changes within the contract.
-  Companion to flashnet-execution PRs #1025, #1028, #1090, #1169, #1170.
 
 ### Changed
 
