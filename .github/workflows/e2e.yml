@@ -20,17 +20,17 @@ on:
 jobs:
   e2e:
     name: E2E Tests
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     timeout-minutes: 15
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7.0.1
 
       - name: Setup Bun
-        uses: oven-sh/setup-bun@v2
+        uses: oven-sh/setup-bun@v2.2.0
         with:
-          bun-version: latest
+          bun-version: "1.4.4"
 
       - name: Install dependencies
         run: bun install
